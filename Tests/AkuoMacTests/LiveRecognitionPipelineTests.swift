@@ -181,6 +181,84 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         )
     }
 
+    func testSilentShiftedHebrewKeyRestoresLeadingEnglishCapital() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["hello"], hebrew: [])
+        )
+
+        XCTAssertEqual(fixture.passThroughStroke("", keyCode: 4), "")
+        XCTAssertEqual(fixture.passThroughStroke("ק", keyCode: 14), "ק")
+        XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
+        XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
+        XCTAssertEqual(fixture.passThroughStroke("ם", keyCode: 31), "ם")
+        XCTAssertNil(fixture.process(" "))
+
+        XCTAssertEqual(fixture.document.text, "Hello ")
+        XCTAssertEqual(fixture.replacer.calls, [
+            .init(deleteCount: 4, replacement: "Hello", boundary: " "),
+        ])
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+    }
+
+    func testCompositeShiftedHebrewKeyRestoresLeadingEnglishCapital() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["cool"], hebrew: [])
+        )
+
+        XCTAssertEqual(fixture.passThroughStroke("לֹ", keyCode: 8), "לֹ")
+        XCTAssertEqual(fixture.passThroughStroke("ם", keyCode: 31), "ם")
+        XCTAssertEqual(fixture.passThroughStroke("ם", keyCode: 31), "ם")
+        XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
+        XCTAssertNil(fixture.process(" "))
+
+        XCTAssertEqual(fixture.document.text, "Cool ")
+        XCTAssertEqual(fixture.replacer.calls, [
+            .init(deleteCount: 5, replacement: "Cool", boundary: " "),
+        ])
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+    }
+
+    func testEveryShiftedHebrewLetterKeyRestoresItsEnglishCapital() {
+        let cases: [(CGKeyCode, String, String, Int)] = [
+            (0, "שׁ", "Abc", 4), (11, "", "Bbc", 2),
+            (8, "לֹ", "Cbc", 4), (2, "„", "Dbc", 3),
+            (14, "", "Ebc", 2), (3, "", "Fbc", 2),
+            (5, "", "Gbc", 2), (4, "", "Hbc", 2),
+            (34, "", "Ibc", 2), (38, "", "Jbc", 2),
+            (40, "לֹ", "Kbc", 4), (37, "", "Lbc", 2),
+            (46, "", "Mbc", 2), (45, "", "Nbc", 2),
+            (31, "", "Obc", 2), (35, "", "Pbc", 2),
+            (12, "", "Qbc", 2), (15, "", "Rbc", 2),
+            (1, "", "Sbc", 2), (17, "", "Tbc", 2),
+            (32, "וֹ", "Ubc", 4), (9, "", "Vbc", 2),
+            (13, "", "Wbc", 2), (7, "", "Xbc", 2),
+            (16, "", "Ybc", 2), (6, "", "Zbc", 2),
+        ]
+
+        for (keyCode, shiftedOutput, candidate, deleteCount) in cases {
+            let fixture = makeFixture(
+                language: .hebrew,
+                fallback: .init(english: [candidate.lowercased()], hebrew: [])
+            )
+
+            XCTAssertEqual(
+                fixture.passThroughStroke(shiftedOutput, keyCode: keyCode),
+                shiftedOutput,
+                candidate
+            )
+            XCTAssertEqual(fixture.passThroughStroke("נ", keyCode: 11), "נ", candidate)
+            XCTAssertEqual(fixture.passThroughStroke("ב", keyCode: 8), "ב", candidate)
+            XCTAssertNil(fixture.process(" "), candidate)
+
+            XCTAssertEqual(fixture.document.text, "\(candidate) ", candidate)
+            XCTAssertEqual(fixture.replacer.calls, [
+                .init(deleteCount: deleteCount, replacement: candidate, boundary: " "),
+            ], candidate)
+        }
+    }
+
     private func makeFixture(
         language: Language,
         fallback: LiveRecognitionFallback = .init(english: [], hebrew: [])
@@ -273,8 +351,12 @@ private final class LiveRecognitionDocument {
     }
 
     func applyReplacement(deleteCount: Int, replacement: String, boundary: String) {
-        guard text.count >= deleteCount else { return }
-        text.removeLast(deleteCount)
+        var scalars = Array(text.unicodeScalars)
+        guard scalars.count >= deleteCount else { return }
+        scalars.removeLast(deleteCount)
+        text = scalars.reduce(into: "") { result, scalar in
+            result.unicodeScalars.append(scalar)
+        }
         text.append(contentsOf: replacement)
         text.append(contentsOf: boundary)
     }
@@ -437,5 +519,11 @@ private struct LiveRecognitionFixture {
             }
         }
         return passedThrough
+    }
+
+    func passThroughStroke(_ text: String, keyCode: CGKeyCode) -> String {
+        guard process(text, keyCode: keyCode) === nativeEvent else { return "" }
+        document.append(text)
+        return text
     }
 }

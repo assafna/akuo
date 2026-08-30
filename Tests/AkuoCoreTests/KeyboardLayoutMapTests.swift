@@ -29,6 +29,21 @@ final class KeyboardLayoutMapTests: XCTestCase {
         XCTAssertEqual(map.convert("AKUO")?.candidate, "שלום")
     }
 
+    func testIncompletePhysicalTraceFallsBackWithoutRecoveringMissingCapital() {
+        XCTAssertEqual(
+            map.convert(
+                "קךךם",
+                sourceHint: .hebrew,
+                keyStrokes: [
+                    .init(text: "ך", keyCode: 37),
+                    .init(text: "ך", keyCode: 37),
+                    .init(text: "ם", keyCode: 31),
+                ]
+            )?.candidate,
+            "ello"
+        )
+    }
+
     func testEveryLetterEntryRoundTrips() {
         for (english, hebrew) in KeyboardLayoutMap.englishToHebrew
             where KeyboardLayoutMap.hebrewLetters.contains(hebrew) &&
