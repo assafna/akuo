@@ -1,14 +1,25 @@
 import AppKit
 import AkuoCore
 
+struct SpellingCheckResult: Equatable {
+    let misspelledRange: NSRange
+    let wordCount: Int
+}
+
 protocol SpellCheckerBackend {
-    func misspelledRange(in word: String, language: String) -> NSRange
+    var availableLanguages: Set<String> { get }
+
+    func checkSpelling(in word: String, language: String) -> SpellingCheckResult
 }
 
 private struct AppKitSpellCheckerBackend: SpellCheckerBackend {
-    func misspelledRange(in word: String, language: String) -> NSRange {
+    var availableLanguages: Set<String> {
+        Set(NSSpellChecker.shared.availableLanguages)
+    }
+
+    func checkSpelling(in word: String, language: String) -> SpellingCheckResult {
         var wordCount = 0
-        return NSSpellChecker.shared.checkSpelling(
+        let range = NSSpellChecker.shared.checkSpelling(
             of: word,
             startingAt: 0,
             language: language,
@@ -16,6 +27,7 @@ private struct AppKitSpellCheckerBackend: SpellCheckerBackend {
             inSpellDocumentWithTag: 0,
             wordCount: &wordCount
         )
+        return .init(misspelledRange: range, wordCount: wordCount)
     }
 }
 
@@ -41,7 +53,13 @@ public struct SystemSpellChecker: WordRecognizing {
             languageCode = "he_IL"
         }
 
-        return backend.misspelledRange(in: word, language: languageCode).location == NSNotFound
+        guard backend.availableLanguages.contains(languageCode) else {
+            return .unavailable
+        }
+
+        let result = backend.checkSpelling(in: word, language: languageCode)
+        guard result.wordCount >= 0 else { return .unavailable }
+        return result.misspelledRange.location == NSNotFound
             ? .recognized
             : .unknown
     }
