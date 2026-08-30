@@ -18,7 +18,7 @@
 - Treat user-learned macOS words as recognized candidates; do not filter them with `hasLearnedWord`.
 - Never correct a recognized original.
 - Treat unavailable or indeterminate dictionary results as pass-through, never as positive recognition.
-- Preserve all secure-input, editable-context, URL, email, path, numeric, mixed-script, identifier, and punctuation exclusions.
+- Preserve all secure-input, editable-context, URL, email, path, domain, numeric, mixed-script, and identifier exclusions. Punctuation-shaped physical keys are governed by conversion-aware word-shape policy rather than a blanket punctuation exclusion.
 - Keep recognition fully local with no network dependency, telemetry, account, raw-word log, or typed-text persistence.
 - Preserve input-source alignment and the one-record, five-second immediate Command-Z path.
 - Use TDD for every production behavior change and commit after each independently testable task.
@@ -842,7 +842,7 @@ nonisolated static func makeRecognitionPolicy(
 }
 ```
 
-Do not inspect or filter learned words. Do not change mapping, exclusion, replacement, source-selection, counter, or undo components.
+Do not inspect or filter learned words. This historical task did not change mapping, replacement, source-selection, counter, or undo components. Its exclusion constraint is scoped to structured shapes; it must not be read as requiring blanket exclusion of punctuation keys that map to target-layout letters.
 
 - [ ] **Step 7: Run focused and full tests**
 

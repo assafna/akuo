@@ -143,8 +143,8 @@ transient dictionary miss; the safe behavior is silent pass-through.
 
 ```text
 Completed token
-  -> structured-token and security exclusions
-  -> deterministic opposite-layout mapping
+  -> deterministic opposite-layout mapping, computed once
+  -> conversion-aware structured-token and word-shape exclusions
   -> seed plus macOS recognition of original
   -> seed plus macOS recognition of candidate
   -> recognition-state and score-margin policy
@@ -162,9 +162,11 @@ the input source so later physical keys are decoded in the intended language.
   result leaves the original text unchanged.
 - Secure Input, secure fields, unknown editing contexts, and replacement
   preparation failures continue to leave the original text unchanged.
-- URLs, email addresses, paths, numbers, identifiers, mixed scripts, unsupported
-  punctuation, and other existing excluded shapes remain excluded before
-  recognition can authorize a correction.
+- URLs, email addresses, paths, domains, numbers, identifiers, mixed scripts,
+  unsupported punctuation, punctuation-dominated tokens, and source-code casing
+  remain excluded before recognition can authorize a correction. Punctuation-
+  shaped physical keys may reach recognition only when the complete conversion
+  is a target-language word shape.
 - Recognition stays synchronous with the current completed-token path; no word
   is queued, retained, or replayed after a service failure.
 - No raw token, candidate, learned-word status, recognition result, or undo
@@ -200,7 +202,10 @@ the input source so later physical keys are decoded in the intended language.
 - Simulate the reported physical-key sentence across the input-source change and
   assert the final text, including the Space that completes the last word, is
   exactly `this is not always עובד ואני לא בטוח למה `.
-- Preserve regression coverage for recognized originals and excluded tokens.
+- Preserve regression coverage for recognized originals and structured tokens.
+- Verify comma, period, and semicolon physical keys that map to Hebrew letters,
+  including exact Space/Return boundaries, source selection, and immediate undo.
+- Verify recognized punctuated originals and unknown mapped candidates stay unchanged.
 - Explicitly prove the selected tradeoff: a fake learned English candidate
   `zzzz` makes Hebrew `זזזז` eligible for correction.
 - Prove dictionary unavailability produces no replacement, source selection,
