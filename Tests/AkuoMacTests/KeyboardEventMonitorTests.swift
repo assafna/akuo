@@ -61,6 +61,33 @@ final class KeyboardEventMonitorTests: XCTestCase {
         )
     }
 
+    func testProductionDecoderClassifiesSilentShiftedAlphabeticKey() {
+        XCTAssertEqual(
+            SystemNativeEventDecoder.decodeEmptyUnicodeKey(
+                keyCode: 4,
+                flags: [.maskShift],
+                marker: 0
+            ),
+            .text("", keyCode: 4, marker: 0)
+        )
+    }
+
+    func testProductionDecoderRejectsOtherEmptyUnicodeKeys() {
+        for (keyCode, flags) in [
+            (CGKeyCode(4), CGEventFlags()),
+            (CGKeyCode(122), CGEventFlags.maskShift),
+        ] {
+            XCTAssertEqual(
+                SystemNativeEventDecoder.decodeEmptyUnicodeKey(
+                    keyCode: keyCode,
+                    flags: flags,
+                    marker: 0
+                ),
+                .unhandled(marker: 0)
+            )
+        }
+    }
+
     func testProductionEventTapMaskIncludesKeyboardAndEveryMouseDown() {
         for eventType in [
             CGEventType.keyDown,
@@ -289,7 +316,11 @@ final class KeyboardEventMonitorTests: XCTestCase {
 
         XCTAssertEqual(fixture.coordinator.boundaryCalls, [
             .init(
-                completedWord: .init(token: "/וןבל", boundary: " "),
+                completedWord: .init(
+                    token: "/וןבל",
+                    boundary: " ",
+                    keyStrokes: [.init(text: "/", keyCode: 12)]
+                ),
                 boundaryKeyCode: nil,
                 context: fixture.focus.context!,
                 priorInputLanguage: .hebrew
@@ -306,10 +337,14 @@ final class KeyboardEventMonitorTests: XCTestCase {
 
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
-        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord, .init(
-            token: "'ן",
-            boundary: " "
-        ))
+        XCTAssertEqual(
+            fixture.coordinator.boundaryCalls.first?.completedWord,
+            .init(
+                token: "'ן",
+                boundary: " ",
+                keyStrokes: [.init(text: "'", keyCode: 13)]
+            )
+        )
     }
 
     func testPrintablePunctuationRemainsInTokenUntilWhitespace() {

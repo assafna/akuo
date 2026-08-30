@@ -42,8 +42,16 @@ public struct CorrectionPolicy {
         self.excluder = excluder
     }
 
-    public func decision(for token: String) -> CorrectionDecision {
-        let conversion = layoutMap.convert(token)
+    public func decision(
+        for token: String,
+        sourceHint: Language? = nil,
+        keyStrokes: [ObservedKeyStroke] = []
+    ) -> CorrectionDecision {
+        let conversion = layoutMap.convert(
+            token,
+            sourceHint: sourceHint,
+            keyStrokes: keyStrokes
+        )
         guard !excluder.shouldExclude(token, conversion: conversion) else { return .keep(.excluded) }
         guard let conversion else { return .keep(.noConversion) }
 

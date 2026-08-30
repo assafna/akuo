@@ -27,6 +27,24 @@ public struct KeyboardLayoutMap: Sendable {
 
     public static let hebrewLetters = Set("אבגדהוזחטיךכלםמןנסעףפץצקרשת")
 
+    // Apple Hebrew emits these distinct strings for the shifted A, U, C/K,
+    // and D letter keys. Most other shifted letter keys emit no text at all.
+    private static let shiftedHebrewOutputs = Set(["שׁ", "וֹ", "לֹ", "„"])
+    private static let unambiguousShiftedHebrewToEnglish: [Character: Character] = [
+        Character("שׁ"): "A",
+        Character("וֹ"): "U",
+        Character("„"): "D",
+    ]
+
+    // Virtual key codes are physical positions and therefore remain stable
+    // while the active input source changes between ABC/U.S. and Hebrew.
+    private static let englishLetterByKeyCode: [Int: Character] = [
+        0: "a", 11: "b", 8: "c", 2: "d", 14: "e", 3: "f", 5: "g",
+        4: "h", 34: "i", 38: "j", 40: "k", 37: "l", 46: "m",
+        45: "n", 31: "o", 35: "p", 12: "q", 15: "r", 1: "s",
+        17: "t", 32: "u", 9: "v", 13: "w", 7: "x", 16: "y", 6: "z",
+    ]
+
     private static let hebrewToEnglish: [Character: Character] = {
         var inverse: [Character: Character] = [:]
         for (english, hebrew) in englishToHebrew {
@@ -36,7 +54,15 @@ public struct KeyboardLayoutMap: Sendable {
         return inverse
     }()
 
-    public func convert(_ token: String) -> LayoutConversion? {
+    public static func isAlphabeticKeyCode(_ keyCode: Int) -> Bool {
+        englishLetterByKeyCode[keyCode] != nil
+    }
+
+    public func convert(
+        _ token: String,
+        sourceHint: Language? = nil,
+        keyStrokes: [ObservedKeyStroke] = []
+    ) -> LayoutConversion? {
         guard !token.isEmpty else { return nil }
 
         var source: Language?
@@ -44,7 +70,8 @@ public struct KeyboardLayoutMap: Sendable {
             let characterLanguage: Language?
             if Self.isEnglishLetter(character) {
                 characterLanguage = .english
-            } else if Self.hebrewLetters.contains(character) {
+            } else if Self.hebrewLetters.contains(character)
+                        || Self.shiftedHebrewOutputs.contains(String(character)) {
                 characterLanguage = .hebrew
             } else {
                 characterLanguage = nil
@@ -55,19 +82,59 @@ public struct KeyboardLayoutMap: Sendable {
             source = characterLanguage
         }
 
-        guard let source else { return nil }
+        if let sourceHint, let source, sourceHint != source { return nil }
+        guard let source = source ?? sourceHint else { return nil }
         let target: Language = source == .english ? .hebrew : .english
+
+        if source == .hebrew,
+           let physicalCandidate = Self.physicalEnglishCandidate(
+               for: token,
+               keyStrokes: keyStrokes
+           ) {
+            return LayoutConversion(
+                original: token,
+                candidate: physicalCandidate,
+                source: source,
+                target: target
+            )
+        }
+
         let lookup = source == .english ? Self.englishToHebrew : Self.hebrewToEnglish
         var candidate = String()
         candidate.reserveCapacity(token.count)
 
         for character in token {
             let key = source == .english ? Self.lowercaseASCII(character) : character
-            guard let converted = lookup[key] else { return nil }
+            let converted = source == .hebrew
+                ? Self.unambiguousShiftedHebrewToEnglish[key] ?? lookup[key]
+                : lookup[key]
+            guard let converted else { return nil }
             candidate.append(converted)
         }
 
         return LayoutConversion(original: token, candidate: candidate, source: source, target: target)
+    }
+
+    private static func physicalEnglishCandidate(
+        for token: String,
+        keyStrokes: [ObservedKeyStroke]
+    ) -> String? {
+        guard !keyStrokes.isEmpty,
+              keyStrokes.map(\.text).joined() == token else {
+            return nil
+        }
+
+        var candidate = String()
+        candidate.reserveCapacity(keyStrokes.count)
+        for keyStroke in keyStrokes {
+            guard let lowercase = englishLetterByKeyCode[keyStroke.keyCode] else {
+                return nil
+            }
+            let wasShifted = keyStroke.text.isEmpty
+                || shiftedHebrewOutputs.contains(keyStroke.text)
+            candidate.append(wasShifted ? uppercaseASCII(lowercase) : lowercase)
+        }
+        return candidate
     }
 
     private static func isEnglishLetter(_ character: Character) -> Bool {
@@ -86,5 +153,16 @@ public struct KeyboardLayoutMap: Sendable {
             return character
         }
         return Character(String(lowercase))
+    }
+
+    private static func uppercaseASCII(_ character: Character) -> Character {
+        guard character.unicodeScalars.count == 1, let scalar = character.unicodeScalars.first else {
+            return character
+        }
+        guard scalar.value >= 97 && scalar.value <= 122,
+              let uppercase = UnicodeScalar(scalar.value - 32) else {
+            return character
+        }
+        return Character(String(uppercase))
     }
 }

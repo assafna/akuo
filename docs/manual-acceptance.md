@@ -91,6 +91,10 @@ Version 1 completes a token only at whitespace or Return. Printable punctuation 
   **Evidence:**
 - [ ] **Hebrew-layout English correction.** Select Hebrew, type the physical keys that produce `יקךךם `, and confirm the visible result is exactly `hello ` with one space and the active input source changes to English. **Result:**
   **Evidence:**
+- [ ] **Silent shifted capital recovery.** Select standard Hebrew, hold Shift while pressing the physical H key, release Shift, then press E, L, L, O. Confirm the visible unfinished token is exactly `קךךם`. Press Space and confirm the visible result is exactly `Hello ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Composite shifted capital recovery.** Select standard Hebrew, hold Shift while pressing the physical C key, release Shift, then press O, O, L. Confirm the visible unfinished token is exactly `לֹםםך`. Press Space and confirm the visible result is exactly `Cool ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
 - [ ] **Correct English unchanged.** Type `hello ` using English; confirm text and input source are unchanged. **Result:**
   **Evidence:**
 - [ ] **Recognized English with punctuation unchanged.** Type `hello, ` using English; confirm the text remains exactly `hello, ` and the input source remains English. **Result:**

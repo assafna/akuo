@@ -35,11 +35,15 @@ public final class CorrectionCoordinator {
             return .notHandled
         }
         guard let boundaryKeyCode else { return .notHandled }
-        guard case let .correct(correction) = policy.decision(for: completedWord.token) else {
+        guard case let .correct(correction) = policy.decision(
+            for: completedWord.token,
+            sourceHint: priorInputLanguage,
+            keyStrokes: completedWord.keyStrokes
+        ) else {
             return .notHandled
         }
         guard textReplacer.replacePreviousText(
-            deleteCount: completedWord.token.count,
+            deleteCount: completedWord.token.unicodeScalars.count,
             replacement: correction.replacement,
             boundary: completedWord.boundary,
             boundaryKeyCode: boundaryKeyCode

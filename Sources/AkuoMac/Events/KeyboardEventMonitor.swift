@@ -39,6 +39,18 @@ struct SystemNativeEventDecoder: NativeEventDecoding {
         115, 116, 117, 119, 121, 123, 124, 125, 126,
     ]
 
+    static func decodeEmptyUnicodeKey(
+        keyCode: CGKeyCode,
+        flags: CGEventFlags,
+        marker: Int64
+    ) -> DecodedKeyboardEvent {
+        if flags.contains(.maskShift),
+           KeyboardLayoutMap.isAlphabeticKeyCode(Int(keyCode)) {
+            return .text("", keyCode: keyCode, marker: marker)
+        }
+        return .unhandled(marker: marker)
+    }
+
     func decode(_ event: CGEvent, type: CGEventType) -> DecodedKeyboardEvent {
         if type == .tapDisabledByTimeout {
             return .tapDisabledByTimeout
@@ -80,7 +92,16 @@ struct SystemNativeEventDecoder: NativeEventDecoding {
             actualStringLength: &requiredCharacterCount,
             unicodeString: nil
         )
-        guard requiredCharacterCount > 0 else { return .unhandled(marker: marker) }
+        guard requiredCharacterCount > 0 else {
+            // On Apple's standard Hebrew layout, Shift plus most letter keys
+            // emits no Unicode text. Preserve those physical keydowns so Akuo
+            // can recover the intended English capital at the word boundary.
+            return Self.decodeEmptyUnicodeKey(
+                keyCode: keyCode,
+                flags: flags,
+                marker: marker
+            )
+        }
 
         var characters = [UniChar](repeating: 0, count: requiredCharacterCount)
         var actualCharacterCount = 0
@@ -411,8 +432,19 @@ public final class KeyboardEventMonitor {
                 return event
             }
             coordinator.noteOrdinaryInput()
-            if isTokenText(text, keyCode: keyCode, language: language) {
-                _ = wordBuffer.consume(.text(text))
+            let isSilentShiftedHebrewLetter = language == .hebrew
+                && text.isEmpty
+                && keyCode.map { KeyboardLayoutMap.isAlphabeticKeyCode(Int($0)) } == true
+            if isTokenText(text, keyCode: keyCode, language: language)
+                || isSilentShiftedHebrewLetter {
+                if let keyCode {
+                    _ = wordBuffer.consume(.observedKeyStroke(.init(
+                        text: text,
+                        keyCode: Int(keyCode)
+                    )))
+                } else {
+                    _ = wordBuffer.consume(.text(text))
+                }
                 return event
             }
 
