@@ -17,11 +17,20 @@ Use this checklist only with the exact release candidate you intend to accept. B
 | Executable SHA-256 | |
 | English input source and identifier | |
 | Hebrew input source and identifier | |
+| macOS spelling languages (`en_US`, `he_IL`) | |
 | Electron editor and version | |
 | Evidence folder or link | |
 | Overall result | `PENDING` |
 
 For each checkbox, write `PASS`, `FAIL`, or `BLOCKED` in **Result** and add concise evidence such as a screenshot name, screen recording timestamp, observed text/source, Console export, or command output. Redact unrelated private content.
+
+Run this local inspection command and record whether both exact language codes are present:
+
+```bash
+xcrun swift -e 'import AppKit; print(NSSpellChecker.shared.availableLanguages.sorted())'
+```
+
+If either `en_US` or `he_IL` is absent, the corresponding non-seed recognition checks are `BLOCKED`; seed recognition remains testable, but the release cannot claim general dictionary coverage for the missing language.
 
 ## Release-blocker and stop rules
 
@@ -82,9 +91,26 @@ Version 1 completes a token only at whitespace or Return. Printable punctuation 
   **Evidence:**
 - [ ] **Unknown forms unchanged.** Type at least one unrecognized English-shaped token and one unrecognized Hebrew-shaped token; record the exact test tokens and confirm both remain unchanged. **Result:**
   **Evidence:**
-- [ ] **Host-dictionary candidate cannot authorize correction.** Select standard Hebrew and type exactly `שלום עם זזזז `. Confirm the visible text remains exactly `שלום עם זזזז `, no replacement occurs, the aggregate correction count does not increase, and the active input source remains standard Hebrew. This must pass even if the local English spelling dictionary accepts `zzzz`. **Result:**
+- [ ] **Non-seed Hebrew dictionary correction.** Select English, type `gucs `, and confirm the visible result is exactly `עובד ` with one Space and the active input source changes to standard Hebrew. Record the macOS version and confirm `עובד` is recognized by that Mac's Hebrew spelling dictionary. **Result:**
+  **Evidence:**
+- [ ] **Non-seed English dictionary correction.** Select standard Hebrew, type the physical keys that produce `בםצפואקר `, and confirm the visible result is exactly `computer ` with one Space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Reported mixed sentence.** Start with English and continuously press the physical keys for `this is not always gucs utbh kt cyuj knv `, including the final Space. Confirm the visible result is exactly `this is not always עובד ואני לא בטוח למה ` and the active source is Hebrew. **Result:**
   **Evidence:**
 - [ ] **Alternating-language sentence.** In one sentence, alternate correct and wrong-layout English/Hebrew words. Confirm each completed word is evaluated independently, intended corrections occur, correct words remain, boundaries are preserved, and the source aligns after each correction. **Result:**
+  **Evidence:**
+
+### Learned-word candidate authority
+
+Use TextEdit's spelling menu to learn and later unlearn only the disposable values below. Before learning, confirm macOS marks each value unknown. If either value is already built in or previously learned, choose a new harmless value whose physical-key mapping contains only letters and record both forms.
+
+- [ ] **Learned Hebrew candidate.** Learn `אבזח`, select English, type `tczj `, and confirm Akuo changes it to `אבזח ` and selects Hebrew. **Result:**
+  **Evidence:**
+- [ ] **Learned English candidate.** Learn `blorf`, select Hebrew, type the physical keys that produce `נךםרכ `, and confirm Akuo changes it to `blorf ` and selects English. **Result:**
+  **Evidence:**
+- [ ] **Learned original veto.** Type each learned value using its correct input source and confirm Akuo leaves it unchanged. **Result:**
+  **Evidence:**
+- [ ] **Learned-word cleanup.** Unlearn both disposable values, repeat their wrong-layout forms, and confirm neither correction occurs unless macOS now recognizes the value independently of the learned entry. **Result:**
   **Evidence:**
 
 ## 4. Immediate Command-Z and normal undo
@@ -124,7 +150,7 @@ Use recognizable test data that contains no real credentials or personal informa
   **Evidence:**
 - [ ] **Identifiers unchanged.** Type `file_name `, `camelCase `, and `PascalCase ` and confirm exact pass-through. **Result:**
   **Evidence:**
-- [ ] **Exact cascading exclusion sequence.** In a new empty TextEdit document, select English and type `hello go zzzz abc123 file_name camelCase me@example.com https://akuo.app /tmp/file `. Confirm the visible text is exactly `hello go zzzz abc123 file_name camelCase me@example.com https://akuo.app /tmp/file `, no replacement occurs anywhere in the sequence, and the active input source remains English. **Result:**
+- [ ] **Exact cascading exclusion sequence.** In a new empty TextEdit document, select English and type `hello go qqqq abc123 file_name camelCase me@example.com https://akuo.app /tmp/file `. Confirm the visible text is exactly `hello go qqqq abc123 file_name camelCase me@example.com https://akuo.app /tmp/file `, no replacement occurs anywhere in the sequence, and the active input source remains English. **Result:**
   **Evidence:**
 - [ ] **Fresh correction after an excluded token.** In a new empty TextEdit document, select English and type `akuo.app akuo `. Confirm the visible text is exactly `akuo.app שלום `: the excluded domain remains unchanged, the subsequent fresh `akuo ` corrects once, and the active input source changes to standard Hebrew only after that fresh correction. **Result:**
   **Evidence:**
