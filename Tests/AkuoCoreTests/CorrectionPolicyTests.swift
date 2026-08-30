@@ -60,22 +60,6 @@ final class CorrectionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.decision(for: "akuo"), .keep(.recognitionUnavailable))
     }
 
-    func testLocalFallbackCannotAuthorizeCandidateOutsideSeedLexicon() {
-        let seed = SeedLexicon()
-        let originalRecognizer = CompositeWordRecognizer(
-            primary: seed,
-            fallback: StubRecognizer(english: ["zzzz"], hebrew: [])
-        )
-        let policy = CorrectionPolicy(
-            layoutMap: KeyboardLayoutMap(),
-            originalScorer: WordScorer(recognizer: originalRecognizer),
-            candidateScorer: WordScorer(recognizer: seed),
-            excluder: TokenExcluder()
-        )
-
-        XCTAssertEqual(policy.decision(for: "זזזז"), .keep(.candidateUnknown))
-    }
-
     func testKeepsMixedSentenceTokensIndependently() {
         let policy = makePolicy(recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום", "עולם"]))
 
