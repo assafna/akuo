@@ -1,0 +1,356 @@
+# Akuo v1 Manual Acceptance
+
+Use this checklist only with the exact release candidate you intend to accept. Build and install Akuo in `/Applications` before granting Accessibility permission so macOS associates permission with a stable local identity. Do not mark an item passed without recording observable evidence.
+
+## Release identity and evidence
+
+| Field | Value |
+|---|---|
+| Tester | |
+| Date and time | |
+| Mac model | |
+| macOS version and build | |
+| Akuo version | |
+| Akuo `CFBundleVersion` | |
+| Git commit | |
+| Installed app path | `/Applications/Akuo.app` |
+| Executable SHA-256 | |
+| English input source and identifier | |
+| Hebrew input source and identifier | |
+| Electron editor and version | |
+| Evidence folder or link | |
+| Overall result | `PENDING` |
+
+For each checkbox, write `PASS`, `FAIL`, or `BLOCKED` in **Result** and add concise evidence such as a screenshot name, screen recording timestamp, observed text/source, Console export, or command output. Redact unrelated private content.
+
+## Release-blocker and stop rules
+
+Stop testing, set the overall result to `BLOCKED`, preserve evidence, and do not accept the release if any test causes:
+
+- Input loss, partial replacement, duplicated boundaries, or text inserted in the wrong field.
+- Observation or modification of a password/secure field, or activity while Secure Input is active.
+- Recursive handling of Akuo-generated events, repeated replacement, or an event loop.
+- Command-Z interception outside the one immediate eligible correction, or failure to preserve normal application undo.
+
+Record the blocker here before stopping:
+
+| Time | App and field | Input/action | Expected | Actual | Evidence |
+|---|---|---|---|---|---|
+| | | | | | |
+
+## 1. Build, install, and metadata
+
+- [ ] **Release bundle built.** Run `swift test` and `Scripts/build-app.sh release`; record the passing test count, bundle path, and printed executable SHA-256. **Result:**
+  **Evidence:**
+- [ ] **Bundle identity verified.** Confirm `CFBundleIdentifier = app.akuo.Akuo`, version `0.1.0`, build `1`, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. **Result:**
+  **Evidence:**
+- [ ] **Installed before permission.** Move the release candidate to `/Applications/Akuo.app`, confirm its executable hash matches the built candidate, and launch only that copy. **Result:**
+  **Evidence:**
+- [ ] **Menu-bar-only behavior.** Confirm Akuo appears in the menu bar and does not appear in the Dock. **Result:**
+  **Evidence:**
+
+## 2. Permission setup, revocation, and input sources
+
+- [ ] **Permission begins explicit.** With Accessibility disabled for Akuo, launch it and confirm it remains inactive and explains that permission is needed without prompting until **Request Accessibility Access** is pressed. **Result:**
+  **Evidence:**
+- [ ] **Permission grant.** Grant Accessibility to the exact `/Applications/Akuo.app` entry, return to Akuo, recheck setup, and confirm permission becomes ready. **Result:**
+  **Evidence:**
+- [ ] **English source detection.** With standard ABC or U.S. installed, confirm Akuo reports English input ready and identifies the current source as English when selected. **Result:**
+  **Evidence:**
+- [ ] **Hebrew source detection.** With standard Hebrew installed, confirm Akuo reports Hebrew input ready and identifies the current source as Hebrew when selected. **Result:**
+  **Evidence:**
+- [ ] **Unsupported Hebrew – QWERTY.** Temporarily verify Hebrew – QWERTY alone does not satisfy Hebrew readiness; restore standard Hebrew before continuing. **Result:**
+  **Evidence:**
+- [ ] **Permission revocation fails open.** Revoke Accessibility while Akuo is on. Confirm status changes to permission needed, monitoring stops, and ordinary typing remains unchanged. Regrant permission to the same installed copy before continuing. **Result:**
+  **Evidence:**
+
+## 3. Core English/Hebrew correction
+
+Perform these first in TextEdit with a new empty plain-text document.
+
+Version 1 completes a token only at whitespace or Return. Printable punctuation does not trigger correction and remains part of the unfinished token until one of those boundaries arrives.
+
+- [ ] **English-layout Hebrew correction.** Select English, type `akuo `, and confirm the visible result is exactly `שלום ` with one space and the active input source changes to standard Hebrew. **Result:**
+  **Evidence:**
+- [ ] **Hebrew-layout English correction.** Select Hebrew, type the physical keys that produce `יקךךם `, and confirm the visible result is exactly `hello ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Correct English unchanged.** Type `hello ` using English; confirm text and input source are unchanged. **Result:**
+  **Evidence:**
+- [ ] **Correct Hebrew unchanged.** Type `שלום ` using Hebrew; confirm text and input source are unchanged. **Result:**
+  **Evidence:**
+- [ ] **Ambiguous forms unchanged.** Type `go ` using English and `עם ` using Hebrew; confirm both remain exactly as typed. **Result:**
+  **Evidence:**
+- [ ] **Unknown forms unchanged.** Type at least one unrecognized English-shaped token and one unrecognized Hebrew-shaped token; record the exact test tokens and confirm both remain unchanged. **Result:**
+  **Evidence:**
+- [ ] **Host-dictionary candidate cannot authorize correction.** Select standard Hebrew and type exactly `שלום עם זזזז `. Confirm the visible text remains exactly `שלום עם זזזז `, no replacement occurs, the aggregate correction count does not increase, and the active input source remains standard Hebrew. This must pass even if the local English spelling dictionary accepts `zzzz`. **Result:**
+  **Evidence:**
+- [ ] **Alternating-language sentence.** In one sentence, alternate correct and wrong-layout English/Hebrew words. Confirm each completed word is evaluated independently, intended corrections occur, correct words remain, boundaries are preserved, and the source aligns after each correction. **Result:**
+  **Evidence:**
+
+## 4. Immediate Command-Z and normal undo
+
+Run separately in TextEdit and one other supported application.
+
+- [ ] **Immediate correction undo.** Cause `akuo ` → `שלום ` and immediately press Command-Z in the same field. Confirm Akuo restores exactly `akuo ` and the prior English source. **Result:**
+  **Evidence:**
+- [ ] **Reverse-direction immediate undo.** Cause `יקךךם ` → `hello ` and immediately press Command-Z. Confirm Akuo restores exactly `יקךךם ` and the prior Hebrew source. **Result:**
+  **Evidence:**
+- [ ] **Intervening typing expires Akuo undo.** Cause a correction, type one ordinary character, then press Command-Z. Confirm Command-Z reaches the host application and performs its normal undo; it must not restore Akuo’s original wrong-layout word. **Result:**
+  **Evidence:**
+- [ ] **Focus/context change expires Akuo undo.** Cause a correction, move focus to another field or app, then press Command-Z. Confirm Akuo does not intercept it. **Result:**
+  **Evidence:**
+- [ ] **Same-editor mouse relocation expires Akuo undo.** In a document with harmless existing text, cause a correction, click a different insertion point inside the same editor, and press Command-Z. Confirm Akuo does not restore the wrong-layout word at the old location, does not replace text at the new location, and leaves the host application to perform its native undo behavior. **Result:**
+  **Evidence:**
+- [ ] **Undo timeout.** Cause a correction, wait more than five seconds without typing, then press Command-Z. Confirm Akuo does not intercept the host application’s undo. **Result:**
+  **Evidence:**
+
+## 5. Conservative exclusions and editing safety
+
+Use recognizable test data that contains no real credentials or personal information.
+
+- [ ] **Return is a correction boundary.** In a new empty TextEdit document, select English, type `akuo`, and press Return. Confirm the document contains exactly `שלום\n` (the first line is `שלום` and the insertion point is on the empty second line) and the active input source is standard Hebrew. **Result:**
+  **Evidence:**
+- [ ] **Punctuation is not a correction boundary.** In a new empty TextEdit document, select English, type `akuo. `, and confirm the visible text is exactly `akuo. `, no correction occurs at either the dot or following space, and the active input source remains English. **Result:**
+  **Evidence:**
+- [ ] **URLs unchanged.** Type `https://akuo.app ` and confirm exact pass-through. **Result:**
+  **Evidence:**
+- [ ] **Emails unchanged.** Type `me@example.com ` and confirm exact pass-through. **Result:**
+  **Evidence:**
+- [ ] **Paths unchanged.** Type `/tmp/file ` and confirm exact pass-through. **Result:**
+  **Evidence:**
+- [ ] **Numbers unchanged.** Type `abc123 ` and `12345 ` and confirm exact pass-through. **Result:**
+  **Evidence:**
+- [ ] **Shortcuts unchanged.** Exercise Command-C, Command-V with harmless text, Command-A, and a representative Option/Control chord. Confirm Akuo does not correct or swallow them. **Result:**
+  **Evidence:**
+- [ ] **Identifiers unchanged.** Type `file_name `, `camelCase `, and `PascalCase ` and confirm exact pass-through. **Result:**
+  **Evidence:**
+- [ ] **Exact cascading exclusion sequence.** In a new empty TextEdit document, select English and type `hello go zzzz abc123 file_name camelCase me@example.com https://akuo.app /tmp/file `. Confirm the visible text is exactly `hello go zzzz abc123 file_name camelCase me@example.com https://akuo.app /tmp/file `, no replacement occurs anywhere in the sequence, and the active input source remains English. **Result:**
+  **Evidence:**
+- [ ] **Fresh correction after an excluded token.** In a new empty TextEdit document, select English and type `akuo.app akuo `. Confirm the visible text is exactly `akuo.app שלום `: the excluded domain remains unchanged, the subsequent fresh `akuo ` corrects once, and the active input source changes to standard Hebrew only after that fresh correction. **Result:**
+  **Evidence:**
+- [ ] **Mirrored Hebrew domain shape unchanged.** In a new empty TextEdit document, select standard Hebrew and type the physical keys that produce `יקךךם.בםצ `. Confirm the visible text remains exactly `יקךךם.בםצ `, no partial `hello` correction occurs, and the active input source remains standard Hebrew. **Result:**
+  **Evidence:**
+- [ ] **Leading mapped punctuation remains eligible.** In a new empty TextEdit document, select standard Hebrew and type the physical keys that produce `/וןבל `. Confirm the visible result is exactly `quick ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Navigation unchanged.** While partway through a token, use Left/Right arrows and Home/End where supported; confirm navigation is preserved and no stale token is later corrected. **Result:**
+  **Evidence:**
+- [ ] **Same-editor mouse relocation clears partial input.** In a TextEdit document containing harmless marker text on two lines, type only `a` at the first marker, click after the second marker in the same editor, then type `kuo `. Confirm no correction occurs, neither marker nor the earlier `a` is deleted, and the second location contains exactly `kuo `. **Result:**
+  **Evidence:**
+- [ ] **Non-text controls are untouched.** Focus a local list, outline row, static label, and ordinary button next to a disposable text field. Exercise a harmless letter, Space, and Return only where the control's documented native action is safe. Confirm the native control action is preserved and Akuo does not delete or insert anything in the adjacent field. **Result:**
+  **Evidence:**
+- [ ] **Password fields are neither corrected nor buffered.** In a disposable local password field with no real secret and a safe reveal control, type `akuo ` and the reverse-direction example with their boundaries. Confirm the revealed harmless value is exactly what was typed, no source switch or correction-count increase occurs, and after leaving the field a fresh partial suffix and boundary in a normal editor cannot complete or correct any password-field prefix. **Result:**
+  **Evidence:**
+- [ ] **Secure Input pause and recovery.** In Terminal, turn on **Terminal → Secure Keyboard Entry** and keep Terminal focused for the protected interval; opening Akuo's menu or switching apps invalidates the tested input context. With standard English selected, type the harmless unexecuted prompt text `akuo ` without pressing Return. Confirm the text remains exactly `akuo ` and the source remains English. Use Control-U to clear the harmless prompt input, turn Secure Keyboard Entry off, wait two seconds, then type a fresh `akuo ` without Return. Confirm it becomes `שלום ` and the source selection changes to Hebrew. Akuo must not observe or modify protected input. **Result:**
+  **Evidence:**
+
+## 6. Application matrix
+
+In every row, test both correction directions, one correct word, one excluded token, immediate Command-Z, and ordinary typing after enable/disable. Record exact app version and evidence.
+
+| Done | Application | Version/document context | Result | Evidence |
+|---|---|---|---|---|
+| [ ] | TextEdit | | | |
+| [ ] | Safari | Non-secure text field | | |
+| [ ] | Messages | New unsent message | | |
+| [ ] | Terminal | Harmless local prompt/input; do not execute test text | | |
+| [ ] | Electron editor | Name: | | |
+
+### Native Return identity
+
+For every item below, start from a fresh field and use Return itself as the correction boundary. Confirm the corrected text appears exactly once and the host receives its normal Return action exactly once—no missing submission/newline and no duplicate action.
+
+- [ ] **Terminal Return.** At a harmless local shell, first run `IFS= read -r akuo_acceptance && print -r -- "$akuo_acceptance"`. At the waiting input, select English, type `akuo`, and press Return. Confirm the read completes once and prints exactly `שלום`; do not use a command that executes the corrected text. **Result:**
+  **Evidence:**
+- [ ] **Browser form Return.** Open a disposable local or `data:` form whose submit handler prevents network navigation and displays the submitted value. Select English, type `akuo`, and press Return. Confirm one submit action displays exactly `שלום`. **Result:**
+  **Evidence:**
+- [ ] **Messages Return.** In a self-conversation or a designated consenting test conversation, select English, type the harmless text `akuo`, and press Return. Confirm exactly one `שלום` message is sent and no draft fragment remains. **Result:**
+  **Evidence:**
+- [ ] **Electron editor Return.** In the recorded Electron editor, select English, type `akuo`, and press Return. Confirm the editor contains `שלום` followed by exactly one native newline with the caret on the next line. **Result:**
+  **Evidence:**
+
+## 7. Controls, recovery, and lifecycle
+
+- [ ] **Disable pass-through.** Turn Akuo off and repeat both wrong-layout examples; confirm text and source remain unchanged. Turn Akuo back on and confirm correction resumes only from a fresh token. **Result:**
+  **Evidence:**
+- [ ] **Deterministic source-selection failure.** Do not force a live Carbon failure if doing so could disturb system input-source state. Instead, from the release source run `swift test --filter 'CorrectionCoordinatorTests/testSourceSelectionFailureKeepsVisibleCorrectionAndUndoRecord|CorrectionCoordinatorTests/testUndoSelectionFailureKeepsVisibleRestorationWithoutRetry|KeyboardEventMonitorTests/testCorrectionSelectionFailureIsSignaledAfterSuppressingBoundary|KeyboardEventMonitorTests/testUndoSelectionFailureIsSignaledAfterSuppressingCommandZ|AppModelTests/testCorrectionSelectionFailureRefreshesDisplayWithoutRestartOrRetry|AppModelTests/testUndoSelectionFailureUsesSameActionableStatusAndRefreshOnly'`. Confirm all injected correction and undo failure paths pass: the visible edit/count/eligible undo are retained, selection is not retried, displayed language refreshes, and the menu reports **Input source switch failed — select a language manually** rather than **Active** or a keyboard-monitor failure. **Result:**
+  **Evidence:**
+- [ ] **Event-tap timeout recovery.** Use the controlled procedure below to prove that the installed tap clears a partial token when macOS disables it. Do not post synthetic events or use real user data. **Result:**
+  **Evidence:** Exact PID, executable, recorded start fingerprint, and shell transcript or screen-recording timestamp; stop/continue times; unchanged-focus proof; partial-token outcome; fresh-token outcome.
+
+  1. Open a disposable empty TextEdit document, select English, and confirm Akuo is **Active**. Arrange TextEdit and Terminal side-by-side so Terminal output remains visible while the TextEdit field is focused. Leave the insertion point in the empty TextEdit document.
+  2. In Terminal, paste the exact zsh block below. It requires exactly one numeric `Akuo` PID, accepts launch arguments but requires the command’s first executable path to be exactly `/Applications/Akuo.app/Contents/MacOS/Akuo`, and records a normalized `lstart` fingerprint. Its single `akuo_identity_matches` function revalidates that same PID, executable, and start fingerprint immediately before `SIGSTOP` and before every `SIGCONT`, including cleanup. The entire block is a subshell, so its strict options, variables, traps, and exits cannot alter the interactive shell.
+
+     ```zsh
+     (
+     set -euo pipefail
+
+     akuo_expected="/Applications/Akuo.app/Contents/MacOS/Akuo"
+     akuo_pid_lines="$(pgrep -x Akuo || true)"
+     akuo_pid_count="$(printf '%s\n' "$akuo_pid_lines" | awk 'NF { count += 1 } END { print count + 0 }')"
+     if [[ "$akuo_pid_count" -ne 1 ]]; then
+         print -u2 "BLOCKED: expected exactly one Akuo PID, found $akuo_pid_count"
+         exit 1
+     fi
+
+     akuo_pid="$akuo_pid_lines"
+     if [[ ! "$akuo_pid" =~ '^[0-9]+$' ]]; then
+         print -u2 "BLOCKED: Akuo PID is not numeric"
+         exit 1
+     fi
+
+     if ! akuo_command="$(ps -p "$akuo_pid" -o command= 2>/dev/null)"; then
+         print -u2 "BLOCKED: could not read command for Akuo PID $akuo_pid"
+         exit 1
+     fi
+     akuo_executable="$(printf '%s\n' "$akuo_command" | awk 'NF { print $1; exit }')"
+     if [[ "$akuo_executable" != "$akuo_expected" ]]; then
+         print -u2 "BLOCKED: PID $akuo_pid executable is '$akuo_executable', not '$akuo_expected'"
+         exit 1
+     fi
+
+     if ! akuo_start="$(ps -p "$akuo_pid" -o lstart= 2>/dev/null | awk '{$1 = $1; print}')" || [[ -z "$akuo_start" ]]; then
+         print -u2 "BLOCKED: could not read start fingerprint for Akuo PID $akuo_pid"
+         exit 1
+     fi
+
+     akuo_identity_matches() {
+         local current_command current_executable current_start
+         if ! current_command="$(ps -p "$akuo_pid" -o command= 2>/dev/null)"; then
+             return 1
+         fi
+         current_executable="$(printf '%s\n' "$current_command" | awk 'NF { print $1; exit }')"
+         if ! current_start="$(ps -p "$akuo_pid" -o lstart= 2>/dev/null | awk '{$1 = $1; print}')"; then
+             return 1
+         fi
+         [[ "$current_executable" == "$akuo_expected" && "$current_start" == "$akuo_start" ]]
+     }
+
+     akuo_may_be_stopped=0
+     resume_akuo_best_effort() {
+         if [[ "$akuo_may_be_stopped" -eq 1 ]]; then
+             if ! akuo_identity_matches; then
+                 print -u2 "BLOCKED: cleanup did not signal PID $akuo_pid because its identity no longer matches"
+             elif ! kill -CONT "$akuo_pid"; then
+                 print -u2 "BLOCKED: cleanup could not continue validated Akuo PID $akuo_pid"
+             fi
+         fi
+     }
+     trap resume_akuo_best_effort EXIT
+     trap 'exit 130' HUP INT TERM
+
+     print "RECORD PID: $akuo_pid"
+     print "RECORD EXECUTABLE: $akuo_executable"
+     print "RECORD START: $akuo_start"
+     print "SIGSTOP scheduled in 10 seconds at $(date)"
+     sleep 10
+
+     if ! akuo_identity_matches; then
+         print -u2 "BLOCKED: Akuo identity changed before SIGSTOP; no signal sent"
+         exit 1
+     fi
+     akuo_may_be_stopped=1
+     if ! kill -STOP "$akuo_pid"; then
+         akuo_may_be_stopped=0
+         print -u2 "BLOCKED: failed to stop validated Akuo PID $akuo_pid"
+         exit 1
+     fi
+     print "Akuo PID $akuo_pid stopped at $(date); SIGCONT scheduled in 12 seconds"
+     sleep 12
+
+     if ! akuo_identity_matches; then
+         print -u2 "BLOCKED: Akuo identity changed before SIGCONT; no signal sent"
+         exit 1
+     fi
+     if ! kill -CONT "$akuo_pid"; then
+         print -u2 "BLOCKED: failed to continue validated Akuo PID $akuo_pid"
+         exit 1
+     fi
+     akuo_may_be_stopped=0
+     trap - EXIT HUP INT TERM
+     print "Akuo PID $akuo_pid continued at $(date)"
+     )
+     ```
+
+  3. Immediately return focus to the TextEdit field. Before the ten-second delay expires, type only the partial token `a`.
+  4. From this point until after the stale-buffer assertion in step 6, do **not** click Terminal, the Akuo menu, another application, or another field. Any app/focus change clears Akuo’s buffer and would make the test invalid. Observe the side-by-side Terminal output without moving focus.
+  5. Only after Terminal visibly reports the stopped timestamp, press the physical `k` key once in TextEdit. Do not type another key until Terminal visibly reports the continued timestamp. This physical key makes the unresponsive installed tap time out without posting a synthetic event.
+  6. After the visible `SIGCONT` report, keep TextEdit focused, wait a fixed two seconds for callback recovery, then type `uo `. The document must contain exactly `akuo ` and must **not** correct to `שלום `; this proves the timeout callback cleared the stale buffered `a` before processing resumed. Do not inspect or click Akuo’s menu before this assertion—the menu can remain **Active** through a successful recovery.
+  7. Type a fresh `akuo `. It must correct normally to `שלום ` and select Hebrew, proving the recovered tap processes new input.
+  8. Mark this item `BLOCKED`, not `PASS`, if identity validation, `SIGSTOP`, or `SIGCONT` fails; if the transcript lacks the bounded times; if a click/focus change occurs; if the screen recording cannot prove `k` was pressed during the visibly stopped interval and `uo ` followed the continued timestamp plus two-second recovery delay; if the stale partial token is retained; or if fresh correction does not resume.
+
+  The EXIT trap is best-effort: it revalidates identity before cleanup and cannot run after `SIGKILL`, a Terminal crash, or a system failure. If the block is interrupted or Akuo remains unresponsive, mark the test `BLOCKED`, open a fresh Terminal, and use the rescue block below. Enter the PID and normalized `RECORD START` value printed by the interrupted block. The rescue requires one current Akuo process, the same recorded PID, the exact installed executable as the first command path, and the same start fingerprint before it sends one `SIGCONT`.
+
+     ```zsh
+     (
+     set -euo pipefail
+
+     read "akuo_recorded_pid?Recorded Akuo PID: "
+     read "akuo_recorded_start?Recorded Akuo start fingerprint: "
+     if [[ ! "$akuo_recorded_pid" =~ '^[0-9]+$' || -z "$akuo_recorded_start" ]]; then
+         print -u2 "BLOCKED: recorded identity is incomplete; no signal sent"
+         exit 1
+     fi
+
+     akuo_expected="/Applications/Akuo.app/Contents/MacOS/Akuo"
+     akuo_pid_lines="$(pgrep -x Akuo || true)"
+     akuo_pid_count="$(printf '%s\n' "$akuo_pid_lines" | awk 'NF { count += 1 } END { print count + 0 }')"
+     if [[ "$akuo_pid_count" -ne 1 || "$akuo_pid_lines" != "$akuo_recorded_pid" ]]; then
+         print -u2 "BLOCKED: current Akuo PID does not uniquely match recorded PID; no signal sent"
+         exit 1
+     fi
+
+     if ! akuo_command="$(ps -p "$akuo_recorded_pid" -o command= 2>/dev/null)"; then
+         print -u2 "BLOCKED: could not read recorded PID; no signal sent"
+         exit 1
+     fi
+     akuo_executable="$(printf '%s\n' "$akuo_command" | awk 'NF { print $1; exit }')"
+     if ! akuo_start="$(ps -p "$akuo_recorded_pid" -o lstart= 2>/dev/null | awk '{$1 = $1; print}')"; then
+         print -u2 "BLOCKED: could not read start fingerprint; no signal sent"
+         exit 1
+     fi
+
+     if [[ "$akuo_executable" != "$akuo_expected" || "$akuo_start" != "$akuo_recorded_start" ]]; then
+         print -u2 "BLOCKED: executable or start fingerprint differs; no signal sent"
+         exit 1
+     fi
+     if ! kill -CONT "$akuo_recorded_pid"; then
+         print -u2 "BLOCKED: failed to continue validated Akuo PID $akuo_recorded_pid"
+         exit 1
+     fi
+     print "Validated Akuo PID $akuo_recorded_pid continued at $(date)"
+     )
+     ```
+
+  If rescue identity cannot be proven, do not send any signal. In Activity Monitor, find the single Akuo row, use **Inspect → Open Files and Ports** to verify `/Applications/Akuo.app/Contents/MacOS/Akuo`, then use the Stop control to force-quit only that verified row. If there is not one verifiable row, restart macOS instead of guessing. Preserve the transcript/screen recording and keep the acceptance item `BLOCKED`.
+- [ ] **Relaunch persistence.** Record enabled state, onboarding completion, aggregate count, and Launch at Login state; quit and reopen Akuo. Confirm exactly those values are restored or reconciled with macOS. **Result:**
+  **Evidence:**
+- [ ] **Launch at Login enable.** Turn it on, approve in **System Settings → General → Login Items** if required, log out/in or restart in an appropriate test environment, and confirm Akuo starts menu-bar-only. **Result:**
+  **Evidence:**
+- [ ] **Launch at Login disable.** Turn it off, repeat the login/restart check, and confirm Akuo does not start. **Result:**
+  **Evidence:**
+- [ ] **Test Area is ephemeral.** Enter distinctive text in Akuo Test Area, close the window, reopen it, and confirm the editor is empty. **Result:**
+  **Evidence:**
+
+## 8. No word history or typed-text logs
+
+Use a unique, non-secret canary token that does not occur elsewhere in the project or evidence names.
+
+- [ ] **No in-app history.** Type the canary and exercise both correction directions. Confirm no word/correction-history UI exists in the menu, setup, or Test Area. **Result:**
+  **Evidence:**
+- [ ] **Only four preference categories.** After relaunch, inspect Akuo’s preferences and confirm the only Akuo-owned categories are enabled state, onboarding completion, aggregate correction count, and Launch at Login preference; no canary, word, candidate, focus, app, or undo data is present. **Result:**
+  **Evidence:**
+- [ ] **No typed-text logs.** Inspect macOS Console/log output for the Akuo process across typing, correction, undo, secure input, quit, and relaunch. Confirm the canary and all typed test words are absent. **Result:**
+  **Evidence:**
+- [ ] **No retained Test Area text.** Relaunch Akuo, open Test Area, and confirm it contains no previous user-entered text. **Result:**
+  **Evidence:**
+
+## Final disposition
+
+- [ ] Every applicable item above is `PASS`, with no unresolved `FAIL` or `BLOCKED` item.
+- [ ] No release-blocker stop rule was triggered.
+- [ ] Evidence is stored with private content redacted.
+
+**Overall result:** `PENDING / PASS / FAIL / BLOCKED`
+**Accepted by:**
+**Date:**
+**Residual limitations or notes:**

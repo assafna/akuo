@@ -1,0 +1,288 @@
+import CoreGraphics
+import Foundation
+import XCTest
+import AkuoCore
+@testable import AkuoMac
+
+final class LiveRecognitionPipelineTests: XCTestCase {
+    func testExactLiveHebrewGibberishSequencePassesThroughWithoutSideEffects() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: LiveRecognitionFallback(english: ["zzzz"], hebrew: [])
+        )
+        let input = "שלום עם זזזז "
+
+        XCTAssertEqual(fixture.passThrough(input), input)
+        XCTAssertTrue(fixture.replacer.calls.isEmpty)
+        XCTAssertEqual(fixture.counter.incrementCount, 0)
+        XCTAssertTrue(fixture.undo.registered.isEmpty)
+        XCTAssertTrue(fixture.backend.selectedIdentifiers.isEmpty)
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .hebrew)
+    }
+
+    func testProductionRecognitionCompositionStillCorrectsRequiredExamples() {
+        for (language, input, passThrough, deleteCount, replacement, targetIdentifier) in [
+            (Language.english, "akuo ", "akuo", 4, "שלום", "com.apple.keylayout.Hebrew"),
+            (Language.hebrew, "יקךךם ", "יקךךם", 5, "hello", "com.apple.keylayout.ABC"),
+        ] {
+            let fixture = makeFixture(language: language)
+
+            XCTAssertEqual(fixture.passThrough(input), passThrough)
+            XCTAssertEqual(fixture.replacer.calls, [
+                .init(
+                    deleteCount: deleteCount,
+                    replacement: replacement,
+                    boundary: " "
+                ),
+            ])
+            XCTAssertEqual(fixture.counter.incrementCount, 1)
+            XCTAssertEqual(fixture.undo.registered.count, 1)
+            XCTAssertEqual(fixture.backend.selectedIdentifiers, [targetIdentifier])
+        }
+    }
+
+    func testFallbackOnlyOriginalVetoesSeedCandidate() {
+        let fixture = makeFixture(
+            language: .english,
+            fallback: LiveRecognitionFallback(english: ["akuo"], hebrew: [])
+        )
+
+        XCTAssertEqual(fixture.passThrough("akuo "), "akuo ")
+        XCTAssertTrue(fixture.replacer.calls.isEmpty)
+        XCTAssertEqual(fixture.counter.incrementCount, 0)
+        XCTAssertTrue(fixture.undo.registered.isEmpty)
+        XCTAssertTrue(fixture.backend.selectedIdentifiers.isEmpty)
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+    }
+
+    func testProductionRecognitionCompositionCorrectsLeadingMappedPunctuation() {
+        let fixture = makeFixture(language: .hebrew)
+
+        XCTAssertTrue(fixture.process("/", keyCode: 12) === fixture.nativeEvent)
+        XCTAssertEqual(fixture.passThrough("וןבל"), "וןבל")
+        XCTAssertNil(fixture.process(" "))
+
+        XCTAssertEqual(fixture.replacer.calls, [
+            .init(deleteCount: 5, replacement: "quick", boundary: " "),
+        ])
+        XCTAssertEqual(fixture.counter.incrementCount, 1)
+        XCTAssertEqual(fixture.undo.registered.count, 1)
+        XCTAssertEqual(
+            fixture.backend.selectedIdentifiers,
+            ["com.apple.keylayout.ABC"]
+        )
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+    }
+
+    private func makeFixture(
+        language: Language,
+        fallback: LiveRecognitionFallback = .init(english: [], hebrew: [])
+    ) -> LiveRecognitionFixture {
+        let backend = LiveRecognitionInputSourceBackend(language: language)
+        let inputSources = InputSourceController(backend: backend)
+        let replacer = LiveRecognitionTextReplacer()
+        let counter = LiveRecognitionCounter()
+        let undo = LiveRecognitionUndoRecorder()
+        let coordinator = CorrectionCoordinator(
+            policy: AppModel.makeRecognitionPolicy(fallback: fallback),
+            textReplacer: replacer,
+            inputSourceSelector: inputSources,
+            counter: counter,
+            clock: LiveRecognitionClock(),
+            undoController: undo
+        )
+        let decoder = LiveRecognitionEventDecoder()
+        let nativeEvent = CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: 0,
+            keyDown: true
+        )!
+        let monitor = KeyboardEventMonitor(
+            decoder: decoder,
+            coordinator: coordinator,
+            permission: LiveRecognitionPermission(),
+            secureInput: LiveRecognitionSecureInput(),
+            focusContextProvider: LiveRecognitionFocusProvider(),
+            inputSources: inputSources,
+            tapManager: LiveRecognitionTapManager(),
+            isAkuoEnabled: { true }
+        )
+        return .init(
+            monitor: monitor,
+            decoder: decoder,
+            nativeEvent: nativeEvent,
+            replacer: replacer,
+            backend: backend,
+            inputSources: inputSources,
+            counter: counter,
+            undo: undo
+        )
+    }
+}
+
+private struct LiveRecognitionFallback: WordRecognizing {
+    let english: Set<String>
+    let hebrew: Set<String>
+
+    func recognizes(_ word: String, as language: Language) -> Bool {
+        switch language {
+        case .english:
+            english.contains(word.lowercased())
+        case .hebrew:
+            hebrew.contains(word)
+        }
+    }
+}
+
+private struct LiveRecognitionReplacement: Equatable {
+    let deleteCount: Int
+    let replacement: String
+    let boundary: String
+}
+
+private final class LiveRecognitionTextReplacer: TextReplacing {
+    private(set) var calls: [LiveRecognitionReplacement] = []
+
+    func replacePreviousText(
+        deleteCount: Int,
+        replacement: String,
+        boundary: String,
+        boundaryKeyCode: Int
+    ) -> Bool {
+        calls.append(.init(
+            deleteCount: deleteCount,
+            replacement: replacement,
+            boundary: boundary
+        ))
+        return true
+    }
+}
+
+private final class LiveRecognitionCounter: CorrectionCounting {
+    private(set) var incrementCount = 0
+
+    func incrementCorrectionCount() {
+        incrementCount += 1
+    }
+}
+
+private final class LiveRecognitionUndoRecorder: UndoRecording {
+    private(set) var registered: [UndoRecord] = []
+
+    func register(_ record: UndoRecord) {
+        registered.append(record)
+    }
+
+    func eligibleRecord(context: FocusContext, now: Date) -> UndoRecord? {
+        nil
+    }
+
+    func invalidate() {}
+}
+
+private struct LiveRecognitionClock: RuntimeClock {
+    let now = Date(timeIntervalSinceReferenceDate: 100)
+}
+
+private final class LiveRecognitionInputSourceBackend: InputSourceBackend {
+    let sources: [InputSourceDescriptor] = [
+        .init(identifier: "com.apple.keylayout.ABC"),
+        .init(identifier: "com.apple.keylayout.Hebrew"),
+    ]
+    private(set) var currentIdentifier: String?
+    private(set) var selectedIdentifiers: [String] = []
+
+    init(language: Language) {
+        currentIdentifier = language == .english
+            ? "com.apple.keylayout.ABC"
+            : "com.apple.keylayout.Hebrew"
+    }
+
+    func select(identifier: String) -> Bool {
+        selectedIdentifiers.append(identifier)
+        currentIdentifier = identifier
+        return true
+    }
+}
+
+private final class LiveRecognitionEventDecoder: NativeEventDecoding {
+    var event: DecodedKeyboardEvent = .unhandled(marker: 0)
+
+    func decode(_ event: CGEvent, type: CGEventType) -> DecodedKeyboardEvent {
+        self.event
+    }
+}
+
+private struct LiveRecognitionFocusProvider: FocusContextProviding {
+    func current() -> FocusContext? {
+        .init(
+            processIdentifier: 42,
+            elementIdentifier: "field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+    }
+}
+
+private struct LiveRecognitionPermission: AccessibilityPermissionChecking {
+    let isGranted = true
+
+    func request() {}
+}
+
+private struct LiveRecognitionSecureInput: SecureInputChecking {
+    let isSecureInputEnabled = false
+}
+
+private final class LiveRecognitionTapManager: NativeEventTapManaging {
+    private(set) var isInstalled = false
+
+    func install(
+        userInfo: UnsafeMutableRawPointer,
+        callback: CGEventTapCallBack
+    ) -> Bool {
+        isInstalled = true
+        return true
+    }
+
+    func setEnabled(_ enabled: Bool) -> Bool {
+        isInstalled && enabled
+    }
+
+    func remove() {
+        isInstalled = false
+    }
+}
+
+private struct LiveRecognitionFixture {
+    let monitor: KeyboardEventMonitor
+    let decoder: LiveRecognitionEventDecoder
+    let nativeEvent: CGEvent
+    let replacer: LiveRecognitionTextReplacer
+    let backend: LiveRecognitionInputSourceBackend
+    let inputSources: InputSourceController
+    let counter: LiveRecognitionCounter
+    let undo: LiveRecognitionUndoRecorder
+
+    func process(_ text: String, keyCode: CGKeyCode? = nil) -> CGEvent? {
+        let inferredKeyCode: CGKeyCode? = switch text {
+        case " ": 49
+        case "\t": 48
+        case "\n", "\r": 36
+        default: nil
+        }
+        let resolvedKeyCode = keyCode ?? inferredKeyCode
+        decoder.event = .text(text, keyCode: resolvedKeyCode, marker: 0)
+        return monitor.process(nativeEvent)
+    }
+
+    func passThrough(_ input: String) -> String {
+        var passedThrough = ""
+        for character in input {
+            if process(String(character)) === nativeEvent {
+                passedThrough.append(character)
+            }
+        }
+        return passedThrough
+    }
+}

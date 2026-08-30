@@ -1,0 +1,543 @@
+import CoreFoundation
+import CoreGraphics
+import Foundation
+import AkuoCore
+
+enum DecodedKeyboardEvent: Equatable {
+    case text(String, keyCode: CGKeyCode? = nil, marker: Int64)
+    case deleteBackward(marker: Int64)
+    case navigation(marker: Int64)
+    case commandZ(marker: Int64)
+    case unsupportedModifiers(marker: Int64)
+    case unhandled(marker: Int64)
+    case tapDisabledByTimeout
+    case tapDisabledByUserInput
+
+    var marker: Int64? {
+        switch self {
+        case let .text(_, _, marker),
+             let .deleteBackward(marker),
+             let .navigation(marker),
+             let .commandZ(marker),
+             let .unsupportedModifiers(marker),
+             let .unhandled(marker):
+            marker
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            nil
+        }
+    }
+}
+
+protocol NativeEventDecoding {
+    func decode(_ event: CGEvent, type: CGEventType) -> DecodedKeyboardEvent
+}
+
+struct SystemNativeEventDecoder: NativeEventDecoding {
+    private static let deleteKey: CGKeyCode = 51
+    private static let zKey: CGKeyCode = 6
+    private static let navigationKeys: Set<CGKeyCode> = [
+        115, 116, 117, 119, 121, 123, 124, 125, 126,
+    ]
+
+    func decode(_ event: CGEvent, type: CGEventType) -> DecodedKeyboardEvent {
+        if type == .tapDisabledByTimeout {
+            return .tapDisabledByTimeout
+        }
+        if type == .tapDisabledByUserInput {
+            return .tapDisabledByUserInput
+        }
+
+        let marker = event.getIntegerValueField(.eventSourceUserData)
+        guard type == .keyDown else { return .unhandled(marker: marker) }
+
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let flags = event.flags
+        let commandZDisallowedModifiers: CGEventFlags = [
+            .maskShift, .maskControl, .maskAlternate,
+        ]
+        if keyCode == Self.zKey,
+           flags.contains(.maskCommand),
+           flags.intersection(commandZDisallowedModifiers).isEmpty {
+            return .commandZ(marker: marker)
+        }
+
+        let unsupportedModifiers: CGEventFlags = [
+            .maskCommand, .maskControl, .maskAlternate,
+        ]
+        if !flags.intersection(unsupportedModifiers).isEmpty {
+            return .unsupportedModifiers(marker: marker)
+        }
+        if keyCode == Self.deleteKey {
+            return .deleteBackward(marker: marker)
+        }
+        if Self.navigationKeys.contains(keyCode) {
+            return .navigation(marker: marker)
+        }
+
+        var requiredCharacterCount = 0
+        event.keyboardGetUnicodeString(
+            maxStringLength: 0,
+            actualStringLength: &requiredCharacterCount,
+            unicodeString: nil
+        )
+        guard requiredCharacterCount > 0 else { return .unhandled(marker: marker) }
+
+        var characters = [UniChar](repeating: 0, count: requiredCharacterCount)
+        var actualCharacterCount = 0
+        characters.withUnsafeMutableBufferPointer { buffer in
+            event.keyboardGetUnicodeString(
+                maxStringLength: buffer.count,
+                actualStringLength: &actualCharacterCount,
+                unicodeString: buffer.baseAddress
+            )
+        }
+        guard actualCharacterCount > 0,
+              actualCharacterCount <= characters.count else {
+            return .unhandled(marker: marker)
+        }
+        return .text(
+            String(utf16CodeUnits: characters, count: actualCharacterCount),
+            keyCode: keyCode,
+            marker: marker
+        )
+    }
+}
+
+protocol CorrectionCoordinating: AnyObject {
+    func handleBoundary(
+        _ completedWord: CompletedWord,
+        boundaryKeyCode: Int?,
+        context: FocusContext,
+        priorInputLanguage: Language
+    ) -> CorrectionHandlingResult
+    func handleImmediateUndo(context: FocusContext) -> CorrectionHandlingResult
+    func noteOrdinaryInput()
+}
+
+extension CorrectionCoordinator: CorrectionCoordinating {}
+
+protocol FocusContextProviding {
+    func current() -> FocusContext?
+}
+
+extension FocusContextProvider: FocusContextProviding {}
+
+protocol InputSourceStateProviding {
+    var readiness: InputSourceReadiness { get }
+    var currentLanguage: Language? { get }
+}
+
+extension InputSourceController: InputSourceStateProviding {}
+
+protocol NativeEventTapManaging: AnyObject {
+    var isInstalled: Bool { get }
+    func install(
+        userInfo: UnsafeMutableRawPointer,
+        callback: CGEventTapCallBack
+    ) -> Bool
+    func setEnabled(_ enabled: Bool) -> Bool
+    func remove()
+}
+
+private final class SystemNativeEventTapManager: NativeEventTapManaging {
+    private var eventTap: CFMachPort?
+    private var runLoopSource: CFRunLoopSource?
+
+    var isInstalled: Bool {
+        eventTap != nil
+    }
+
+    func install(
+        userInfo: UnsafeMutableRawPointer,
+        callback: CGEventTapCallBack
+    ) -> Bool {
+        guard eventTap == nil else { return true }
+
+        guard let eventTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: KeyboardEventMonitor.productionEventMask,
+            callback: callback,
+            userInfo: userInfo
+        ) else {
+            return false
+        }
+        CGEvent.tapEnable(tap: eventTap, enable: false)
+        guard let runLoopSource = CFMachPortCreateRunLoopSource(
+            kCFAllocatorDefault,
+            eventTap,
+            0
+        ) else {
+            CFMachPortInvalidate(eventTap)
+            return false
+        }
+
+        self.eventTap = eventTap
+        self.runLoopSource = runLoopSource
+        CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        return true
+    }
+
+    func setEnabled(_ enabled: Bool) -> Bool {
+        guard let eventTap else { return false }
+        CGEvent.tapEnable(tap: eventTap, enable: enabled)
+        return CGEvent.tapIsEnabled(tap: eventTap) == enabled
+    }
+
+    func remove() {
+        if let eventTap {
+            CGEvent.tapEnable(tap: eventTap, enable: false)
+        }
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
+        }
+        if let eventTap {
+            CFMachPortInvalidate(eventTap)
+        }
+        runLoopSource = nil
+        eventTap = nil
+    }
+}
+
+public protocol KeyboardEventMonitorDelegate: AnyObject {
+    func didChangeMonitorState(_ state: KeyboardEventMonitor.State)
+    func didFailInputSourceSelection(_ failure: InputSourceSelectionFailure)
+}
+
+public extension KeyboardEventMonitorDelegate {
+    func didFailInputSourceSelection(_ failure: InputSourceSelectionFailure) {}
+}
+
+public enum InputSourceSelectionOperation: Equatable, Sendable {
+    case correction
+    case immediateUndo
+}
+
+public struct InputSourceSelectionFailure: Equatable, Sendable {
+    public let operation: InputSourceSelectionOperation
+    public let expectedLanguage: Language
+
+    public init(
+        operation: InputSourceSelectionOperation,
+        expectedLanguage: Language
+    ) {
+        self.operation = operation
+        self.expectedLanguage = expectedLanguage
+    }
+}
+
+public final class KeyboardEventMonitor {
+    public enum State: Equatable, Sendable {
+        case stopped
+        case active
+        case degraded
+    }
+
+    public static let syntheticMarker: Int64 = 0x414B554F
+    static let productionEventMask = [
+        CGEventType.keyDown,
+        .leftMouseDown,
+        .rightMouseDown,
+        .otherMouseDown,
+    ].reduce(CGEventMask(0)) { mask, eventType in
+        mask | (CGEventMask(1) << eventType.rawValue)
+    }
+
+    public weak var delegate: (any KeyboardEventMonitorDelegate)?
+    public private(set) var state: State = .stopped
+
+    private let decoder: any NativeEventDecoding
+    private let coordinator: any CorrectionCoordinating
+    private let permission: any AccessibilityPermissionChecking
+    private let secureInput: any SecureInputChecking
+    private let focusContextProvider: any FocusContextProviding
+    private let inputSources: any InputSourceStateProviding
+    private let tapManager: any NativeEventTapManaging
+    private let isAkuoEnabled: () -> Bool
+
+    private var wordBuffer = WordBuffer()
+    private var lastFocusContext: FocusContext?
+
+    public convenience init(
+        coordinator: CorrectionCoordinator,
+        permission: any AccessibilityPermissionChecking,
+        secureInput: any SecureInputChecking,
+        focusContextProvider: FocusContextProvider,
+        inputSources: InputSourceController,
+        isAkuoEnabled: @escaping () -> Bool
+    ) {
+        self.init(
+            decoder: SystemNativeEventDecoder(),
+            coordinator: coordinator,
+            permission: permission,
+            secureInput: secureInput,
+            focusContextProvider: focusContextProvider,
+            inputSources: inputSources,
+            tapManager: SystemNativeEventTapManager(),
+            isAkuoEnabled: isAkuoEnabled
+        )
+    }
+
+    init(
+        decoder: any NativeEventDecoding,
+        coordinator: any CorrectionCoordinating,
+        permission: any AccessibilityPermissionChecking,
+        secureInput: any SecureInputChecking,
+        focusContextProvider: any FocusContextProviding,
+        inputSources: any InputSourceStateProviding,
+        tapManager: any NativeEventTapManaging,
+        isAkuoEnabled: @escaping () -> Bool
+    ) {
+        self.decoder = decoder
+        self.coordinator = coordinator
+        self.permission = permission
+        self.secureInput = secureInput
+        self.focusContextProvider = focusContextProvider
+        self.inputSources = inputSources
+        self.tapManager = tapManager
+        self.isAkuoEnabled = isAkuoEnabled
+    }
+
+    deinit {
+        tapManager.remove()
+    }
+
+    @discardableResult
+    public func start() -> Bool {
+        guard prerequisitesAreMet else {
+            stop()
+            return false
+        }
+
+        if !tapManager.isInstalled {
+            let userInfo = Unmanaged.passUnretained(self).toOpaque()
+            guard tapManager.install(userInfo: userInfo, callback: akuoEventTapCallback) else {
+                setState(.degraded)
+                return false
+            }
+        }
+
+        guard tapManager.setEnabled(true) else {
+            setState(.degraded)
+            return false
+        }
+        setState(.active)
+        return true
+    }
+
+    public func stop() {
+        clearTransientState()
+        tapManager.remove()
+        setState(.stopped)
+    }
+
+    public func refreshState() {
+        clearTransientState()
+        restartAfterStateRefresh()
+    }
+
+    func refreshAfterAkuoInputSourceChange() {
+        resetInputContext(invalidateImmediateUndo: false)
+        restartAfterStateRefresh()
+    }
+
+    private func restartAfterStateRefresh() {
+        if prerequisitesAreMet {
+            _ = start()
+        } else {
+            tapManager.remove()
+            setState(.stopped)
+        }
+    }
+
+    @discardableResult
+    func process(_ event: CGEvent, type: CGEventType? = nil) -> CGEvent? {
+        let eventType = type ?? event.type
+        switch eventType {
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            return recoverDisabledTap(for: event)
+        default:
+            break
+        }
+
+        guard !secureInput.isSecureInputEnabled else {
+            stop()
+            return event
+        }
+
+        if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticMarker {
+            return event
+        }
+
+        switch eventType {
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
+            clearTransientState()
+            return event
+        default:
+            break
+        }
+
+        guard let context = focusContextProvider.current(),
+              context.elementIdentifier != nil,
+              !context.isSecureField,
+              context.isEditableTextInput else {
+            clearTransientState()
+            return event
+        }
+
+        if let lastFocusContext, lastFocusContext != context {
+            clearTransientState()
+        }
+        lastFocusContext = context
+
+        let decoded = decoder.decode(event, type: eventType)
+
+        switch decoded {
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            return recoverDisabledTap(for: event)
+        default:
+            break
+        }
+
+        if decoded.marker == Self.syntheticMarker {
+            return event
+        }
+
+        switch decoded {
+        case let .text(text, keyCode, _):
+            guard let language = inputSources.currentLanguage else {
+                clearTransientState()
+                return event
+            }
+            coordinator.noteOrdinaryInput()
+            if isTokenText(text, keyCode: keyCode, language: language) {
+                _ = wordBuffer.consume(.text(text))
+                return event
+            }
+
+            switch wordBuffer.consume(.boundary(text)) {
+            case let .completed(completedWord):
+                let result = coordinator.handleBoundary(
+                    completedWord,
+                    boundaryKeyCode: keyCode.map(Int.init),
+                    context: context,
+                    priorInputLanguage: language
+                )
+                if case let .handledWithInputSourceSelectionFailure(expectedLanguage) = result {
+                    delegate?.didFailInputSourceSelection(.init(
+                        operation: .correction,
+                        expectedLanguage: expectedLanguage
+                    ))
+                }
+                return result == .notHandled ? event : nil
+            case .accumulating, .passThrough, .reset:
+                return event
+            }
+
+        case .deleteBackward:
+            coordinator.noteOrdinaryInput()
+            _ = wordBuffer.consume(.deleteBackward)
+            return event
+
+        case .navigation, .unsupportedModifiers, .unhandled:
+            clearTransientState()
+            return event
+
+        case .commandZ:
+            wordBuffer.reset()
+            let result = coordinator.handleImmediateUndo(context: context)
+            if case let .handledWithInputSourceSelectionFailure(expectedLanguage) = result {
+                delegate?.didFailInputSourceSelection(.init(
+                    operation: .immediateUndo,
+                    expectedLanguage: expectedLanguage
+                ))
+            }
+            if result != .notHandled {
+                return nil
+            }
+            coordinator.noteOrdinaryInput()
+            return event
+
+        case .tapDisabledByTimeout, .tapDisabledByUserInput:
+            return event
+        }
+    }
+
+    var currentTokenForTesting: String {
+        wordBuffer.currentToken
+    }
+
+    private var prerequisitesAreMet: Bool {
+        let readiness = inputSources.readiness
+        return isAkuoEnabled()
+            && permission.isGranted
+            && readiness.englishAvailable
+            && readiness.hebrewAvailable
+            && !secureInput.isSecureInputEnabled
+    }
+
+    private func isTokenText(
+        _ text: String,
+        keyCode: CGKeyCode?,
+        language: Language
+    ) -> Bool {
+        if language == .hebrew,
+           (keyCode == 12 && text == "/") || (keyCode == 13 && text == "'") {
+            return true
+        }
+        guard !text.isEmpty else { return false }
+        // Keep printable punctuation with the unfinished token so structured
+        // shapes reach the exclusion policy intact at whitespace or Return.
+        return text.unicodeScalars.allSatisfy {
+            !CharacterSet.whitespacesAndNewlines.contains($0)
+                && !CharacterSet.controlCharacters.contains($0)
+        }
+    }
+
+    private func clearTransientState() {
+        resetInputContext(invalidateImmediateUndo: true)
+    }
+
+    private func resetInputContext(invalidateImmediateUndo: Bool) {
+        wordBuffer.reset()
+        lastFocusContext = nil
+        if invalidateImmediateUndo {
+            coordinator.noteOrdinaryInput()
+        }
+    }
+
+    private func recoverDisabledTap(for event: CGEvent) -> CGEvent {
+        clearTransientState()
+        guard prerequisitesAreMet, tapManager.isInstalled else {
+            setState(.stopped)
+            return event
+        }
+        setState(tapManager.setEnabled(true) ? .active : .degraded)
+        return event
+    }
+
+    private func setState(_ state: State) {
+        guard self.state != state else { return }
+        self.state = state
+        delegate?.didChangeMonitorState(state)
+    }
+}
+
+private func akuoEventTapCallback(
+    _ proxy: CGEventTapProxy,
+    _ type: CGEventType,
+    _ event: CGEvent,
+    _ userInfo: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    guard let userInfo else {
+        return Unmanaged.passUnretained(event)
+    }
+    let monitor = Unmanaged<KeyboardEventMonitor>
+        .fromOpaque(userInfo)
+        .takeUnretainedValue()
+    guard let returnedEvent = monitor.process(event, type: type) else {
+        return nil
+    }
+    return Unmanaged.passUnretained(returnedEvent)
+}
