@@ -24,11 +24,51 @@ final class SystemServiceContractTests: XCTestCase {
 
     func testSpellCheckerAlwaysRejectsEmptyWords() {
         let checker = SystemSpellChecker(
-            backend: LocaleSpellCheckerBackend(recognized: [("", "en_US"), ("", "he_IL")])
+            backend: LocaleSpellCheckerBackend(
+                availableLanguages: [],
+                recognized: [("", "en_US"), ("", "he_IL")]
+            )
         )
 
         XCTAssertEqual(checker.recognitionStatus(for: "", as: .english), .unknown)
         XCTAssertEqual(checker.recognitionStatus(for: "", as: .hebrew), .unknown)
+    }
+
+    func testSpellCheckerReportsUnavailableWhenRequestedLanguageIsMissing() {
+        let checker = SystemSpellChecker(backend: LocaleSpellCheckerBackend(
+            availableLanguages: ["en_US"],
+            recognized: []
+        ))
+
+        XCTAssertEqual(
+            checker.recognitionStatus(for: "שלום", as: .hebrew),
+            .unavailable
+        )
+    }
+
+    func testSpellCheckerReportsUnavailableWhenBackendCheckFails() {
+        let checker = SystemSpellChecker(backend: LocaleSpellCheckerBackend(
+            availableLanguages: ["en_US", "he_IL"],
+            recognized: [],
+            failed: ["he_IL:שלום"]
+        ))
+
+        XCTAssertEqual(
+            checker.recognitionStatus(for: "שלום", as: .hebrew),
+            .unavailable
+        )
+    }
+
+    func testSpellCheckerReportsUnknownForCompletedMisspelling() {
+        let checker = SystemSpellChecker(backend: LocaleSpellCheckerBackend(
+            availableLanguages: ["en_US", "he_IL"],
+            recognized: []
+        ))
+
+        XCTAssertEqual(
+            checker.recognitionStatus(for: "notaword", as: .english),
+            .unknown
+        )
     }
 
     func testPermissionRequestIsExplicitRatherThanInitializationSideEffect() {
@@ -202,16 +242,32 @@ final class SystemServiceContractTests: XCTestCase {
 }
 
 private struct LocaleSpellCheckerBackend: SpellCheckerBackend {
+    let availableLanguages: Set<String>
     let recognized: Set<String>
+    let failed: Set<String>
 
-    init(recognized: [(String, String)]) {
+    init(
+        availableLanguages: Set<String> = ["en_US", "he_IL"],
+        recognized: [(String, String)],
+        failed: Set<String> = []
+    ) {
+        self.availableLanguages = availableLanguages
         self.recognized = Set(recognized.map { "\($0.1):\($0.0)" })
+        self.failed = failed
     }
 
-    func misspelledRange(in word: String, language: String) -> NSRange {
-        recognized.contains("\(language):\(word)")
+    func checkSpelling(in word: String, language: String) -> SpellingCheckResult {
+        let key = "\(language):\(word)"
+        if failed.contains(key) {
+            return .init(
+                misspelledRange: NSRange(location: NSNotFound, length: 0),
+                wordCount: -1
+            )
+        }
+        let range = recognized.contains(key)
             ? NSRange(location: NSNotFound, length: 0)
             : NSRange(location: 0, length: (word as NSString).length)
+        return .init(misspelledRange: range, wordCount: 1)
     }
 }
 
