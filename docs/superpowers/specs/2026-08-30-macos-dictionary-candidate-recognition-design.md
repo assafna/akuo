@@ -101,8 +101,11 @@ English lookup remains case-insensitive, while Hebrew lookup remains unchanged.
 
 `SystemSpellChecker` continues to use `NSSpellChecker` with explicit `en_US` or
 `he_IL`. Its adapter must expose enough response information to identify a
-failed or unsupported check. An unavailable requested language, a negative word
-count, or another non-successful service outcome returns `unavailable`, not
+failed or unsupported check. macOS may advertise the corresponding base
+identifier (`en` or `he`) even when the explicit locale-specific check is
+supported, so either the base or exact identifier establishes availability; the
+check itself remains `en_US` or `he_IL`. A missing language family, a negative
+word count, or another non-successful service outcome returns `unavailable`, not
 `recognized`.
 
 No checked word or result is logged or persisted.
