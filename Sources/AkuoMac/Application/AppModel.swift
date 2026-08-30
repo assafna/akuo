@@ -266,15 +266,15 @@ public final class AppModel: ObservableObject, KeyboardEventMonitorDelegate {
     nonisolated static func makeRecognitionPolicy(
         fallback: some WordRecognizing
     ) -> CorrectionPolicy {
-        let seed = SeedLexicon()
-        let originalRecognizer = CompositeWordRecognizer(
-            primary: seed,
+        let recognizer = CompositeWordRecognizer(
+            primary: SeedLexicon(),
             fallback: fallback
         )
+        let scorer = WordScorer(recognizer: recognizer)
         return CorrectionPolicy(
             layoutMap: KeyboardLayoutMap(),
-            originalScorer: WordScorer(recognizer: originalRecognizer),
-            candidateScorer: WordScorer(recognizer: seed),
+            originalScorer: scorer,
+            candidateScorer: scorer,
             excluder: TokenExcluder()
         )
     }

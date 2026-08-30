@@ -15,6 +15,7 @@ public enum KeepReason: Equatable, Sendable {
     case noConversion
     case originalRecognized
     case candidateUnknown
+    case recognitionUnavailable
     case ambiguous
 }
 
@@ -49,13 +50,27 @@ public struct CorrectionPolicy {
             for: conversion.original,
             language: conversion.source
         )
-        guard !original.recognized else { return .keep(.originalRecognized) }
+        switch original.status {
+        case .recognized:
+            return .keep(.originalRecognized)
+        case .unavailable:
+            return .keep(.recognitionUnavailable)
+        case .unknown:
+            break
+        }
 
         let candidate = candidateScorer.evidence(
             for: conversion.candidate,
             language: conversion.target
         )
-        guard candidate.recognized else { return .keep(.candidateUnknown) }
+        switch candidate.status {
+        case .recognized:
+            break
+        case .unknown:
+            return .keep(.candidateUnknown)
+        case .unavailable:
+            return .keep(.recognitionUnavailable)
+        }
         guard candidate.score - original.score >= 60 else { return .keep(.ambiguous) }
 
         return .correct(.init(

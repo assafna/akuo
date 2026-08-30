@@ -1,5 +1,11 @@
+public enum RecognitionStatus: Equatable, Sendable {
+    case recognized
+    case unknown
+    case unavailable
+}
+
 public protocol WordRecognizing {
-    func recognizes(_ word: String, as language: Language) -> Bool
+    func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus
 }
 
 public struct CompositeWordRecognizer: WordRecognizing {
@@ -14,16 +20,16 @@ public struct CompositeWordRecognizer: WordRecognizing {
         self.fallback = fallback
     }
 
-    public func recognizes(_ word: String, as language: Language) -> Bool {
-        let normalizedWord: String
-        switch language {
-        case .english:
-            normalizedWord = word.lowercased()
-        case .hebrew:
-            normalizedWord = word
-        }
+    public func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
+        let normalizedWord = language == .english ? word.lowercased() : word
 
-        return primary.recognizes(normalizedWord, as: language)
-            || fallback.recognizes(normalizedWord, as: language)
+        switch primary.recognitionStatus(for: normalizedWord, as: language) {
+        case .recognized:
+            return .recognized
+        case .unknown:
+            return fallback.recognitionStatus(for: normalizedWord, as: language)
+        case .unavailable:
+            return .unavailable
+        }
     }
 }

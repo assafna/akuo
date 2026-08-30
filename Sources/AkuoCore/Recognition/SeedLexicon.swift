@@ -14,12 +14,13 @@ public struct SeedLexicon: WordRecognizing, Sendable {
 
     public init() {}
 
-    public func recognizes(_ word: String, as language: Language) -> Bool {
-        switch language {
+    public func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
+        let isRecognized = switch language {
         case .english:
             Self.english.contains(word.lowercased())
         case .hebrew:
             Self.hebrew.contains(word)
         }
+        return isRecognized ? .recognized : .unknown
     }
 }

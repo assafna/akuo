@@ -40,20 +40,24 @@ final class CorrectionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.decision(for: "akuo"), .keep(.candidateUnknown))
     }
 
-    func testLocalFallbackCannotAuthorizeCandidateOutsideSeedLexicon() {
-        let seed = SeedLexicon()
-        let originalRecognizer = CompositeWordRecognizer(
-            primary: seed,
-            fallback: StubRecognizer(english: ["zzzz"], hebrew: [])
-        )
-        let policy = CorrectionPolicy(
-            layoutMap: KeyboardLayoutMap(),
-            originalScorer: WordScorer(recognizer: originalRecognizer),
-            candidateScorer: WordScorer(recognizer: seed),
-            excluder: TokenExcluder()
-        )
+    func testKeepsWhenOriginalRecognitionIsUnavailable() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: [],
+            hebrew: ["שלום"],
+            unavailableEnglish: ["akuo"]
+        ))
 
-        XCTAssertEqual(policy.decision(for: "זזזז"), .keep(.candidateUnknown))
+        XCTAssertEqual(policy.decision(for: "akuo"), .keep(.recognitionUnavailable))
+    }
+
+    func testKeepsWhenCandidateRecognitionIsUnavailable() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: [],
+            hebrew: [],
+            unavailableHebrew: ["שלום"]
+        ))
+
+        XCTAssertEqual(policy.decision(for: "akuo"), .keep(.recognitionUnavailable))
     }
 
     func testKeepsMixedSentenceTokensIndependently() {
@@ -94,9 +98,9 @@ final class CorrectionPolicyTests: XCTestCase {
     func testSeedLexiconNormalizesEnglishButNotHebrew() {
         let lexicon = SeedLexicon()
 
-        XCTAssertTrue(lexicon.recognizes("HELLO", as: .english))
-        XCTAssertTrue(lexicon.recognizes("quick", as: .english))
-        XCTAssertTrue(lexicon.recognizes("שלום", as: .hebrew))
+        XCTAssertEqual(lexicon.recognitionStatus(for: "HELLO", as: .english), .recognized)
+        XCTAssertEqual(lexicon.recognitionStatus(for: "quick", as: .english), .recognized)
+        XCTAssertEqual(lexicon.recognitionStatus(for: "שלום", as: .hebrew), .recognized)
     }
 
     func testScoresScriptAndRecognitionWithFixedWeights() {
@@ -104,11 +108,29 @@ final class CorrectionPolicyTests: XCTestCase {
 
         XCTAssertEqual(
             scorer.evidence(for: "HELLO", language: .english),
-            .init(language: .english, scriptMatches: true, recognized: true, score: 100)
+            .init(language: .english, scriptMatches: true, status: .recognized, score: 100)
         )
         XCTAssertEqual(
             scorer.evidence(for: "unknown", language: .english),
-            .init(language: .english, scriptMatches: true, recognized: false, score: 20)
+            .init(language: .english, scriptMatches: true, status: .unknown, score: 20)
+        )
+    }
+
+    func testUnavailableRecognitionCarriesNoRecognitionWeight() {
+        let scorer = WordScorer(recognizer: StubRecognizer(
+            english: [],
+            hebrew: [],
+            unavailableEnglish: ["unknown"]
+        ))
+
+        XCTAssertEqual(
+            scorer.evidence(for: "unknown", language: .english),
+            .init(
+                language: .english,
+                scriptMatches: true,
+                status: .unavailable,
+                score: 20
+            )
         )
     }
 
@@ -126,13 +148,29 @@ final class CorrectionPolicyTests: XCTestCase {
 private struct StubRecognizer: WordRecognizing {
     let english: Set<String>
     let hebrew: Set<String>
+    let unavailableEnglish: Set<String>
+    let unavailableHebrew: Set<String>
 
-    func recognizes(_ word: String, as language: Language) -> Bool {
+    init(
+        english: Set<String>,
+        hebrew: Set<String>,
+        unavailableEnglish: Set<String> = [],
+        unavailableHebrew: Set<String> = []
+    ) {
+        self.english = english
+        self.hebrew = hebrew
+        self.unavailableEnglish = unavailableEnglish
+        self.unavailableHebrew = unavailableHebrew
+    }
+
+    func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
         switch language {
         case .english:
-            english.contains(word.lowercased())
+            if unavailableEnglish.contains(word.lowercased()) { return .unavailable }
+            return english.contains(word.lowercased()) ? .recognized : .unknown
         case .hebrew:
-            hebrew.contains(word)
+            if unavailableHebrew.contains(word) { return .unavailable }
+            return hebrew.contains(word) ? .recognized : .unknown
         }
     }
 }

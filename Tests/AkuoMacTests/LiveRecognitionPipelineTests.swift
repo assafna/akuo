@@ -5,19 +5,54 @@ import AkuoCore
 @testable import AkuoMac
 
 final class LiveRecognitionPipelineTests: XCTestCase {
-    func testExactLiveHebrewGibberishSequencePassesThroughWithoutSideEffects() {
+    func testProductionRecognitionCompositionCorrectsSystemCandidatesInBothDirections() {
+        let cases: [(Language, String, LiveRecognitionFallback, String, Language)] = [
+            (.english, "gucs ", .init(english: [], hebrew: ["עובד"]), "עובד", .hebrew),
+            (.english, "utbh ", .init(english: [], hebrew: ["ואני"]), "ואני", .hebrew),
+            (.hebrew, "בםצפואקר ", .init(english: ["computer"], hebrew: []), "computer", .english),
+        ]
+
+        for (language, input, fallback, replacement, target) in cases {
+            let fixture = makeFixture(language: language, fallback: fallback)
+
+            _ = fixture.passThrough(input)
+
+            XCTAssertEqual(fixture.replacer.calls.map(\.replacement), [replacement], input)
+            XCTAssertEqual(fixture.inputSources.currentLanguage, target, input)
+            XCTAssertEqual(fixture.counter.incrementCount, 1, input)
+            XCTAssertEqual(fixture.undo.registered.count, 1, input)
+        }
+    }
+
+    func testLearnedSystemCandidateCanAuthorizeCorrection() {
         let fixture = makeFixture(
             language: .hebrew,
             fallback: LiveRecognitionFallback(english: ["zzzz"], hebrew: [])
         )
-        let input = "שלום עם זזזז "
 
-        XCTAssertEqual(fixture.passThrough(input), input)
+        XCTAssertEqual(fixture.passThrough("שלום עם זזזז "), "שלום עם זזזז")
+        XCTAssertEqual(fixture.replacer.calls.map(\.replacement), ["zzzz"])
+        XCTAssertEqual(fixture.counter.incrementCount, 1)
+        XCTAssertEqual(fixture.undo.registered.count, 1)
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+    }
+
+    func testUnavailableCandidateRecognitionPassesThroughWithoutSideEffects() {
+        let fixture = makeFixture(
+            language: .english,
+            fallback: LiveRecognitionFallback(
+                english: [],
+                hebrew: [],
+                unavailableHebrew: ["עובד"]
+            )
+        )
+
+        XCTAssertEqual(fixture.passThrough("gucs "), "gucs ")
         XCTAssertTrue(fixture.replacer.calls.isEmpty)
         XCTAssertEqual(fixture.counter.incrementCount, 0)
         XCTAssertTrue(fixture.undo.registered.isEmpty)
         XCTAssertTrue(fixture.backend.selectedIdentifiers.isEmpty)
-        XCTAssertEqual(fixture.inputSources.currentLanguage, .hebrew)
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
     }
 
     func testProductionRecognitionCompositionStillCorrectsRequiredExamples() {
@@ -74,13 +109,34 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
     }
 
+    func testReportedSentenceProducesExpectedTextAcrossSourceSwitch() {
+        let fixture = makeFixture(
+            language: .english,
+            fallback: LiveRecognitionFallback(
+                english: ["not", "always"],
+                hebrew: ["עובד", "ואני", "בטוח", "למה"]
+            )
+        )
+
+        _ = fixture.passThrough("this is not always gucs ")
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .hebrew)
+
+        _ = fixture.passThrough("ואני לא בטוח למה ")
+
+        XCTAssertEqual(
+            fixture.document.text,
+            "this is not always עובד ואני לא בטוח למה "
+        )
+    }
+
     private func makeFixture(
         language: Language,
         fallback: LiveRecognitionFallback = .init(english: [], hebrew: [])
     ) -> LiveRecognitionFixture {
         let backend = LiveRecognitionInputSourceBackend(language: language)
         let inputSources = InputSourceController(backend: backend)
-        let replacer = LiveRecognitionTextReplacer()
+        let document = LiveRecognitionDocument()
+        let replacer = LiveRecognitionTextReplacer(document: document)
         let counter = LiveRecognitionCounter()
         let undo = LiveRecognitionUndoRecorder()
         let coordinator = CorrectionCoordinator(
@@ -111,6 +167,7 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             monitor: monitor,
             decoder: decoder,
             nativeEvent: nativeEvent,
+            document: document,
             replacer: replacer,
             backend: backend,
             inputSources: inputSources,
@@ -123,13 +180,29 @@ final class LiveRecognitionPipelineTests: XCTestCase {
 private struct LiveRecognitionFallback: WordRecognizing {
     let english: Set<String>
     let hebrew: Set<String>
+    let unavailableEnglish: Set<String>
+    let unavailableHebrew: Set<String>
 
-    func recognizes(_ word: String, as language: Language) -> Bool {
+    init(
+        english: Set<String>,
+        hebrew: Set<String>,
+        unavailableEnglish: Set<String> = [],
+        unavailableHebrew: Set<String> = []
+    ) {
+        self.english = english
+        self.hebrew = hebrew
+        self.unavailableEnglish = unavailableEnglish
+        self.unavailableHebrew = unavailableHebrew
+    }
+
+    func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
         switch language {
         case .english:
-            english.contains(word.lowercased())
+            if unavailableEnglish.contains(word.lowercased()) { return .unavailable }
+            return english.contains(word.lowercased()) ? .recognized : .unknown
         case .hebrew:
-            hebrew.contains(word)
+            if unavailableHebrew.contains(word) { return .unavailable }
+            return hebrew.contains(word) ? .recognized : .unknown
         }
     }
 }
@@ -140,8 +213,28 @@ private struct LiveRecognitionReplacement: Equatable {
     let boundary: String
 }
 
+private final class LiveRecognitionDocument {
+    private(set) var text = ""
+
+    func append(_ value: String) {
+        text.append(contentsOf: value)
+    }
+
+    func applyReplacement(deleteCount: Int, replacement: String, boundary: String) {
+        guard text.count >= deleteCount else { return }
+        text.removeLast(deleteCount)
+        text.append(contentsOf: replacement)
+        text.append(contentsOf: boundary)
+    }
+}
+
 private final class LiveRecognitionTextReplacer: TextReplacing {
+    private let document: LiveRecognitionDocument
     private(set) var calls: [LiveRecognitionReplacement] = []
+
+    init(document: LiveRecognitionDocument) {
+        self.document = document
+    }
 
     func replacePreviousText(
         deleteCount: Int,
@@ -154,6 +247,11 @@ private final class LiveRecognitionTextReplacer: TextReplacing {
             replacement: replacement,
             boundary: boundary
         ))
+        document.applyReplacement(
+            deleteCount: deleteCount,
+            replacement: replacement,
+            boundary: boundary
+        )
         return true
     }
 }
@@ -258,6 +356,7 @@ private struct LiveRecognitionFixture {
     let monitor: KeyboardEventMonitor
     let decoder: LiveRecognitionEventDecoder
     let nativeEvent: CGEvent
+    let document: LiveRecognitionDocument
     let replacer: LiveRecognitionTextReplacer
     let backend: LiveRecognitionInputSourceBackend
     let inputSources: InputSourceController
@@ -279,8 +378,10 @@ private struct LiveRecognitionFixture {
     func passThrough(_ input: String) -> String {
         var passedThrough = ""
         for character in input {
-            if process(String(character)) === nativeEvent {
-                passedThrough.append(character)
+            let value = String(character)
+            if process(value) === nativeEvent {
+                passedThrough.append(contentsOf: value)
+                document.append(value)
             }
         }
         return passedThrough
