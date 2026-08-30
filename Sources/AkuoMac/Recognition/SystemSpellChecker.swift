@@ -45,19 +45,24 @@ public struct SystemSpellChecker: WordRecognizing {
     public func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
         guard !word.isEmpty else { return .unknown }
 
-        let languageCode: String
+        let requestedLanguageCode: String
+        let advertisedBaseLanguageCode: String
         switch language {
         case .english:
-            languageCode = "en_US"
+            requestedLanguageCode = "en_US"
+            advertisedBaseLanguageCode = "en"
         case .hebrew:
-            languageCode = "he_IL"
+            requestedLanguageCode = "he_IL"
+            advertisedBaseLanguageCode = "he"
         }
 
-        guard backend.availableLanguages.contains(languageCode) else {
+        let availableLanguages = backend.availableLanguages
+        guard availableLanguages.contains(requestedLanguageCode)
+            || availableLanguages.contains(advertisedBaseLanguageCode) else {
             return .unavailable
         }
 
-        let result = backend.checkSpelling(in: word, language: languageCode)
+        let result = backend.checkSpelling(in: word, language: requestedLanguageCode)
         guard result.wordCount >= 0 else { return .unavailable }
         return result.misspelledRange.location == NSNotFound
             ? .recognized

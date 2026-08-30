@@ -71,6 +71,22 @@ final class SystemServiceContractTests: XCTestCase {
         )
     }
 
+    func testSpellCheckerAcceptsAdvertisedBaseLanguagesForLocaleChecks() {
+        let checker = SystemSpellChecker(backend: LocaleSpellCheckerBackend(
+            availableLanguages: ["en", "he"],
+            recognized: [("hello", "en_US"), ("שלום", "he_IL")]
+        ))
+
+        XCTAssertEqual(
+            checker.recognitionStatus(for: "hello", as: .english),
+            .recognized
+        )
+        XCTAssertEqual(
+            checker.recognitionStatus(for: "שלום", as: .hebrew),
+            .recognized
+        )
+    }
+
     func testPermissionRequestIsExplicitRatherThanInitializationSideEffect() {
         let backend = FakeAccessibilityPermissionBackend(isGranted: false)
         let permission = SystemAccessibilityPermission(backend: backend)
