@@ -81,13 +81,19 @@ Record the blocker here before stopping:
 
 Perform these first in TextEdit with a new empty plain-text document.
 
-Version 1 completes a token only at whitespace or Return. Printable punctuation does not trigger correction and remains part of the unfinished token until one of those boundaries arrives.
+Version 1 completes a token only at whitespace or Return. Printable punctuation does not trigger correction and remains part of the unfinished token until one of those boundaries arrives. At the boundary, punctuation-shaped keys are eligible only when the complete opposite-layout conversion is a target-language word shape; structured and unsupported punctuation remains excluded.
 
 - [ ] **English-layout Hebrew correction.** Select English, type `akuo `, and confirm the visible result is exactly `שלום ` with one space and the active input source changes to standard Hebrew. **Result:**
+  **Evidence:**
+- [ ] **Comma key as a Hebrew letter.** Select English, type only `gcrh,` and pause. Confirm it remains buffered and unchanged. Then press Space and confirm the visible result is exactly `עברית ` with one Space and the active input source changes to standard Hebrew. Confirm `עברית` is recognized by that Mac's Hebrew spelling dictionary. **Result:**
+  **Evidence:**
+- [ ] **Other punctuation keys as Hebrew letters.** Select English and separately type `tr. ` and `gu; `. Confirm the visible results are exactly `ארץ ` and `עוף ` with one Space each and the active input source changes to standard Hebrew after each recognized candidate. Confirm both Hebrew candidates are recognized on that Mac. **Result:**
   **Evidence:**
 - [ ] **Hebrew-layout English correction.** Select Hebrew, type the physical keys that produce `יקךךם `, and confirm the visible result is exactly `hello ` with one space and the active input source changes to English. **Result:**
   **Evidence:**
 - [ ] **Correct English unchanged.** Type `hello ` using English; confirm text and input source are unchanged. **Result:**
+  **Evidence:**
+- [ ] **Recognized English with punctuation unchanged.** Type `hello, ` using English; confirm the text remains exactly `hello, ` and the input source remains English. **Result:**
   **Evidence:**
 - [ ] **Correct Hebrew unchanged.** Type `שלום ` using Hebrew; confirm text and input source are unchanged. **Result:**
   **Evidence:**
@@ -121,7 +127,7 @@ Use TextEdit's spelling menu to learn and later unlearn only the disposable valu
 
 Run separately in TextEdit and one other supported application.
 
-- [ ] **Immediate correction undo.** Cause `akuo ` → `שלום ` and immediately press Command-Z in the same field. Confirm Akuo restores exactly `akuo ` and the prior English source. **Result:**
+- [ ] **Immediate correction undo.** Cause `gcrh, ` → `עברית ` and immediately press Command-Z in the same field. Confirm Akuo restores exactly `gcrh, ` and the prior English source. **Result:**
   **Evidence:**
 - [ ] **Reverse-direction immediate undo.** Cause `יקךךם ` → `hello ` and immediately press Command-Z. Confirm Akuo restores exactly `יקךךם ` and the prior Hebrew source. **Result:**
   **Evidence:**
@@ -140,7 +146,9 @@ Use recognizable test data that contains no real credentials or personal informa
 
 - [ ] **Return is a correction boundary.** In a new empty TextEdit document, select English, type `akuo`, and press Return. Confirm the document contains exactly `שלום\n` (the first line is `שלום` and the insertion point is on the empty second line) and the active input source is standard Hebrew. **Result:**
   **Evidence:**
-- [ ] **Punctuation is not a correction boundary.** In a new empty TextEdit document, select English, type `akuo. `, and confirm the visible text is exactly `akuo. `, no correction occurs at either the dot or following space, and the active input source remains English. **Result:**
+- [ ] **Layout punctuation with Return boundary.** In a new empty TextEdit document, select English, type `gcrh,`, and press Return. Confirm the document contains exactly `עברית\n`, Return occurs exactly once, and the active input source is standard Hebrew. **Result:**
+  **Evidence:**
+- [ ] **Unknown punctuation conversion unchanged.** In a new empty TextEdit document, select English, type `akuo. `, and confirm the visible text is exactly `akuo. `: the dot remains buffered until Space, the mapped candidate `שלוםץ` is unknown, and the active input source remains English. **Result:**
   **Evidence:**
 - [ ] **URLs unchanged.** Type `https://akuo.app ` and confirm exact pass-through. **Result:**
   **Evidence:**

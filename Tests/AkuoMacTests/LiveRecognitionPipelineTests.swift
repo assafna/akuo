@@ -76,6 +76,58 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         }
     }
 
+    func testLayoutLetterPunctuationWaitsForBoundaryThenCorrectsCompleteToken() {
+        let boundaries: [(String, CGKeyCode)] = [(" ", 49), ("\r", 36)]
+
+        for (boundary, keyCode) in boundaries {
+            let fixture = makeFixture(
+                language: .english,
+                fallback: .init(english: [], hebrew: ["עברית"])
+            )
+
+            XCTAssertEqual(fixture.passThrough("gcrh,"), "gcrh,")
+            XCTAssertEqual(fixture.monitor.currentTokenForTesting, "gcrh,")
+            XCTAssertTrue(fixture.replacer.calls.isEmpty)
+            XCTAssertTrue(fixture.backend.selectedIdentifiers.isEmpty)
+
+            XCTAssertNil(fixture.process(boundary, keyCode: keyCode))
+
+            XCTAssertEqual(fixture.document.text, "עברית\(boundary)")
+            XCTAssertEqual(fixture.replacer.calls, [
+                .init(
+                    deleteCount: 5,
+                    replacement: "עברית",
+                    boundary: boundary
+                ),
+            ])
+            XCTAssertEqual(
+                fixture.backend.selectedIdentifiers,
+                ["com.apple.keylayout.Hebrew"]
+            )
+            XCTAssertEqual(fixture.inputSources.currentLanguage, .hebrew)
+            XCTAssertEqual(fixture.counter.incrementCount, 1)
+            XCTAssertEqual(fixture.undo.registered.count, 1)
+        }
+    }
+
+    func testRecognizedEnglishWordFollowedByLayoutPunctuationStaysUnchanged() {
+        let fixture = makeFixture(
+            language: .english,
+            fallback: .init(
+                english: ["hello,"],
+                hebrew: ["יקךךםת"]
+            )
+        )
+
+        XCTAssertEqual(fixture.passThrough("hello, "), "hello, ")
+        XCTAssertEqual(fixture.document.text, "hello, ")
+        XCTAssertTrue(fixture.replacer.calls.isEmpty)
+        XCTAssertTrue(fixture.backend.selectedIdentifiers.isEmpty)
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+        XCTAssertEqual(fixture.counter.incrementCount, 0)
+        XCTAssertTrue(fixture.undo.registered.isEmpty)
+    }
+
     func testFallbackOnlyOriginalVetoesSeedCandidate() {
         let fixture = makeFixture(
             language: .english,

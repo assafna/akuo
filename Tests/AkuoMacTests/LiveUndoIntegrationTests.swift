@@ -12,7 +12,7 @@ final class LiveUndoIntegrationTests: XCTestCase {
         keyDown: true
     )!
 
-    func testAkuoSourceChangeNotificationPreservesImmediateUndo() {
+    func testLayoutPunctuationCorrectionSurvivesSourceChangeAndImmediateUndo() {
         let suiteName = "LiveUndoIntegrationTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.removePersistentDomain(forName: suiteName)
@@ -61,14 +61,14 @@ final class LiveUndoIntegrationTests: XCTestCase {
         )
         defer { lifecycle.stop() }
 
-        for character in "akuo" {
+        for character in "gcrh," {
             decoder.event = .text(String(character), marker: 0)
             XCTAssertTrue(monitor.process(nativeEvent) === nativeEvent)
         }
         decoder.event = .text(" ", keyCode: 49, marker: 0)
         XCTAssertNil(monitor.process(nativeEvent))
         XCTAssertEqual(replacer.calls, [
-            .init(deleteCount: 4, replacement: "שלום", boundary: " "),
+            .init(deleteCount: 5, replacement: "עברית", boundary: " "),
         ])
         XCTAssertEqual(backend.selectedIdentifiers, ["com.apple.keylayout.Hebrew"])
 
@@ -78,8 +78,8 @@ final class LiveUndoIntegrationTests: XCTestCase {
         decoder.event = .commandZ(marker: 0)
         XCTAssertNil(monitor.process(nativeEvent))
         XCTAssertEqual(replacer.calls, [
-            .init(deleteCount: 4, replacement: "שלום", boundary: " "),
-            .init(deleteCount: 5, replacement: "akuo", boundary: " "),
+            .init(deleteCount: 5, replacement: "עברית", boundary: " "),
+            .init(deleteCount: 6, replacement: "gcrh,", boundary: " "),
         ])
         XCTAssertEqual(backend.selectedIdentifiers, [
             "com.apple.keylayout.Hebrew",
@@ -119,7 +119,7 @@ private struct LiveUndoRecognizer: WordRecognizing {
         case .english:
             word.lowercased() == "hello"
         case .hebrew:
-            word == "שלום"
+            word == "עברית"
         }
         return isRecognized ? .recognized : .unknown
     }

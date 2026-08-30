@@ -11,6 +11,16 @@ final class KeyboardLayoutMapTests: XCTestCase {
         ))
     }
 
+    func testEnglishPunctuationKeysThatProduceHebrewLettersConvertWithinWords() {
+        for (source, expected) in [
+            ("gcrh,", "עברית"),
+            ("tr.", "ארץ"),
+            ("gu;", "עוף"),
+        ] {
+            XCTAssertEqual(map.convert(source)?.candidate, expected, source)
+        }
+    }
+
     func testHebrewLayoutMistakeConvertsToEnglish() {
         XCTAssertEqual(map.convert("יקךךם")?.candidate, "hello")
     }
