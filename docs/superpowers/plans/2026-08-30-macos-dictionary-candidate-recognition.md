@@ -514,7 +514,9 @@ public func recognitionStatus(for word: String, as language: Language) -> Recogn
     guard !word.isEmpty else { return .unknown }
 
     let languageCode = language == .english ? "en_US" : "he_IL"
-    guard backend.availableLanguages.contains(languageCode) else {
+    let baseLanguageCode = language == .english ? "en" : "he"
+    guard backend.availableLanguages.contains(languageCode)
+        || backend.availableLanguages.contains(baseLanguageCode) else {
         return .unavailable
     }
 
@@ -879,20 +881,21 @@ Add this row to the Release identity and evidence table in
 `docs/manual-acceptance.md`:
 
 ```markdown
-| macOS spelling languages (`en_US`, `he_IL`) | |
+| macOS spelling languages (English: `en` or `en_US`; Hebrew: `he` or `he_IL`) | |
 ```
 
 Immediately below the evidence-table instructions, add this local inspection
-command and require the tester to record whether both exact language codes are
-present:
+command and require the tester to record whether each required language is
+advertised by either its base identifier or its locale-specific identifier:
 
 ```bash
 xcrun swift -e 'import AppKit; print(NSSpellChecker.shared.availableLanguages.sorted())'
 ```
 
-If either `en_US` or `he_IL` is absent, the corresponding non-seed recognition
-checks are `BLOCKED`; seed recognition remains testable, but the release cannot
-claim general dictionary coverage for the missing language.
+English is available when the list contains `en` or `en_US`; Hebrew is available
+when it contains `he` or `he_IL`. If neither accepted identifier is present for a
+language, its non-seed recognition checks are `BLOCKED`; seed recognition remains
+testable, but the release cannot claim general dictionary coverage for that language.
 
 - [ ] **Step 2: Replace the seed-only README contract**
 
