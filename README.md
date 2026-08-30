@@ -1,6 +1,6 @@
 # Akuo
 
-Akuo 0.1.0 is an early development preview of a local, private-by-design native macOS menu-bar utility that corrects completed English and Hebrew words typed with the wrong keyboard layout. The name comes from typing `שלום` while the English layout is active: `akuo`.
+Akuo 0.2.0 is an early development preview of a local, private-by-design native macOS menu-bar utility that corrects completed English and Hebrew words typed with the wrong keyboard layout. The name comes from typing `שלום` while the English layout is active: `akuo`.
 
 This repository currently publishes source and local build instructions only. It does not provide a Developer ID-signed or notarized public binary.
 
