@@ -195,8 +195,8 @@ the input source so later physical keys are decoded in the intended language.
   prove non-seed Hebrew and English candidates reach replacement, source
   selection, correction counting, and undo registration.
 - Simulate the reported physical-key sentence across the input-source change and
-  assert the final text is exactly:
-  `this is not always עובד ואני לא בטוח למה`
+  assert the final text, including the Space that completes the last word, is
+  exactly `this is not always עובד ואני לא בטוח למה `.
 - Preserve regression coverage for recognized originals and excluded tokens.
 - Explicitly prove the selected tradeoff: a fake learned English candidate
   `zzzz` makes Hebrew `זזזז` eligible for correction.
@@ -255,7 +255,8 @@ persistent-storage changes are expected.
 - User-learned words can authorize corrections in both directions.
 - Recognized originals, unknown candidates, unavailable recognition, and all
   existing excluded contexts remain unchanged.
-- The reported sentence produces the expected mixed English/Hebrew output.
+- The reported sentence produces the expected mixed English/Hebrew output with
+  exactly one trailing boundary Space.
 - Source switching, correction counting, and immediate undo remain correct.
 - No typed text or recognition result is persisted or logged.
 - Focused tests, the full Swift test suite, a release bundle build, and the
