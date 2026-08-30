@@ -2,7 +2,7 @@ import XCTest
 @testable import AkuoCore
 
 final class AkuoCoreVersionTests: XCTestCase {
-    func testInitialVersionIsPointOne() {
-        XCTAssertEqual(AkuoCoreVersion.current, "0.1.0")
+    func testCurrentVersionIsPointTwo() {
+        XCTAssertEqual(AkuoCoreVersion.current, "0.2.0")
     }
 }

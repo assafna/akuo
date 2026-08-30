@@ -55,7 +55,7 @@ private struct SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
 
 public struct FocusContextProvider {
     private static let secureTextField = "AXSecureTextField"
-    // Akuo v0.1.0 supports only standard editable text roles that are
+    // Akuo supports only standard editable text roles that are
     // consistently exposed by the supported macOS 13+ application contexts.
     private static let editableTextRoles: Set<String> = [
         "AXTextField",

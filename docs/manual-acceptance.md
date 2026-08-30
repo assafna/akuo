@@ -55,7 +55,7 @@ Record the blocker here before stopping:
 
 - [ ] **Release bundle built.** Run `swift test` and `Scripts/build-app.sh release`; record the passing test count, bundle path, and printed executable SHA-256. **Result:**
   **Evidence:**
-- [ ] **Bundle identity verified.** Confirm `CFBundleIdentifier = app.akuo.Akuo`, version `0.1.0`, build `1`, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. **Result:**
+- [ ] **Bundle identity verified.** Confirm `CFBundleIdentifier = app.akuo.Akuo`, version `0.2.0`, build `2`, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. **Result:**
   **Evidence:**
 - [ ] **Installed before permission.** Move the release candidate to `/Applications/Akuo.app`, confirm its executable hash matches the built candidate, and launch only that copy. **Result:**
   **Evidence:**
