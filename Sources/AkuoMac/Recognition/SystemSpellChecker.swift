@@ -30,8 +30,8 @@ public struct SystemSpellChecker: WordRecognizing {
         self.backend = backend
     }
 
-    public func recognizes(_ word: String, as language: Language) -> Bool {
-        guard !word.isEmpty else { return false }
+    public func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
+        guard !word.isEmpty else { return .unknown }
 
         let languageCode: String
         switch language {
@@ -42,5 +42,7 @@ public struct SystemSpellChecker: WordRecognizing {
         }
 
         return backend.misspelledRange(in: word, language: languageCode).location == NSNotFound
+            ? .recognized
+            : .unknown
     }
 }
