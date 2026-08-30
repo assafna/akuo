@@ -196,13 +196,14 @@ private final class LiveExclusionCounter: CorrectionCounting {
 }
 
 private struct LiveExclusionRecognizer: WordRecognizing {
-    func recognizes(_ word: String, as language: Language) -> Bool {
-        switch language {
+    func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
+        let isRecognized = switch language {
         case .english:
             ["go", "hello", "me", "quick", "wi"].contains(word.lowercased())
         case .hebrew:
             word == "שלום"
         }
+        return isRecognized ? .recognized : .unknown
     }
 }
 

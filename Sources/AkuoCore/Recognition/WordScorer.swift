@@ -1,13 +1,18 @@
 public struct RecognitionEvidence: Equatable, Sendable {
     public let language: Language
     public let scriptMatches: Bool
-    public let recognized: Bool
+    public let status: RecognitionStatus
     public let score: Int
 
-    public init(language: Language, scriptMatches: Bool, recognized: Bool, score: Int) {
+    public init(
+        language: Language,
+        scriptMatches: Bool,
+        status: RecognitionStatus,
+        score: Int
+    ) {
         self.language = language
         self.scriptMatches = scriptMatches
-        self.recognized = recognized
+        self.status = status
         self.score = score
     }
 }
@@ -21,13 +26,13 @@ public struct WordScorer {
 
     public func evidence(for word: String, language: Language) -> RecognitionEvidence {
         let scriptMatches = Self.matchesScript(word, language: language)
-        let recognized = recognizer.recognizes(word, as: language)
-        let score = (scriptMatches ? 20 : 0) + (recognized ? 80 : 0)
+        let status = recognizer.recognitionStatus(for: word, as: language)
+        let score = (scriptMatches ? 20 : 0) + (status == .recognized ? 80 : 0)
 
         return RecognitionEvidence(
             language: language,
             scriptMatches: scriptMatches,
-            recognized: recognized,
+            status: status,
             score: score
         )
     }

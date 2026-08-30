@@ -114,13 +114,14 @@ private final class LiveUndoTextReplacer: TextReplacing {
 }
 
 private struct LiveUndoRecognizer: WordRecognizing {
-    func recognizes(_ word: String, as language: Language) -> Bool {
-        switch language {
+    func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
+        let isRecognized = switch language {
         case .english:
             word.lowercased() == "hello"
         case .hebrew:
             word == "שלום"
         }
+        return isRecognized ? .recognized : .unknown
     }
 }
 

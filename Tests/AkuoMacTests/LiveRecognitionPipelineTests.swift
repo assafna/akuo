@@ -124,13 +124,14 @@ private struct LiveRecognitionFallback: WordRecognizing {
     let english: Set<String>
     let hebrew: Set<String>
 
-    func recognizes(_ word: String, as language: Language) -> Bool {
-        switch language {
+    func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
+        let isRecognized = switch language {
         case .english:
             english.contains(word.lowercased())
         case .hebrew:
             hebrew.contains(word)
         }
+        return isRecognized ? .recognized : .unknown
     }
 }
 
