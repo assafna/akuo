@@ -11,6 +11,22 @@ final class CorrectionPolicyTests: XCTestCase {
         )
     }
 
+    func testCorrectsRecognizedHebrewCandidatesUsingPunctuationLayoutKeys() {
+        let cases = [("gcrh,", "עברית"), ("tr.", "ארץ"), ("gu;", "עוף")]
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: [],
+            hebrew: ["עברית", "ארץ", "עוף"]
+        ))
+
+        for (source, replacement) in cases {
+            XCTAssertEqual(
+                policy.decision(for: source),
+                .correct(.init(original: source, replacement: replacement, target: .hebrew)),
+                source
+            )
+        }
+    }
+
     func testCorrectsHebrewLayoutHello() {
         let policy = makePolicy(recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום", "עולם"]))
 
@@ -24,6 +40,57 @@ final class CorrectionPolicyTests: XCTestCase {
         let policy = makePolicy(recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום", "עולם"]))
 
         XCTAssertEqual(policy.decision(for: "hello"), .keep(.originalRecognized))
+    }
+
+    func testKeepsRecognizedPunctuatedOriginalWithTargetWordShape() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: ["the,"],
+            hebrew: ["איקת"]
+        ))
+
+        XCTAssertEqual(policy.decision(for: "the,"), .keep(.originalRecognized))
+    }
+
+    func testKeepsLayoutPunctuationWhenConvertedCandidateIsUnknown() {
+        let policy = makePolicy(recognizer: StubRecognizer(english: [], hebrew: []))
+
+        XCTAssertEqual(policy.decision(for: "gcrh,"), .keep(.candidateUnknown))
+    }
+
+    func testKeepsDomainExcludedEvenWhenMappedCandidateIsRecognized() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: [],
+            hebrew: ["שלוםץשפפ"]
+        ))
+
+        XCTAssertEqual(policy.decision(for: "akuo.app"), .keep(.excluded))
+    }
+
+    func testKeepsInteriorHebrewSlashExcludedEvenWhenMappedCandidateIsRecognized() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: ["heqlo"],
+            hebrew: []
+        ))
+
+        XCTAssertEqual(policy.decision(for: "יק/ךם"), .keep(.excluded))
+    }
+
+    func testKeepsPascalCaseWithLayoutPunctuationExcluded() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: [],
+            hebrew: ["שלוםת"]
+        ))
+
+        XCTAssertEqual(policy.decision(for: "Akuo,"), .keep(.excluded))
+    }
+
+    func testKeepsLeadingDotPathExcludedEvenWhenMappedCandidateIsRecognized() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: [],
+            hebrew: ["ץנשדירב"]
+        ))
+
+        XCTAssertEqual(policy.decision(for: ".bashrc"), .keep(.excluded))
     }
 
     func testKeepsWhenBothFormsAreKnown() {

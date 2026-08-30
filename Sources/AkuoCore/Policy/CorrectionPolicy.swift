@@ -43,8 +43,9 @@ public struct CorrectionPolicy {
     }
 
     public func decision(for token: String) -> CorrectionDecision {
-        guard !excluder.shouldExclude(token) else { return .keep(.excluded) }
-        guard let conversion = layoutMap.convert(token) else { return .keep(.noConversion) }
+        let conversion = layoutMap.convert(token)
+        guard !excluder.shouldExclude(token, conversion: conversion) else { return .keep(.excluded) }
+        guard let conversion else { return .keep(.noConversion) }
 
         let original = originalScorer.evidence(
             for: conversion.original,
