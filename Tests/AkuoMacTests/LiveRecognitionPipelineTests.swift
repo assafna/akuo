@@ -110,6 +110,183 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         }
     }
 
+    func testInternalApostropheWaitsForBoundaryThenCorrectsContraction() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["don't"], hebrew: [])
+        )
+
+        for (text, keyCode) in [
+            ("ג", CGKeyCode(2)),
+            ("ם", CGKeyCode(31)),
+            ("מ", CGKeyCode(45)),
+            (",", CGKeyCode(39)),
+            ("א", CGKeyCode(17)),
+        ] {
+            XCTAssertEqual(fixture.passThroughStroke(text, keyCode: keyCode), text)
+        }
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "גםמ,א")
+        XCTAssertTrue(fixture.replacer.calls.isEmpty)
+        XCTAssertNil(fixture.process(" "))
+
+        XCTAssertEqual(fixture.document.text, "don't ")
+        XCTAssertEqual(fixture.replacer.calls, [
+            .init(deleteCount: 5, replacement: "don't", boundary: " "),
+        ])
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+        XCTAssertEqual(fixture.counter.incrementCount, 1)
+        XCTAssertEqual(fixture.undo.registered.count, 1)
+    }
+
+    func testHebrewGereshWOutputCorrectsLowercaseContraction() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["we're"], hebrew: [])
+        )
+
+        for (text, keyCode) in [
+            ("׳", CGKeyCode(13)),
+            ("ק", CGKeyCode(14)),
+            (",", CGKeyCode(39)),
+            ("ר", CGKeyCode(15)),
+            ("ק", CGKeyCode(14)),
+        ] {
+            XCTAssertEqual(fixture.passThroughStroke(text, keyCode: keyCode), text)
+        }
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "׳ק,רק")
+        XCTAssertNil(fixture.process(" "))
+
+        XCTAssertEqual(fixture.document.text, "we're ")
+        XCTAssertEqual(fixture.replacer.calls, [
+            .init(deleteCount: 5, replacement: "we're", boundary: " "),
+        ])
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+        XCTAssertEqual(fixture.counter.incrementCount, 1)
+        XCTAssertEqual(fixture.undo.registered.count, 1)
+    }
+
+    func testInternalApostrophePreservesSilentShiftedCapitalization() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["we're"], hebrew: ["ק,רק"])
+        )
+
+        for (text, keyCode) in [
+            ("", CGKeyCode(13)),
+            ("ק", CGKeyCode(14)),
+            (",", CGKeyCode(39)),
+            ("ר", CGKeyCode(15)),
+            ("ק", CGKeyCode(14)),
+        ] {
+            XCTAssertEqual(fixture.passThroughStroke(text, keyCode: keyCode), text)
+        }
+
+        XCTAssertNil(fixture.process(" "))
+
+        XCTAssertEqual(fixture.document.text, "We're ")
+        XCTAssertEqual(fixture.replacer.calls, [
+            .init(deleteCount: 4, replacement: "We're", boundary: " "),
+        ])
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+        XCTAssertEqual(fixture.counter.incrementCount, 1)
+        XCTAssertEqual(fixture.undo.registered.count, 1)
+    }
+
+    func testCompletePhysicalTraceCorrectsCapitalizedJoinedEnglishWords() {
+        let cases: [([(String, CGKeyCode)], String, String, Int)] = [
+            ([
+                ("„", 2), ("ם", 31), ("מ", 45), (",", 39), ("א", 17),
+            ], "„םמ,א", "Don't", 5),
+            ([
+                ("שׁ", 0), ("ן", 34), ("מ", 45), (",", 39), ("א", 17),
+            ], "שׁןמ,א", "Ain't", 6),
+            ([
+                ("לֹ", 8), ("ש", 0), ("מ", 45), (",", 39), ("א", 17),
+            ], "לֹשמ,א", "Can't", 6),
+            ([
+                ("לֹ", 40), ("ש", 0), ("א", 17), ("ק", 14), (",", 39), ("ד", 1),
+            ], "לֹשאק,ד", "Kate's", 7),
+            ([
+                ("וֹ", 32), ("מ", 45), ("ב", 8), ("ך", 37), ("ק", 14), (",", 39), ("ד", 1),
+            ], "וֹמבךק,ד", "Uncle's", 8),
+            ([
+                ("", 46), ("ב", 8), ("„", 2), ("ם", 31), ("מ", 45),
+                ("ש", 0), ("ך", 37), ("ג", 2), (",", 39), ("ד", 1),
+            ], "ב„םמשךג,ד", "McDonald's", 9),
+            ([
+                ("„", 2), ("", 31), ("", 45), (",", 39), ("", 17),
+            ], "„,", "DON'T", 2),
+        ]
+
+        for (keyStrokes, visibleToken, candidate, deleteCount) in cases {
+            let fixture = makeFixture(
+                language: .hebrew,
+                fallback: .init(english: [candidate.lowercased()], hebrew: [])
+            )
+
+            for (text, keyCode) in keyStrokes {
+                XCTAssertEqual(
+                    fixture.passThroughStroke(text, keyCode: keyCode),
+                    text,
+                    candidate
+                )
+            }
+            XCTAssertEqual(fixture.monitor.currentTokenForTesting, visibleToken, candidate)
+            XCTAssertNil(fixture.process(" "), candidate)
+
+            XCTAssertEqual(fixture.document.text, "\(candidate) ", candidate)
+            XCTAssertEqual(fixture.replacer.calls, [
+                .init(
+                    deleteCount: deleteCount,
+                    replacement: candidate,
+                    boundary: " "
+                ),
+            ], candidate)
+            XCTAssertEqual(fixture.inputSources.currentLanguage, .english, candidate)
+            XCTAssertEqual(fixture.counter.incrementCount, 1, candidate)
+            XCTAssertEqual(fixture.undo.registered.count, 1, candidate)
+        }
+    }
+
+    func testCompletePhysicalTraceStillRejectsMalformedApostrophePlacement() {
+        let cases: [([(String, CGKeyCode)], String, String)] = [
+            ([
+                (",", 39), ("„", 2), ("ם", 31), ("מ", 45), (",", 39), ("א", 17),
+            ], ",„םמ,א", "'Don't"),
+            ([
+                ("„", 2), ("ם", 31), ("מ", 45), (",", 39), (",", 39), ("א", 17),
+            ], "„םמ,,א", "Don''t"),
+            ([
+                ("„", 2), ("ם", 31), ("מ", 45), ("א", 17), (",", 39),
+            ], "„םמא,", "Dont'"),
+        ]
+
+        for (keyStrokes, visibleToken, candidate) in cases {
+            let fixture = makeFixture(
+                language: .hebrew,
+                fallback: .init(english: [candidate.lowercased()], hebrew: [])
+            )
+
+            for (text, keyCode) in keyStrokes {
+                XCTAssertEqual(
+                    fixture.passThroughStroke(text, keyCode: keyCode),
+                    text,
+                    candidate
+                )
+            }
+            XCTAssertEqual(fixture.monitor.currentTokenForTesting, visibleToken, candidate)
+            XCTAssertTrue(fixture.process(" ") === fixture.nativeEvent, candidate)
+
+            XCTAssertEqual(fixture.document.text, visibleToken, candidate)
+            XCTAssertTrue(fixture.replacer.calls.isEmpty, candidate)
+            XCTAssertEqual(fixture.inputSources.currentLanguage, .hebrew, candidate)
+            XCTAssertEqual(fixture.counter.incrementCount, 0, candidate)
+            XCTAssertTrue(fixture.undo.registered.isEmpty, candidate)
+        }
+    }
+
     func testRecognizedEnglishWordFollowedByLayoutPunctuationStaysUnchanged() {
         let fixture = makeFixture(
             language: .english,

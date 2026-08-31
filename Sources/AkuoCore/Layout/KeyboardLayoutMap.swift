@@ -43,7 +43,7 @@ public struct KeyboardLayoutMap: Sendable {
     public init() {}
 
     public static let englishToHebrew: [Character: Character] = [
-        "q": "/", "w": "'", "e": "ק", "r": "ר", "t": "א",
+        "q": "/", "w": "׳", "e": "ק", "r": "ר", "t": "א",
         "y": "ט", "u": "ו", "i": "ן", "o": "ם", "p": "פ",
         "[": "]", "]": "[",
         "a": "ש", "s": "ד", "d": "ג", "f": "כ", "g": "ע",
@@ -71,6 +71,11 @@ public struct KeyboardLayoutMap: Sendable {
         45: "n", 31: "o", 35: "p", 12: "q", 15: "r", 1: "s",
         17: "t", 32: "u", 9: "v", 13: "w", 7: "x", 16: "y", 6: "z",
     ]
+    private static let englishWordJoinerByKeyCode: [
+        Int: (hebrewText: String, candidate: Character)
+    ] = [
+        39: (",", "'"),
+    ]
 
     private static let hebrewToEnglish: [Character: Character] = {
         var inverse: [Character: Character] = [:]
@@ -78,6 +83,7 @@ public struct KeyboardLayoutMap: Sendable {
             precondition(inverse[hebrew] == nil, "Keyboard layout values must be unique")
             inverse[hebrew] = english
         }
+        inverse["'"] = "w"
         return inverse
     }()
 
@@ -158,6 +164,12 @@ public struct KeyboardLayoutMap: Sendable {
         var recoveredShift = false
         candidate.reserveCapacity(keyStrokes.count)
         for keyStroke in keyStrokes {
+            if let joiner = englishWordJoinerByKeyCode[keyStroke.keyCode],
+               joiner.hebrewText == keyStroke.text {
+                candidate.append(joiner.candidate)
+                continue
+            }
+
             guard let lowercase = englishLetterByKeyCode[keyStroke.keyCode] else {
                 return nil
             }

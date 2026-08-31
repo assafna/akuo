@@ -36,6 +36,22 @@ final class CorrectionPolicyTests: XCTestCase {
         )
     }
 
+    func testCorrectsRecognizedEnglishContractionFromHebrewLayout() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: ["don't"],
+            hebrew: []
+        ))
+
+        XCTAssertEqual(
+            policy.decision(for: "גםמ,א"),
+            .correct(.init(
+                original: "גםמ,א",
+                replacement: "don't",
+                target: .english
+            ))
+        )
+    }
+
     func testKeepsKnownOriginal() {
         let policy = makePolicy(recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום", "עולם"]))
 
@@ -55,6 +71,23 @@ final class CorrectionPolicyTests: XCTestCase {
         let policy = makePolicy(recognizer: StubRecognizer(english: [], hebrew: []))
 
         XCTAssertEqual(policy.decision(for: "gcrh,"), .keep(.candidateUnknown))
+    }
+
+    func testKeepsUnknownInternalApostropheCandidate() {
+        let policy = makePolicy(recognizer: StubRecognizer(english: [], hebrew: []))
+
+        XCTAssertEqual(policy.decision(for: "כםם,נשר"), .keep(.candidateUnknown))
+    }
+
+    func testExcludesMalformedApostropheCandidatesBeforeRecognition() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: ["'hello", "hello'", "foo''bar"],
+            hebrew: []
+        ))
+
+        for token in [",יקךךם", "יקךךם,", "כםם,,נשר"] {
+            XCTAssertEqual(policy.decision(for: token), .keep(.excluded), token)
+        }
     }
 
     func testKeepsDomainExcludedEvenWhenMappedCandidateIsRecognized() {

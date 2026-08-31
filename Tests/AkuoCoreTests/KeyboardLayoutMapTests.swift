@@ -44,6 +44,29 @@ final class KeyboardLayoutMapTests: XCTestCase {
         )
     }
 
+    func testCompletePhysicalTracePreservesApostropheAndRecoversSilentCapital() {
+        XCTAssertEqual(
+            map.convert(
+                "ק,רק",
+                sourceHint: .hebrew,
+                keyStrokes: [
+                    .init(text: "", keyCode: 13),
+                    .init(text: "ק", keyCode: 14),
+                    .init(text: ",", keyCode: 39),
+                    .init(text: "ר", keyCode: 15),
+                    .init(text: "ק", keyCode: 14),
+                ]
+            ),
+            .init(
+                original: "ק,רק",
+                candidate: "We're",
+                source: .hebrew,
+                target: .english,
+                physicalEvidence: .init(recoveredShift: true)
+            )
+        )
+    }
+
     func testEveryLetterEntryRoundTrips() {
         for (english, hebrew) in KeyboardLayoutMap.englishToHebrew
             where KeyboardLayoutMap.hebrewLetters.contains(hebrew) &&
@@ -55,6 +78,10 @@ final class KeyboardLayoutMapTests: XCTestCase {
 
     func testHebrewOutputWithLeadingQKeyPunctuationConvertsToEnglish() {
         XCTAssertEqual(map.convert("/וןבל")?.candidate, "quick")
+    }
+
+    func testHebrewGereshWOutputConvertsToEnglishWithoutPhysicalTrace() {
+        XCTAssertEqual(map.convert("׳ק,רק")?.candidate, "we're")
     }
 
     func testMixedScriptHasNoConversion() {
