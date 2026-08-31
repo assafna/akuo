@@ -1,14 +1,41 @@
+public struct PhysicalLayoutEvidence: Equatable, Sendable {
+    public let recoveredShift: Bool
+
+    public init(recoveredShift: Bool) {
+        self.recoveredShift = recoveredShift
+    }
+}
+
 public struct LayoutConversion: Equatable, Sendable {
     public let original: String
     public let candidate: String
     public let source: Language
     public let target: Language
+    public let physicalEvidence: PhysicalLayoutEvidence?
 
-    public init(original: String, candidate: String, source: Language, target: Language) {
+    public init(
+        original: String,
+        candidate: String,
+        source: Language,
+        target: Language,
+        physicalEvidence: PhysicalLayoutEvidence? = nil
+    ) {
         self.original = original
         self.candidate = candidate
         self.source = source
         self.target = target
+        self.physicalEvidence = physicalEvidence
+    }
+
+    public var hasAuthoritativePhysicalEvidence: Bool {
+        guard let physicalEvidence else { return false }
+        if physicalEvidence.recoveredShift { return true }
+
+        // A complete physical trace resolves the otherwise ambiguous Hebrew
+        // final-letter forms for the only standalone English letter words.
+        return target == .english
+            && candidate.count == 1
+            && (candidate.lowercased() == "a" || candidate.lowercased() == "i")
     }
 }
 
@@ -63,7 +90,7 @@ public struct KeyboardLayoutMap: Sendable {
         sourceHint: Language? = nil,
         keyStrokes: [ObservedKeyStroke] = []
     ) -> LayoutConversion? {
-        guard !token.isEmpty else { return nil }
+        guard !token.isEmpty || !keyStrokes.isEmpty else { return nil }
 
         var source: Language?
         for character in token {
@@ -87,15 +114,18 @@ public struct KeyboardLayoutMap: Sendable {
         let target: Language = source == .english ? .hebrew : .english
 
         if source == .hebrew,
-           let physicalCandidate = Self.physicalEnglishCandidate(
+           let physicalConversion = Self.physicalEnglishCandidate(
                for: token,
                keyStrokes: keyStrokes
            ) {
             return LayoutConversion(
                 original: token,
-                candidate: physicalCandidate,
+                candidate: physicalConversion.candidate,
                 source: source,
-                target: target
+                target: target,
+                physicalEvidence: .init(
+                    recoveredShift: physicalConversion.recoveredShift
+                )
             )
         }
 
@@ -118,13 +148,14 @@ public struct KeyboardLayoutMap: Sendable {
     private static func physicalEnglishCandidate(
         for token: String,
         keyStrokes: [ObservedKeyStroke]
-    ) -> String? {
+    ) -> (candidate: String, recoveredShift: Bool)? {
         guard !keyStrokes.isEmpty,
               keyStrokes.map(\.text).joined() == token else {
             return nil
         }
 
         var candidate = String()
+        var recoveredShift = false
         candidate.reserveCapacity(keyStrokes.count)
         for keyStroke in keyStrokes {
             guard let lowercase = englishLetterByKeyCode[keyStroke.keyCode] else {
@@ -132,9 +163,10 @@ public struct KeyboardLayoutMap: Sendable {
             }
             let wasShifted = keyStroke.text.isEmpty
                 || shiftedHebrewOutputs.contains(keyStroke.text)
+            recoveredShift = recoveredShift || wasShifted
             candidate.append(wasShifted ? uppercaseASCII(lowercase) : lowercase)
         }
-        return candidate
+        return (candidate, recoveredShift)
     }
 
     private static func isEnglishLetter(_ character: Character) -> Bool {

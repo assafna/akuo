@@ -8,7 +8,11 @@ public struct TokenExcluder: Sendable {
         _ token: String,
         conversion: LayoutConversion?
     ) -> Bool {
-        guard !token.isEmpty else { return true }
+        let hasAuthoritativePhysicalEvidence =
+            conversion?.hasAuthoritativePhysicalEvidence == true
+        guard !token.isEmpty else {
+            return !hasAuthoritativePhysicalEvidence
+        }
 
         if token.contains(where: { $0.isNumber }) || token.contains("⌘") {
             return true
@@ -27,7 +31,9 @@ public struct TokenExcluder: Sendable {
             return true
         }
 
-        return token.count == 1 && (hasEnglish || hasHebrew)
+        return token.count == 1
+            && (hasEnglish || hasHebrew)
+            && !hasAuthoritativePhysicalEvidence
     }
 
     private func isPermittedLayoutLetterPunctuation(

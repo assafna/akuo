@@ -95,6 +95,12 @@ Version 1 completes a token only at whitespace or Return. Printable punctuation 
   **Evidence:**
 - [ ] **Composite shifted capital recovery.** Select standard Hebrew, hold Shift while pressing the physical C key, release Shift, then press O, O, L. Confirm the visible unfinished token is exactly `לֹםםך`. Press Space and confirm the visible result is exactly `Cool ` with one space and the active input source changes to English. **Result:**
   **Evidence:**
+- [ ] **Recognized Hebrew fragment does not veto physical case.** Select standard Hebrew, hold Shift while pressing the physical Y key, release Shift, then press E, S. Confirm the visible unfinished token is exactly `קד`. Press Space and confirm the visible result is exactly `Yes ` with one space and the active input source changes to English. Repeat with Shift+N followed by O; confirm the visible unfinished token `ם` becomes exactly `No `. **Result:**
+  **Evidence:**
+- [ ] **All-caps silent shifted word recovery.** Select standard Hebrew and hold Shift while pressing the physical Y, E, and S keys. Confirm the unfinished token emits no visible text. Press Space and confirm the visible result is exactly `YES ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Standalone A and I recovery.** Select standard Hebrew and test the physical A and I keys separately. Confirm `ש` becomes exactly `a ` and `ן` becomes exactly `i ` after Space. Repeat each key while holding Shift and confirm its shifted Hebrew output becomes exactly `A ` and `I `, respectively. **Result:**
+  **Evidence:**
 - [ ] **Correct English unchanged.** Type `hello ` using English; confirm text and input source are unchanged. **Result:**
   **Evidence:**
 - [ ] **Recognized English with punctuation unchanged.** Type `hello, ` using English; confirm the text remains exactly `hello, ` and the input source remains English. **Result:**

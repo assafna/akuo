@@ -238,9 +238,13 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         ]
 
         for (keyCode, shiftedOutput, candidate, deleteCount) in cases {
+            let visibleToken = "\(shiftedOutput)נב"
             let fixture = makeFixture(
                 language: .hebrew,
-                fallback: .init(english: [candidate.lowercased()], hebrew: [])
+                fallback: .init(
+                    english: [candidate.lowercased()],
+                    hebrew: [visibleToken]
+                )
             )
 
             XCTAssertEqual(
@@ -255,6 +259,114 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             XCTAssertEqual(fixture.document.text, "\(candidate) ", candidate)
             XCTAssertEqual(fixture.replacer.calls, [
                 .init(deleteCount: deleteCount, replacement: candidate, boundary: " "),
+            ], candidate)
+        }
+    }
+
+    func testSilentShiftedInitialOutranksRecognizedVisibleHebrewSuffix() {
+        let cases: [([ObservedKeyStroke], String, String)] = [
+            ([
+                .init(text: "", keyCode: 16),
+                .init(text: "ק", keyCode: 14),
+                .init(text: "ד", keyCode: 1),
+            ], "קד", "Yes"),
+            ([
+                .init(text: "", keyCode: 45),
+                .init(text: "ם", keyCode: 31),
+            ], "ם", "No"),
+        ]
+
+        for (keyStrokes, visibleToken, candidate) in cases {
+            let fixture = makeFixture(
+                language: .hebrew,
+                fallback: .init(
+                    english: [candidate.lowercased()],
+                    hebrew: [visibleToken]
+                )
+            )
+
+            for keyStroke in keyStrokes {
+                XCTAssertEqual(
+                    fixture.passThroughStroke(
+                        keyStroke.text,
+                        keyCode: CGKeyCode(keyStroke.keyCode)
+                    ),
+                    keyStroke.text,
+                    candidate
+                )
+            }
+            XCTAssertNil(fixture.process(" "), candidate)
+
+            XCTAssertEqual(fixture.document.text, "\(candidate) ", candidate)
+            XCTAssertEqual(fixture.replacer.calls, [
+                .init(
+                    deleteCount: visibleToken.unicodeScalars.count,
+                    replacement: candidate,
+                    boundary: " "
+                ),
+            ], candidate)
+        }
+    }
+
+    func testAllSilentShiftedKeysRestoreUppercaseEnglishWord() {
+        let cases: [([CGKeyCode], String)] = [
+            ([16, 14, 1], "YES"),
+            ([45, 31], "NO"),
+        ]
+
+        for (keyCodes, candidate) in cases {
+            let fixture = makeFixture(
+                language: .hebrew,
+                fallback: .init(english: [candidate.lowercased()], hebrew: [])
+            )
+
+            for keyCode in keyCodes {
+                XCTAssertEqual(
+                    fixture.passThroughStroke("", keyCode: keyCode),
+                    "",
+                    candidate
+                )
+            }
+            XCTAssertNil(fixture.process(" "), candidate)
+
+            XCTAssertEqual(fixture.document.text, "\(candidate) ", candidate)
+            XCTAssertEqual(fixture.replacer.calls, [
+                .init(deleteCount: 0, replacement: candidate, boundary: " "),
+            ], candidate)
+        }
+    }
+
+    func testStandaloneEnglishLetterWordsAreRecoveredWithAndWithoutShift() {
+        let cases: [(String, CGKeyCode, String)] = [
+            ("ש", 0, "a"),
+            ("שׁ", 0, "A"),
+            ("ן", 34, "i"),
+            ("", 34, "I"),
+        ]
+
+        for (shiftedOutput, keyCode, candidate) in cases {
+            let fixture = makeFixture(
+                language: .hebrew,
+                fallback: .init(
+                    english: [candidate.lowercased()],
+                    hebrew: [shiftedOutput]
+                )
+            )
+
+            XCTAssertEqual(
+                fixture.passThroughStroke(shiftedOutput, keyCode: keyCode),
+                shiftedOutput,
+                candidate
+            )
+            XCTAssertNil(fixture.process(" "), candidate)
+
+            XCTAssertEqual(fixture.document.text, "\(candidate) ", candidate)
+            XCTAssertEqual(fixture.replacer.calls, [
+                .init(
+                    deleteCount: shiftedOutput.unicodeScalars.count,
+                    replacement: candidate,
+                    boundary: " "
+                ),
             ], candidate)
         }
     }

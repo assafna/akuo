@@ -55,6 +55,30 @@ final class WordBufferTests: XCTestCase {
         XCTAssertEqual(buffer.consume(.boundary(" ")), .passThrough)
     }
 
+    func testBoundaryCompletesRecordedSilentKeyStrokesWithoutVisibleText() {
+        var buffer = WordBuffer()
+        let keyStrokes = [
+            ObservedKeyStroke(text: "", keyCode: 16),
+            ObservedKeyStroke(text: "", keyCode: 14),
+            ObservedKeyStroke(text: "", keyCode: 1),
+        ]
+        for keyStroke in keyStrokes {
+            XCTAssertEqual(
+                buffer.consume(.observedKeyStroke(keyStroke)),
+                .accumulating
+            )
+        }
+
+        XCTAssertEqual(
+            buffer.consume(.boundary(" ")),
+            .completed(.init(
+                token: "",
+                boundary: " ",
+                keyStrokes: keyStrokes
+            ))
+        )
+    }
+
     func testShortcutNavigationAndResetClearState() {
         for clearingInput in [BufferedInput.shortcut, .navigation, .reset] {
             var buffer = WordBuffer()
