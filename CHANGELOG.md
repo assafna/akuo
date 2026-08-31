@@ -6,6 +6,10 @@ All notable changes to Akuo are documented in this file.
 
 ### Fixed
 
+- Re-translate captured physical key events with AppKit's current input source
+  and require the same supported source before and after decoding, fixing
+  repeated corrections after source switches without trusting stale Core
+  Graphics Unicode payloads.
 - Reconstruct English capitalization per physical key when using the standard
   Hebrew input source, including silent shifted keys, all-caps words, and
   composite niqqud output.

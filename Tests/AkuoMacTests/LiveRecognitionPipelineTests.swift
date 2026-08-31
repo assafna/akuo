@@ -358,6 +358,36 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         )
     }
 
+    func testRepeatedPhysicalSequenceUsesCurrentLayoutAfterEveryCorrection() {
+        let fixture = makePhysicalFixture(
+            fallback: .init(
+                english: ["hello", "world"],
+                hebrew: ["שלום", "עולם"]
+            )
+        )
+
+        fixture.typePhysical(
+            "Hello world akuo guko hello world akuo guko "
+        )
+
+        XCTAssertEqual(
+            fixture.document.text,
+            "Hello world שלום עולם hello world שלום עולם "
+        )
+        XCTAssertEqual(
+            fixture.replacer.calls.map(\.replacement),
+            ["שלום", "hello", "שלום"]
+        )
+        XCTAssertEqual(
+            fixture.backend.selectedIdentifiers,
+            [
+                "com.apple.keylayout.Hebrew",
+                "com.apple.keylayout.ABC",
+                "com.apple.keylayout.Hebrew",
+            ]
+        )
+    }
+
     func testSilentShiftedHebrewKeyRestoresLeadingEnglishCapital() {
         let fixture = makeFixture(
             language: .hebrew,
@@ -594,6 +624,41 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             undo: undo
         )
     }
+
+    private func makePhysicalFixture(
+        fallback: LiveRecognitionFallback
+    ) -> PhysicalLayoutFixture {
+        let backend = LiveRecognitionInputSourceBackend(language: .english)
+        let inputSources = InputSourceController(backend: backend)
+        let document = LiveRecognitionDocument()
+        let replacer = LiveRecognitionTextReplacer(document: document)
+        let retranslator = PhysicalCurrentLayoutRetranslator(backend: backend)
+        let coordinator = CorrectionCoordinator(
+            policy: AppModel.makeRecognitionPolicy(fallback: fallback),
+            textReplacer: replacer,
+            inputSourceSelector: inputSources,
+            counter: LiveRecognitionCounter(),
+            clock: LiveRecognitionClock(),
+            undoController: LiveRecognitionUndoRecorder()
+        )
+        let monitor = KeyboardEventMonitor(
+            decoder: SystemNativeEventDecoder(retranslator: retranslator),
+            coordinator: coordinator,
+            permission: LiveRecognitionPermission(),
+            secureInput: LiveRecognitionSecureInput(),
+            focusContextProvider: LiveRecognitionFocusProvider(),
+            inputSources: inputSources,
+            tapManager: LiveRecognitionTapManager(),
+            isAkuoEnabled: { true }
+        )
+        return .init(
+            monitor: monitor,
+            retranslator: retranslator,
+            document: document,
+            replacer: replacer,
+            backend: backend
+        )
+    }
 }
 
 private struct LiveRecognitionFallback: WordRecognizing {
@@ -734,6 +799,77 @@ private final class LiveRecognitionEventDecoder: NativeEventDecoding {
     }
 }
 
+private final class PhysicalCurrentLayoutRetranslator: CurrentKeyboardTextRetranslating {
+    private static let englishKeyCode: [Character: CGKeyCode] = [
+        "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5,
+        "h": 4, "i": 34, "j": 38, "k": 40, "l": 37, "m": 46,
+        "n": 45, "o": 31, "p": 35, "q": 12, "r": 15, "s": 1,
+        "t": 17, "u": 32, "v": 9, "w": 13, "x": 7, "y": 16, "z": 6,
+    ]
+    private static let englishCharacter = Dictionary(
+        uniqueKeysWithValues: englishKeyCode.map { ($0.value, $0.key) }
+    )
+
+    private let backend: LiveRecognitionInputSourceBackend
+
+    init(backend: LiveRecognitionInputSourceBackend) {
+        self.backend = backend
+    }
+
+    func characters(for event: CGEvent) -> String? {
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        if keyCode == 49 { return " " }
+        guard let english = Self.englishCharacter[keyCode] else { return nil }
+        if backend.currentIdentifier == "com.apple.keylayout.Hebrew" {
+            return KeyboardLayoutMap.englishToHebrew[english].map(String.init)
+        }
+        return event.flags.contains(.maskShift)
+            ? String(english).uppercased()
+            : String(english)
+    }
+
+    func event(for physicalCharacter: Character) -> CGEvent? {
+        if physicalCharacter == " " {
+            return event(keyCode: 49, flags: [], staleCharacters: " ")
+        }
+        let lowercase = Character(String(physicalCharacter).lowercased())
+        guard let keyCode = Self.englishKeyCode[lowercase],
+              let staleCharacters = KeyboardLayoutMap.englishToHebrew[lowercase]
+                .map(String.init) else {
+            return nil
+        }
+        let flags: CGEventFlags = physicalCharacter.isUppercase ? [.maskShift] : []
+        return event(
+            keyCode: keyCode,
+            flags: flags,
+            staleCharacters: staleCharacters
+        )
+    }
+
+    private func event(
+        keyCode: CGKeyCode,
+        flags: CGEventFlags,
+        staleCharacters: String
+    ) -> CGEvent? {
+        guard let event = CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: keyCode,
+            keyDown: true
+        ) else {
+            return nil
+        }
+        event.flags = flags
+        let characters = Array(staleCharacters.utf16)
+        characters.withUnsafeBufferPointer { buffer in
+            event.keyboardSetUnicodeString(
+                stringLength: buffer.count,
+                unicodeString: buffer.baseAddress
+            )
+        }
+        return event
+    }
+}
+
 private struct LiveRecognitionFocusProvider: FocusContextProviding {
     func current() -> FocusContext? {
         .init(
@@ -814,5 +950,26 @@ private struct LiveRecognitionFixture {
         guard process(text, keyCode: keyCode) === nativeEvent else { return "" }
         document.append(text)
         return text
+    }
+}
+
+private struct PhysicalLayoutFixture {
+    let monitor: KeyboardEventMonitor
+    let retranslator: PhysicalCurrentLayoutRetranslator
+    let document: LiveRecognitionDocument
+    let replacer: LiveRecognitionTextReplacer
+    let backend: LiveRecognitionInputSourceBackend
+
+    func typePhysical(_ input: String) {
+        for character in input {
+            guard let event = retranslator.event(for: character),
+                  let visibleText = retranslator.characters(for: event) else {
+                XCTFail("No physical-key fixture for \(character)")
+                return
+            }
+            if monitor.process(event) === event {
+                document.append(visibleText)
+            }
+        }
     }
 }

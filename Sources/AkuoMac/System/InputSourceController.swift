@@ -20,6 +20,11 @@ public struct InputSourceReadiness: Equatable, Sendable {
     }
 }
 
+struct InputSourceSnapshot: Equatable, Sendable {
+    let identifier: String
+    let language: Language
+}
+
 protocol InputSourceBackend {
     var sources: [InputSourceDescriptor] { get }
     var currentIdentifier: String? { get }
@@ -129,12 +134,16 @@ public struct InputSourceController: InputSourceSelecting {
     }
 
     public var currentLanguage: Language? {
+        currentSource?.language
+    }
+
+    var currentSource: InputSourceSnapshot? {
         guard let identifier = backend.currentIdentifier else { return nil }
         if Self.englishPreference.contains(identifier) {
-            return .english
+            return .init(identifier: identifier, language: .english)
         }
         if identifier == Self.standardHebrew {
-            return .hebrew
+            return .init(identifier: identifier, language: .hebrew)
         }
         return nil
     }

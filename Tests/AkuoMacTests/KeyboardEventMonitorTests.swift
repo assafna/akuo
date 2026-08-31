@@ -34,13 +34,28 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
     }
 
-    func testProductionDecoderDynamicallyReadsMoreThanThirtyTwoUTF16Units() {
+    func testProductionDecoderPreservesLongRetranslatedOutput() {
         let text = String(repeating: "a", count: 40)
         let event = nativeUnicodeEvent(text)
+        let decoder = SystemNativeEventDecoder(
+            retranslator: FixedCurrentLayoutRetranslator(characters: text)
+        )
 
         XCTAssertEqual(
-            SystemNativeEventDecoder().decode(event, type: .keyDown),
+            decoder.decode(event, type: .keyDown),
             .text(text, keyCode: 0, marker: 0)
+        )
+    }
+
+    func testProductionDecoderUsesCurrentLayoutInsteadOfStaleEventUnicode() {
+        let event = nativeUnicodeEvent("ש")
+        let decoder = SystemNativeEventDecoder(
+            retranslator: FixedCurrentLayoutRetranslator(characters: "a")
+        )
+
+        XCTAssertEqual(
+            decoder.decode(event, type: .keyDown),
+            .text("a", keyCode: 0, marker: 0)
         )
     }
 
@@ -50,15 +65,53 @@ final class KeyboardEventMonitorTests: XCTestCase {
             .eventSourceUserData,
             value: KeyboardEventMonitor.syntheticMarker
         )
+        let decoder = SystemNativeEventDecoder(
+            retranslator: FixedCurrentLayoutRetranslator(characters: "שלום")
+        )
 
         XCTAssertEqual(
-            SystemNativeEventDecoder().decode(event, type: .keyDown),
+            decoder.decode(event, type: .keyDown),
             .text(
                 "שלום",
                 keyCode: 0,
                 marker: KeyboardEventMonitor.syntheticMarker
             )
         )
+    }
+
+    func testProductionDecoderFailsClosedWhenRetranslationIsUnavailable() {
+        let event = nativeUnicodeEvent("stale")
+        let decoder = SystemNativeEventDecoder(
+            retranslator: FixedCurrentLayoutRetranslator(characters: nil)
+        )
+
+        XCTAssertEqual(
+            decoder.decode(event, type: .keyDown),
+            .unhandled(marker: 0)
+        )
+    }
+
+    func testProductionDecoderRejectsUnsafeModifiersBeforeRetranslation() {
+        for flags in [
+            CGEventFlags.maskCommand,
+            .maskControl,
+            .maskAlternate,
+        ] {
+            let event = CGEvent(
+                keyboardEventSource: nil,
+                virtualKey: 0,
+                keyDown: true
+            )!
+            event.flags = flags
+            let retranslator = RecordingCurrentLayoutRetranslator(characters: "private")
+            let decoder = SystemNativeEventDecoder(retranslator: retranslator)
+
+            XCTAssertEqual(
+                decoder.decode(event, type: .keyDown),
+                .unsupportedModifiers(marker: 0)
+            )
+            XCTAssertEqual(retranslator.events.count, 0)
+        }
     }
 
     func testProductionDecoderClassifiesEverySilentShiftedAlphabeticKey() {
@@ -226,6 +279,53 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "a")
+    }
+
+    func testSourceChangeDuringDecodeFailsClosedAndClearsPartialToken() {
+        let fixture = makeFixture()
+        type("a", in: fixture)
+        fixture.inputSources.scriptedSources = [
+            .init(identifier: "com.apple.keylayout.ABC", language: .english),
+            .init(identifier: "com.apple.keylayout.US", language: .english),
+        ]
+        fixture.decoder.event = .text("b", marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+    }
+
+    func testStableSourceChangeBetweenEventsStartsANewToken() {
+        let fixture = makeFixture()
+        type("a", in: fixture)
+        fixture.inputSources.stableCurrentSource = .init(
+            identifier: "com.apple.keylayout.US",
+            language: .english
+        )
+
+        type("b", in: fixture)
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "b")
+    }
+
+    func testFocusChangeAfterSourceChangeStillStartsANewToken() {
+        let fixture = makeFixture()
+        type("a", in: fixture)
+        fixture.inputSources.stableCurrentSource = .init(
+            identifier: "com.apple.keylayout.US",
+            language: .english
+        )
+        type("b", in: fixture)
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "other-field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+
+        type("c", in: fixture)
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "c")
     }
 
     func testNavigationClearsToken() {
@@ -550,6 +650,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
             coordinator: coordinator,
             secureInput: secureInput,
             focus: focus,
+            inputSources: inputSources,
             tapManager: tapManager,
             delegate: delegate
         )
@@ -583,6 +684,7 @@ private struct MonitorFixture {
     let coordinator: FakeCorrectionCoordinator
     let secureInput: FakeSecureInputChecker
     let focus: FakeFocusContextProvider
+    let inputSources: FakeInputSourceState
     let tapManager: FakeNativeEventTapManager
     let delegate: FakeMonitorDelegate
 }
@@ -598,6 +700,28 @@ private final class FakeNativeEventDecoder: NativeEventDecoding {
 
     func resetDecodeCalls() {
         decodeCalls = 0
+    }
+}
+
+private struct FixedCurrentLayoutRetranslator: CurrentKeyboardTextRetranslating {
+    let characters: String?
+
+    func characters(for event: CGEvent) -> String? {
+        characters
+    }
+}
+
+private final class RecordingCurrentLayoutRetranslator: CurrentKeyboardTextRetranslating {
+    let characters: String?
+    private(set) var events: [CGEvent] = []
+
+    init(characters: String?) {
+        self.characters = characters
+    }
+
+    func characters(for event: CGEvent) -> String? {
+        events.append(event)
+        return characters
     }
 }
 
@@ -688,11 +812,28 @@ private final class FakeFocusContextProvider: FocusContextProviding {
 
 private final class FakeInputSourceState: InputSourceStateProviding {
     var readiness: InputSourceReadiness
-    var currentLanguage: Language?
+    var stableCurrentSource: InputSourceSnapshot?
+    var scriptedSources: [InputSourceSnapshot?] = []
+
+    var currentSource: InputSourceSnapshot? {
+        guard !scriptedSources.isEmpty else { return stableCurrentSource }
+        return scriptedSources.removeFirst()
+    }
+
+    var currentLanguage: Language? {
+        stableCurrentSource?.language
+    }
 
     init(readiness: InputSourceReadiness, currentLanguage: Language?) {
         self.readiness = readiness
-        self.currentLanguage = currentLanguage
+        stableCurrentSource = currentLanguage.map {
+            InputSourceSnapshot(
+                identifier: $0 == .english
+                    ? "com.apple.keylayout.ABC"
+                    : "com.apple.keylayout.Hebrew",
+                language: $0
+            )
+        }
     }
 }
 

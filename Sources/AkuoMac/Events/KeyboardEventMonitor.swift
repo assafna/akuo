@@ -1,3 +1,4 @@
+import AppKit
 import CoreFoundation
 import CoreGraphics
 import Foundation
@@ -32,12 +33,33 @@ protocol NativeEventDecoding {
     func decode(_ event: CGEvent, type: CGEventType) -> DecodedKeyboardEvent
 }
 
+protocol CurrentKeyboardTextRetranslating {
+    func characters(for event: CGEvent) -> String?
+}
+
+private struct AppKitCurrentKeyboardTextRetranslator: CurrentKeyboardTextRetranslating {
+    func characters(for event: CGEvent) -> String? {
+        guard let nativeEvent = NSEvent(cgEvent: event) else { return nil }
+        let modifiers = nativeEvent.modifierFlags.intersection(
+            .deviceIndependentFlagsMask
+        )
+        return nativeEvent.characters(byApplyingModifiers: modifiers)
+    }
+}
+
 struct SystemNativeEventDecoder: NativeEventDecoding {
     private static let deleteKey: CGKeyCode = 51
     private static let zKey: CGKeyCode = 6
     private static let navigationKeys: Set<CGKeyCode> = [
         115, 116, 117, 119, 121, 123, 124, 125, 126,
     ]
+    private let retranslator: any CurrentKeyboardTextRetranslating
+
+    init(
+        retranslator: any CurrentKeyboardTextRetranslating = AppKitCurrentKeyboardTextRetranslator()
+    ) {
+        self.retranslator = retranslator
+    }
 
     static func decodeEmptyUnicodeKey(
         keyCode: CGKeyCode,
@@ -86,13 +108,10 @@ struct SystemNativeEventDecoder: NativeEventDecoding {
             return .navigation(marker: marker)
         }
 
-        var requiredCharacterCount = 0
-        event.keyboardGetUnicodeString(
-            maxStringLength: 0,
-            actualStringLength: &requiredCharacterCount,
-            unicodeString: nil
-        )
-        guard requiredCharacterCount > 0 else {
+        guard let characters = retranslator.characters(for: event) else {
+            return .unhandled(marker: marker)
+        }
+        guard !characters.isEmpty else {
             // On Apple's standard Hebrew layout, Shift plus most letter keys
             // emits no Unicode text. Preserve those physical keydowns so Akuo
             // can recover the intended English capital at the word boundary.
@@ -102,22 +121,8 @@ struct SystemNativeEventDecoder: NativeEventDecoding {
                 marker: marker
             )
         }
-
-        var characters = [UniChar](repeating: 0, count: requiredCharacterCount)
-        var actualCharacterCount = 0
-        characters.withUnsafeMutableBufferPointer { buffer in
-            event.keyboardGetUnicodeString(
-                maxStringLength: buffer.count,
-                actualStringLength: &actualCharacterCount,
-                unicodeString: buffer.baseAddress
-            )
-        }
-        guard actualCharacterCount > 0,
-              actualCharacterCount <= characters.count else {
-            return .unhandled(marker: marker)
-        }
         return .text(
-            String(utf16CodeUnits: characters, count: actualCharacterCount),
+            characters,
             keyCode: keyCode,
             marker: marker
         )
@@ -146,6 +151,7 @@ extension FocusContextProvider: FocusContextProviding {}
 protocol InputSourceStateProviding {
     var readiness: InputSourceReadiness { get }
     var currentLanguage: Language? { get }
+    var currentSource: InputSourceSnapshot? { get }
 }
 
 extension InputSourceController: InputSourceStateProviding {}
@@ -279,6 +285,7 @@ public final class KeyboardEventMonitor {
 
     private var wordBuffer = WordBuffer()
     private var lastFocusContext: FocusContext?
+    private var lastInputSourceIdentifier: String?
 
     public convenience init(
         coordinator: CorrectionCoordinator,
@@ -412,6 +419,7 @@ public final class KeyboardEventMonitor {
         }
         lastFocusContext = context
 
+        let sourceBeforeDecoding = inputSources.currentSource
         let decoded = decoder.decode(event, type: eventType)
 
         switch decoded {
@@ -427,10 +435,19 @@ public final class KeyboardEventMonitor {
 
         switch decoded {
         case let .text(text, keyCode, _):
-            guard let language = inputSources.currentLanguage else {
+            guard let sourceBeforeDecoding,
+                  let sourceAfterDecoding = inputSources.currentSource,
+                  sourceAfterDecoding == sourceBeforeDecoding else {
                 clearTransientState()
                 return event
             }
+            if let lastInputSourceIdentifier,
+               lastInputSourceIdentifier != sourceAfterDecoding.identifier {
+                resetInputContext(invalidateImmediateUndo: true)
+                lastFocusContext = context
+            }
+            lastInputSourceIdentifier = sourceAfterDecoding.identifier
+            let language = sourceAfterDecoding.language
             coordinator.noteOrdinaryInput()
             let isSilentShiftedHebrewLetter = language == .hebrew
                 && text.isEmpty
@@ -534,6 +551,7 @@ public final class KeyboardEventMonitor {
     private func resetInputContext(invalidateImmediateUndo: Bool) {
         wordBuffer.reset()
         lastFocusContext = nil
+        lastInputSourceIdentifier = nil
         if invalidateImmediateUndo {
             coordinator.noteOrdinaryInput()
         }
