@@ -69,7 +69,7 @@ public struct WordBuffer: Sendable {
             return .accumulating
 
         case let .boundary(boundary):
-            guard !currentToken.isEmpty else {
+            guard !currentToken.isEmpty || !currentKeyStrokes.isEmpty else {
                 currentKeyStrokes.removeAll(keepingCapacity: true)
                 return .passThrough
             }

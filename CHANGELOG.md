@@ -6,9 +6,12 @@ All notable changes to Akuo are documented in this file.
 
 ### Fixed
 
-- Restore recoverable English capitals typed with the standard Hebrew input
-  source, including silent shifted keys (`קךךם` to `Hello`) and composite
-  niqqud output (`לֹםםך` to `Cool`).
+- Reconstruct English capitalization per physical key when using the standard
+  Hebrew input source, including silent shifted keys, all-caps words, and
+  composite niqqud output.
+- Prefer a recognized trace-backed English candidate over a recognized visible
+  Hebrew fragment, fixing `קד` to `Yes`, an all-silent trace to `YES`, `ם` to
+  `No`, and the standalone A and I keys to `a`/`A` and `i`/`I`.
 
 ## 0.2.0 - 2026-08-30
 

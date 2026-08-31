@@ -61,7 +61,9 @@ public struct CorrectionPolicy {
         )
         switch original.status {
         case .recognized:
-            return .keep(.originalRecognized)
+            guard conversion.hasAuthoritativePhysicalEvidence else {
+                return .keep(.originalRecognized)
+            }
         case .unavailable:
             return .keep(.recognitionUnavailable)
         case .unknown:
@@ -80,7 +82,11 @@ public struct CorrectionPolicy {
         case .unavailable:
             return .keep(.recognitionUnavailable)
         }
-        guard candidate.score - original.score >= 60 else { return .keep(.ambiguous) }
+        if !conversion.hasAuthoritativePhysicalEvidence {
+            guard candidate.score - original.score >= 60 else {
+                return .keep(.ambiguous)
+            }
+        }
 
         return .correct(.init(
             original: conversion.original,

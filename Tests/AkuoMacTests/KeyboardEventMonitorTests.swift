@@ -61,15 +61,23 @@ final class KeyboardEventMonitorTests: XCTestCase {
         )
     }
 
-    func testProductionDecoderClassifiesSilentShiftedAlphabeticKey() {
-        XCTAssertEqual(
-            SystemNativeEventDecoder.decodeEmptyUnicodeKey(
-                keyCode: 4,
-                flags: [.maskShift],
-                marker: 0
-            ),
-            .text("", keyCode: 4, marker: 0)
-        )
+    func testProductionDecoderClassifiesEverySilentShiftedAlphabeticKey() {
+        let alphabeticKeyCodes: [CGKeyCode] = [
+            0, 11, 8, 2, 14, 3, 5, 4, 34, 38, 40, 37, 46,
+            45, 31, 35, 12, 15, 1, 17, 32, 9, 13, 7, 16, 6,
+        ]
+
+        for keyCode in alphabeticKeyCodes {
+            XCTAssertEqual(
+                SystemNativeEventDecoder.decodeEmptyUnicodeKey(
+                    keyCode: keyCode,
+                    flags: [.maskShift],
+                    marker: 0
+                ),
+                .text("", keyCode: keyCode, marker: 0),
+                "keyCode \(keyCode)"
+            )
+        }
     }
 
     func testProductionDecoderRejectsOtherEmptyUnicodeKeys() {
