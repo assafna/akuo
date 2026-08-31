@@ -129,6 +129,12 @@ Version 1 completes a token only at whitespace or Return. Printable punctuation 
   **Evidence:**
 - [ ] **Alternating-language sentence.** In one sentence, alternate correct and wrong-layout English/Hebrew words. Confirm each completed word is evaluated independently, intended corrections occur, correct words remain, boundaries are preserved, and the source aligns after each correction. **Result:**
   **Evidence:**
+- [ ] **Repeated source-switch decoding.** Start with English and continuously
+  press the physical keys for `Hello world akuo guko hello world akuo guko `,
+  including the final Space. Confirm the visible result is exactly
+  `Hello world שלום עולם hello world שלום עולם ` and the active
+  source is standard Hebrew. **Result:**
+  **Evidence:**
 
 ### Learned-word candidate authority
 

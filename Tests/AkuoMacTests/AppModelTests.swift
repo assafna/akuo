@@ -894,6 +894,16 @@ private final class FakeSecureInputChecker: SecureInputChecking {
 private final class FakeInputSourceStateProvider: RuntimeInputSourceProviding {
     var readiness = InputSourceReadiness(englishAvailable: false, hebrewAvailable: false)
     var currentLanguage: Language?
+    var currentSource: InputSourceSnapshot? {
+        currentLanguage.map {
+            .init(
+                identifier: $0 == .english
+                    ? "com.apple.keylayout.ABC"
+                    : "com.apple.keylayout.Hebrew",
+                language: $0
+            )
+        }
+    }
     var consumeAkuoSelectionNotificationResult = false
 
     func consumeAkuoSelectionNotification() -> Bool {

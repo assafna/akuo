@@ -112,6 +112,27 @@ final class InputSourceControllerTests: XCTestCase {
         XCTAssertNil(phonetic.currentLanguage)
     }
 
+    func testCurrentSourcePreservesExactApprovedIdentifierAndLanguage() {
+        let abc = InputSourceController(
+            backend: FakeInputSourceBackend(
+                sources: Self.allSources,
+                currentIdentifier: "com.apple.keylayout.ABC"
+            )
+        )
+        let phonetic = InputSourceController(
+            backend: FakeInputSourceBackend(
+                sources: Self.allSources,
+                currentIdentifier: "com.apple.keylayout.Hebrew-QWERTY"
+            )
+        )
+
+        XCTAssertEqual(
+            abc.currentSource,
+            .init(identifier: "com.apple.keylayout.ABC", language: .english)
+        )
+        XCTAssertNil(phonetic.currentSource)
+    }
+
     func testSuccessfulSelectionOriginIsSharedAcrossControllerCopiesAndConsumedOnce() {
         let now: TimeInterval = 100
         let originTracker = InputSourceSelectionOriginTracker(
