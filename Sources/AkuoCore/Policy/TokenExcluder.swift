@@ -1,5 +1,5 @@
 public struct TokenExcluder: Sendable {
-    private static let excludedPunctuation = Set<Character>("/\\@_.,;[]':")
+    private static let excludedPunctuation = Set<Character>("/\\@_.,;[]':׳")
     private static let hebrewFinalLetters = Set<Character>("ךםןףץ")
 
     public init() {}
@@ -42,8 +42,17 @@ public struct TokenExcluder: Sendable {
     ) -> Bool {
         guard let conversion,
               conversion.original == token,
-              hasTargetWordShape(conversion),
-              hasSupportedPunctuationPlacement(token, source: conversion.source),
+              hasTargetWordShape(conversion) else {
+            return false
+        }
+
+        // A physical conversion exists only when every observed key position
+        // aligns with the visible token. That evidence safely covers Apple's
+        // silent and composite Hebrew Shift outputs without maintaining a
+        // second, incomplete punctuation whitelist here.
+        if conversion.physicalEvidence != nil { return true }
+
+        guard hasSupportedPunctuationPlacement(token, conversion: conversion),
               !isPunctuationDominated(token) else {
             return false
         }
@@ -52,11 +61,16 @@ public struct TokenExcluder: Sendable {
 
     private func hasSupportedPunctuationPlacement(
         _ token: String,
-        source: Language
+        conversion: LayoutConversion
     ) -> Bool {
-        guard source == .hebrew else { return true }
+        guard conversion.source == .hebrew else { return true }
+        if conversion.target == .english,
+           OrthographicWordShape.isJoinedEnglishWord(conversion.candidate) {
+            return hasSupportedHebrewSourceForJoinedEnglishWord(token)
+        }
+
         guard let first = token.first,
-              first == "/" || first == "'" else {
+              first == "/" || first == "'" || first == "׳" else {
             return false
         }
 
@@ -65,11 +79,23 @@ public struct TokenExcluder: Sendable {
             && remainder.allSatisfy(KeyboardLayoutMap.hebrewLetters.contains)
     }
 
+    private func hasSupportedHebrewSourceForJoinedEnglishWord(
+        _ token: String
+    ) -> Bool {
+        token.enumerated().allSatisfy { index, character in
+            if KeyboardLayoutMap.hebrewLetters.contains(character)
+                || character == "," {
+                return true
+            }
+            return index == 0
+                && (character == "/" || character == "'" || character == "׳")
+        }
+    }
+
     private func hasTargetWordShape(_ conversion: LayoutConversion) -> Bool {
         switch conversion.target {
         case .english:
-            return !conversion.candidate.isEmpty
-                && conversion.candidate.allSatisfy(isEnglishLetter)
+            return OrthographicWordShape.isEnglishWord(conversion.candidate)
         case .hebrew:
             return hasHebrewWordShape(conversion.candidate)
         }

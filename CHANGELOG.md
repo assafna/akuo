@@ -12,6 +12,18 @@ All notable changes to Akuo are documented in this file.
 - Prefer a recognized trace-backed English candidate over a recognized visible
   Hebrew fragment, fixing `קד` to `Yes`, an all-silent trace to `YES`, `ם` to
   `No`, and the standalone A and I keys to `a`/`A` and `i`/`I`.
+- Correct recognized English words with internal apostrophes typed using the
+  Hebrew layout, including contractions such as `גםמ,א` to `don't`, while
+  rejecting leading, trailing, doubled, unknown, and structured punctuation.
+- Preserve complete physical-key evidence across the apostrophe key so shifted
+  contractions such as `We're` retain their recoverable capitalization.
+- Trust a valid recognized joined-English candidate when its complete physical
+  trace proves Apple's silent or composite Hebrew Shift output, fixing
+  `„םמ,א` to `Don't` and `„,` to `DON'T` without relaxing text-only or
+  malformed punctuation handling.
+- Recognize the Hebrew punctuation geresh emitted by the standard Apple Hebrew
+  W key, fixing `׳ק,רק` to `we're`, while retaining straight apostrophe as a
+  compatibility alias.
 
 ## 0.2.0 - 2026-08-30
 

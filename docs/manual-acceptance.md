@@ -81,7 +81,7 @@ Record the blocker here before stopping:
 
 Perform these first in TextEdit with a new empty plain-text document.
 
-Version 1 completes a token only at whitespace or Return. Printable punctuation does not trigger correction and remains part of the unfinished token until one of those boundaries arrives. At the boundary, punctuation-shaped keys are eligible only when the complete opposite-layout conversion is a target-language word shape; structured and unsupported punctuation remains excluded.
+Version 1 completes a token only at whitespace or Return. Printable punctuation does not trigger correction and remains part of the unfinished token until one of those boundaries arrives. At the boundary, punctuation-shaped keys are eligible only when the complete opposite-layout conversion is a target-language word shape: letters only, or English letter segments joined by internal straight or curly apostrophes. Structured and unsupported punctuation remains excluded.
 
 - [ ] **English-layout Hebrew correction.** Select English, type `akuo `, and confirm the visible result is exactly `שלום ` with one space and the active input source changes to standard Hebrew. **Result:**
   **Evidence:**
@@ -90,6 +90,16 @@ Version 1 completes a token only at whitespace or Return. Printable punctuation 
 - [ ] **Other punctuation keys as Hebrew letters.** Select English and separately type `tr. ` and `gu; `. Confirm the visible results are exactly `ארץ ` and `עוף ` with one Space each and the active input source changes to standard Hebrew after each recognized candidate. Confirm both Hebrew candidates are recognized on that Mac. **Result:**
   **Evidence:**
 - [ ] **Hebrew-layout English correction.** Select Hebrew, type the physical keys that produce `יקךךם `, and confirm the visible result is exactly `hello ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Hebrew-layout English contraction.** Select Hebrew, type the physical D, O, N, apostrophe, T keys and pause. Confirm the visible unfinished token is exactly `גםמ,א`. Press Space and confirm the visible result is exactly `don't ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Hebrew geresh W-key contraction.** Select Hebrew, type the physical W, E, apostrophe, R, E keys and pause. Confirm the visible unfinished token is exactly `׳ק,רק`, beginning with U+05F3 Hebrew punctuation geresh. Press Space and confirm the visible result is exactly `we're ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Shifted contraction keeps physical capitalization.** Select Hebrew, hold Shift while pressing the physical W key, release Shift, then press E, apostrophe, R, E. Confirm the visible unfinished token is exactly `ק,רק`. Press Space and confirm the visible result is exactly `We're ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Visible Shift-D contraction.** Select Hebrew, hold Shift while pressing the physical D key, release Shift, then press O, N, apostrophe, T. Confirm the visible unfinished token is exactly `„םמ,א`, beginning with U+201E. Press Space and confirm the visible result is exactly `Don't ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **All-caps contraction with silent Shift keys.** Select Hebrew, hold Shift while pressing D, O, N, and T, and type apostrophe without Shift. Confirm the visible unfinished token is exactly `„,`. Press Space and confirm the visible result is exactly `DON'T ` with one space and the active input source changes to English. **Result:**
   **Evidence:**
 - [ ] **Silent shifted capital recovery.** Select standard Hebrew, hold Shift while pressing the physical H key, release Shift, then press E, L, L, O. Confirm the visible unfinished token is exactly `קךךם`. Press Space and confirm the visible result is exactly `Hello ` with one space and the active input source changes to English. **Result:**
   **Evidence:**
