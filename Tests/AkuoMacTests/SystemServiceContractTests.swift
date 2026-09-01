@@ -113,11 +113,203 @@ final class SystemServiceContractTests: XCTestCase {
         )
     }
 
+    func testAccessibilityBooleanDecoderRequiresAnActualCFBoolean() {
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.boolean(from: kCFBooleanTrue),
+            true
+        )
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.boolean(from: kCFBooleanFalse),
+            false
+        )
+        XCTAssertNil(
+            AccessibilityAttributeDecoder.boolean(from: NSNumber(value: 1) as CFTypeRef)
+        )
+        XCTAssertNil(
+            AccessibilityAttributeDecoder.boolean(from: NSNumber(value: 0) as CFTypeRef)
+        )
+        XCTAssertNil(
+            AccessibilityAttributeDecoder.boolean(from: "true" as CFString)
+        )
+    }
+
+    func testAccessibilityElementDecoderRejectsMalformedFocusedElementValues() {
+        let element = AXUIElementCreateApplication(42)
+
+        guard let decoded = AccessibilityAttributeDecoder.element(from: element) else {
+            return XCTFail("Expected an AXUIElement value to decode")
+        }
+        XCTAssertTrue(CFEqual(decoded, element))
+        XCTAssertNil(AccessibilityAttributeDecoder.element(from: "AXTextField" as CFString))
+        XCTAssertNil(AccessibilityAttributeDecoder.element(from: kCFBooleanTrue))
+        XCTAssertNil(AccessibilityAttributeDecoder.element(from: nil))
+    }
+
+    func testAccessibilityOptionalBooleanDecoderDistinguishesAbsenceFromUnknown() {
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalBoolean(
+                result: .success,
+                value: kCFBooleanTrue
+            ),
+            .value(true)
+        )
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalBoolean(
+                result: .success,
+                value: kCFBooleanFalse
+            ),
+            .value(false)
+        )
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalBoolean(
+                result: .attributeUnsupported,
+                value: nil
+            ),
+            .absent
+        )
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalBoolean(result: .noValue, value: nil),
+            .absent
+        )
+
+        for result in [AXError.cannotComplete, .invalidUIElement] {
+            XCTAssertEqual(
+                AccessibilityAttributeDecoder.optionalBoolean(result: result, value: nil),
+                .unknown,
+                "result=\(result.rawValue)"
+            )
+        }
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalBoolean(
+                result: .success,
+                value: NSNumber(value: 1) as CFTypeRef
+            ),
+            .unknown
+        )
+    }
+
+    func testAccessibilityOptionalStringDecoderDistinguishesAbsenceFromUnknown() {
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalString(
+                result: .success,
+                value: "AXSecureTextField" as CFString
+            ),
+            .value("AXSecureTextField")
+        )
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalString(result: .noValue, value: nil),
+            .absent
+        )
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalString(
+                result: .attributeUnsupported,
+                value: nil
+            ),
+            .absent
+        )
+
+        for result in [AXError.cannotComplete, .invalidUIElement] {
+            XCTAssertEqual(
+                AccessibilityAttributeDecoder.optionalString(result: result, value: nil),
+                .unknown,
+                "result=\(result.rawValue)"
+            )
+        }
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalString(
+                result: .success,
+                value: NSNumber(value: 1) as CFTypeRef
+            ),
+            .unknown
+        )
+        XCTAssertEqual(
+            AccessibilityAttributeDecoder.optionalString(
+                result: .success,
+                value: kAXUnknownSubrole as CFString
+            ),
+            .unknown
+        )
+    }
+
+    func testSystemFocusProviderRejectsMalformedFocusedElementValue() {
+        let reader = ScriptedAccessibilityAttributeReader(focusedElementValues: [
+            "AXTextArea" as CFString,
+        ])
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+
+        XCTAssertNil(provider.focusedElement(for: 42))
+    }
+
+    func testSystemFocusProviderRejectsFocusChangeDuringEvidenceCollection() {
+        let first = AXUIElementCreateApplication(42)
+        let second = AXUIElementCreateApplication(43)
+        let reader = ScriptedAccessibilityAttributeReader(focusedElementValues: [first, second])
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+
+        XCTAssertNil(provider.focusedElement(for: 42))
+    }
+
+    func testSystemFocusProviderRejectsMalformedFinalFocusSnapshot() {
+        let element = AXUIElementCreateApplication(42)
+        let reader = ScriptedAccessibilityAttributeReader(focusedElementValues: [
+            element,
+            kCFBooleanTrue,
+        ])
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+
+        XCTAssertNil(provider.focusedElement(for: 42))
+    }
+
+    func testSystemFocusProviderUsesStableOpaqueIdentityForEqualElements() {
+        let first = AXUIElementCreateApplication(42)
+        let second = AXUIElementCreateApplication(43)
+        let reader = ScriptedAccessibilityAttributeReader(focusedElementValues: [
+            first, first,
+            first, first,
+            second, second,
+        ])
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+
+        let firstSnapshot = provider.focusedElement(for: 42)
+        let repeatedSnapshot = provider.focusedElement(for: 42)
+        let changedSnapshot = provider.focusedElement(for: 43)
+
+        XCTAssertNotNil(firstSnapshot)
+        XCTAssertEqual(firstSnapshot?.identifier, repeatedSnapshot?.identifier)
+        XCTAssertNotEqual(firstSnapshot?.identifier, changedSnapshot?.identifier)
+    }
+
+    func testTextEditDocumentShapeWithUnsupportedOptionalMetadataIsEditable() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: FakeAccessibilityFocusProvider(
+                element: .init(
+                    identifier: "textedit-editor",
+                    role: "AXTextArea",
+                    subrole: AccessibilityAttributeDecoder.optionalString(
+                        result: .attributeUnsupported,
+                        value: nil
+                    ),
+                    isEnabled: .absent,
+                    isValueSettable: true
+                )
+            )
+        )
+
+        XCTAssertEqual(provider.current()?.isEditableTextInput, true)
+    }
+
     func testFocusContextIncludesFrontmostProcessAndFocusedElement() {
         let provider = FocusContextProvider(
             frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
             accessibilityProvider: FakeAccessibilityFocusProvider(
-                element: .init(identifier: "element-1", role: "AXTextField", subrole: nil)
+                element: .init(
+                    identifier: "element-1",
+                    role: "AXTextField",
+                    subrole: .absent,
+                    isEnabled: .value(true),
+                    isValueSettable: true
+                )
             )
         )
 
@@ -132,12 +324,35 @@ final class SystemServiceContractTests: XCTestCase {
         )
     }
 
+    func testFrontmostProcessChangeDuringInspectionReturnsNoFocusContext() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: ScriptedFrontmostProcessProvider([42, 43]),
+            accessibilityProvider: FakeAccessibilityFocusProvider(
+                element: .init(
+                    identifier: "element-1",
+                    role: "AXTextField",
+                    subrole: .absent,
+                    isEnabled: .value(true),
+                    isValueSettable: true
+                )
+            )
+        )
+
+        XCTAssertNil(provider.current())
+    }
+
     func testOnlyNarrowTextEntryRoleAllowlistIsEditable() {
         for role in ["AXTextField", "AXTextArea", "AXComboBox"] {
             let provider = FocusContextProvider(
                 frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
                 accessibilityProvider: FakeAccessibilityFocusProvider(
-                    element: .init(identifier: role, role: role, subrole: nil)
+                    element: .init(
+                        identifier: role,
+                        role: role,
+                        subrole: .absent,
+                        isEnabled: .value(true),
+                        isValueSettable: true
+                    )
                 )
             )
 
@@ -145,12 +360,98 @@ final class SystemServiceContractTests: XCTestCase {
         }
     }
 
+    func testDisabledTextEntryRoleIsIneligible() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: FakeAccessibilityFocusProvider(
+                element: .init(
+                    identifier: "disabled",
+                    role: "AXTextField",
+                    subrole: .absent,
+                    isEnabled: .value(false),
+                    isValueSettable: true
+                )
+            )
+        )
+
+        XCTAssertEqual(provider.current()?.isEditableTextInput, false)
+    }
+
+    func testReadOnlyTextEntryRoleIsIneligible() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: FakeAccessibilityFocusProvider(
+                element: .init(
+                    identifier: "read-only",
+                    role: "AXTextArea",
+                    subrole: .absent,
+                    isEnabled: .value(true),
+                    isValueSettable: false
+                )
+            )
+        )
+
+        XCTAssertEqual(provider.current()?.isEditableTextInput, false)
+    }
+
+    func testUnknownEditabilityEvidenceIsIneligible() {
+        let evidence: [(isEnabled: AccessibilityOptionalBoolean, isValueSettable: Bool?)] = [
+            (.unknown, true),
+            (.value(true), nil),
+            (.absent, nil),
+        ]
+
+        for (isEnabled, isValueSettable) in evidence {
+            let provider = FocusContextProvider(
+                frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+                accessibilityProvider: FakeAccessibilityFocusProvider(
+                    element: .init(
+                        identifier: "unknown",
+                        role: "AXComboBox",
+                        subrole: .absent,
+                        isEnabled: isEnabled,
+                        isValueSettable: isValueSettable
+                    )
+                )
+            )
+
+            XCTAssertEqual(
+                provider.current()?.isEditableTextInput,
+                false,
+                "enabled=\(String(describing: isEnabled)), settable=\(String(describing: isValueSettable))"
+            )
+        }
+    }
+
+    func testUnknownSubroleEvidenceIsIneligible() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: FakeAccessibilityFocusProvider(
+                element: .init(
+                    identifier: "unknown-subrole",
+                    role: "AXTextField",
+                    subrole: .unknown,
+                    isEnabled: .value(true),
+                    isValueSettable: true
+                )
+            )
+        )
+
+        XCTAssertEqual(provider.current()?.isEditableTextInput, false)
+    }
+
     func testNonTextAndUnknownRolesAreIneligible() {
         for role in ["AXList", "AXOutline", "AXRow", "AXStaticText", nil] {
             let provider = FocusContextProvider(
                 frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
                 accessibilityProvider: FakeAccessibilityFocusProvider(
-                    element: .init(identifier: "control", role: role, subrole: nil)
+                    element: .init(
+                        identifier: "control",
+                        role: role,
+                        subrole: .absent,
+                        isEnabled: .value(true),
+                        isValueSettable: true
+                    )
                 )
             )
 
@@ -162,7 +463,13 @@ final class SystemServiceContractTests: XCTestCase {
         let provider = FocusContextProvider(
             frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
             accessibilityProvider: FakeAccessibilityFocusProvider(
-                element: .init(identifier: "secret", role: "AXSecureTextField", subrole: nil)
+                element: .init(
+                    identifier: "secret",
+                    role: "AXSecureTextField",
+                    subrole: .unknown,
+                    isEnabled: .value(true),
+                    isValueSettable: true
+                )
             )
         )
 
@@ -184,7 +491,9 @@ final class SystemServiceContractTests: XCTestCase {
                 element: .init(
                     identifier: "secret",
                     role: "AXTextField",
-                    subrole: "AXSecureTextField"
+                    subrole: .value("AXSecureTextField"),
+                    isEnabled: .value(true),
+                    isValueSettable: true
                 )
             )
         )
@@ -221,7 +530,13 @@ final class SystemServiceContractTests: XCTestCase {
         let provider = FocusContextProvider(
             frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: nil),
             accessibilityProvider: FakeAccessibilityFocusProvider(
-                element: .init(identifier: "ignored", role: "AXTextField", subrole: nil)
+                element: .init(
+                    identifier: "ignored",
+                    role: "AXTextField",
+                    subrole: .absent,
+                    isEnabled: .value(true),
+                    isValueSettable: true
+                )
             )
         )
 
@@ -308,11 +623,54 @@ private struct FakeFrontmostProcessProvider: FrontmostProcessProviding {
     let processIdentifier: Int32?
 }
 
+private final class ScriptedFrontmostProcessProvider: FrontmostProcessProviding {
+    private var processIdentifiers: [Int32?]
+
+    init(_ processIdentifiers: [Int32?]) {
+        self.processIdentifiers = processIdentifiers
+    }
+
+    var processIdentifier: Int32? {
+        guard processIdentifiers.count > 1 else {
+            return processIdentifiers.first ?? nil
+        }
+        return processIdentifiers.removeFirst()
+    }
+}
+
 private struct FakeAccessibilityFocusProvider: AccessibilityFocusProviding {
     let element: AccessibilityFocusElement?
 
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
         element
+    }
+}
+
+private final class ScriptedAccessibilityAttributeReader: AccessibilityAttributeReading {
+    private var focusedElementValues: [CFTypeRef?]
+
+    init(focusedElementValues: [CFTypeRef?]) {
+        self.focusedElementValues = focusedElementValues
+    }
+
+    func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead {
+        switch attribute {
+        case kAXFocusedUIElementAttribute:
+            guard !focusedElementValues.isEmpty else {
+                return .init(result: .noValue, value: nil)
+            }
+            return .init(result: .success, value: focusedElementValues.removeFirst())
+        case kAXRoleAttribute:
+            return .init(result: .success, value: "AXTextArea" as CFString)
+        case kAXSubroleAttribute, kAXEnabledAttribute:
+            return .init(result: .attributeUnsupported, value: nil)
+        default:
+            return .init(result: .attributeUnsupported, value: nil)
+        }
+    }
+
+    func isAttributeSettable(_ attribute: String, of element: AXUIElement) -> Bool? {
+        attribute == kAXValueAttribute ? true : nil
     }
 }
 

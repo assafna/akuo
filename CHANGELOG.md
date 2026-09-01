@@ -4,6 +4,19 @@ All notable changes to Akuo are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Require a focused text control to expose a writable Accessibility value and
+  reject it when Accessibility explicitly reports that it is disabled.
+  Read-only, disabled, and otherwise unprovable editing contexts remain
+  unchanged.
+- Keep standard editors such as TextEdit eligible when they omit an optional
+  Accessibility subrole or enabled state, while transiently failed, explicitly
+  unknown, or malformed reads remain ineligible.
+- Require the same frontmost application and focused Accessibility element
+  throughout editability inspection and immediately before correction or undo,
+  preserving the host boundary or Command-Z if focus changes.
+
 ### Fixed
 
 - Require trace-backed word corrections to include at least one alphabetic

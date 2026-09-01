@@ -207,6 +207,57 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .notHandled)
     }
 
+    func testCorrectionRevalidatesContextImmediatelyBeforeReplacement() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { false }
+        ), .notHandled)
+        XCTAssertTrue(replacer.calls.isEmpty)
+        XCTAssertTrue(selector.selected.isEmpty)
+        XCTAssertEqual(counter.incrementCount, 0)
+    }
+
+    func testImmediateUndoRevalidatesContextImmediatelyBeforeReplacement() {
+        let replacer = RecordingReplacer()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english
+        ), .handled)
+
+        XCTAssertEqual(coordinator.handleImmediateUndo(
+            context: context,
+            isContextStillEligible: { false }
+        ), .notHandled)
+        XCTAssertEqual(
+            replacer.calls,
+            [.init(deleteCount: 4, replacement: "שלום", boundary: " ")]
+        )
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .notHandled)
+    }
+
     func testFailedCorrectionInvalidatesPriorUndoRecord() {
         let replacer = RecordingReplacer(results: [true, false])
         let coordinator = makeCoordinator(
@@ -369,6 +420,30 @@ final class CorrectionCoordinatorTests: XCTestCase {
             selector: RecordingSelector(),
             counter: RecordingCounter(),
             clock: FixedClock(now: createdAt)
+        )
+    }
+}
+
+private extension CorrectionCoordinator {
+    func handleBoundary(
+        _ completedWord: CompletedWord,
+        boundaryKeyCode: Int? = nil,
+        context: FocusContext,
+        priorInputLanguage: Language
+    ) -> CorrectionHandlingResult {
+        handleBoundary(
+            completedWord,
+            boundaryKeyCode: boundaryKeyCode,
+            context: context,
+            priorInputLanguage: priorInputLanguage,
+            isContextStillEligible: { true }
+        )
+    }
+
+    func handleImmediateUndo(context: FocusContext) -> CorrectionHandlingResult {
+        handleImmediateUndo(
+            context: context,
+            isContextStillEligible: { true }
         )
     }
 }
