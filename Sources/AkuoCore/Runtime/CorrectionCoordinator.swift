@@ -26,7 +26,8 @@ public final class CorrectionCoordinator {
         _ completedWord: CompletedWord,
         boundaryKeyCode: Int? = nil,
         context: FocusContext,
-        priorInputLanguage: Language
+        priorInputLanguage: Language,
+        isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult {
         undoController.invalidate()
         guard context.elementIdentifier != nil,
@@ -40,6 +41,9 @@ public final class CorrectionCoordinator {
             sourceHint: priorInputLanguage,
             keyStrokes: completedWord.keyStrokes
         ) else {
+            return .notHandled
+        }
+        guard isContextStillEligible() else {
             return .notHandled
         }
         guard textReplacer.replacePreviousText(
@@ -69,11 +73,18 @@ public final class CorrectionCoordinator {
             )
     }
 
-    public func handleImmediateUndo(context: FocusContext) -> CorrectionHandlingResult {
+    public func handleImmediateUndo(
+        context: FocusContext,
+        isContextStillEligible: () -> Bool
+    ) -> CorrectionHandlingResult {
         guard let record = undoController.eligibleRecord(context: context, now: clock.now) else {
             return .notHandled
         }
 
+        guard isContextStillEligible() else {
+            undoController.invalidate()
+            return .notHandled
+        }
         undoController.invalidate()
         guard textReplacer.replacePreviousText(
             deleteCount: record.corrected.count + record.boundary.count,

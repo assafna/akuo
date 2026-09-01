@@ -372,6 +372,60 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
     }
 
+    func testFocusChangeImmediatelyBeforeCorrectionPreservesBoundary() {
+        let fixture = makeFixture()
+        fixture.coordinator.boundaryResult = .handled
+        type("a", in: fixture)
+        fixture.focus.scriptedContexts = [
+            fixture.focus.context,
+            .init(
+                processIdentifier: 42,
+                elementIdentifier: "other-field",
+                isSecureField: false,
+                isEditableTextInput: true
+            ),
+        ]
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+    }
+
+    func testFocusChangeImmediatelyBeforeUndoPreservesCommandZ() {
+        let fixture = makeFixture()
+        fixture.coordinator.undoResult = .handled
+        fixture.focus.scriptedContexts = [
+            fixture.focus.context,
+            .init(
+                processIdentifier: 42,
+                elementIdentifier: "other-field",
+                isSecureField: false,
+                isEditableTextInput: true
+            ),
+        ]
+        fixture.decoder.event = .commandZ(marker: 0)
+
+        XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+    }
+
+    func testSecureInputTransitionImmediatelyBeforeCorrectionPreservesBoundary() {
+        let fixture = makeFixture()
+        fixture.coordinator.boundaryResult = .handled
+        type("a", in: fixture)
+        fixture.secureInput.scriptedValues = [false, true]
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+    }
+
+    func testSecureInputTransitionImmediatelyBeforeUndoPreservesCommandZ() {
+        let fixture = makeFixture()
+        fixture.coordinator.undoResult = .handled
+        fixture.secureInput.scriptedValues = [false, true]
+        fixture.decoder.event = .commandZ(marker: 0)
+
+        XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+    }
+
     func testMouseDownDisarmsImmediateUndoInSameEditor() {
         let fixture = makeFixture()
         fixture.coordinator.armUndoOnHandledBoundary = true
@@ -745,7 +799,8 @@ private final class FakeCorrectionCoordinator: CorrectionCoordinating {
         _ completedWord: CompletedWord,
         boundaryKeyCode: Int?,
         context: FocusContext,
-        priorInputLanguage: Language
+        priorInputLanguage: Language,
+        isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult {
         boundaryCalls.append(.init(
             completedWord: completedWord,
@@ -753,14 +808,24 @@ private final class FakeCorrectionCoordinator: CorrectionCoordinating {
             context: context,
             priorInputLanguage: priorInputLanguage
         ))
+        guard isContextStillEligible() else {
+            return .notHandled
+        }
         if boundaryResult != .notHandled, armUndoOnHandledBoundary {
             isUndoArmed = true
         }
         return boundaryResult
     }
 
-    func handleImmediateUndo(context: FocusContext) -> CorrectionHandlingResult {
+    func handleImmediateUndo(
+        context: FocusContext,
+        isContextStillEligible: () -> Bool
+    ) -> CorrectionHandlingResult {
         undoContexts.append(context)
+        guard isContextStillEligible() else {
+            isUndoArmed = false
+            return .notHandled
+        }
         let result = undoResult != .notHandled
             ? undoResult
             : (isUndoArmed ? .handled : .notHandled)
@@ -785,15 +850,30 @@ private final class FakePermissionChecker: AccessibilityPermissionChecking {
 }
 
 private final class FakeSecureInputChecker: SecureInputChecking {
-    var isSecureInputEnabled: Bool
+    private var stableValue: Bool
+    var scriptedValues: [Bool] = []
+
+    var isSecureInputEnabled: Bool {
+        get {
+            guard !scriptedValues.isEmpty else {
+                return stableValue
+            }
+            return scriptedValues.removeFirst()
+        }
+        set {
+            stableValue = newValue
+            scriptedValues.removeAll()
+        }
+    }
 
     init(isSecureInputEnabled: Bool) {
-        self.isSecureInputEnabled = isSecureInputEnabled
+        stableValue = isSecureInputEnabled
     }
 }
 
 private final class FakeFocusContextProvider: FocusContextProviding {
     var context: FocusContext?
+    var scriptedContexts: [FocusContext?] = []
     private(set) var currentCalls = 0
 
     init(context: FocusContext?) {
@@ -802,6 +882,9 @@ private final class FakeFocusContextProvider: FocusContextProviding {
 
     func current() -> FocusContext? {
         currentCalls += 1
+        if !scriptedContexts.isEmpty {
+            return scriptedContexts.removeFirst()
+        }
         return context
     }
 

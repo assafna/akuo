@@ -67,7 +67,8 @@ Version 1 supports only standard English QWERTY and Israeli Hebrew. It does not 
 Akuo intentionally leaves these unchanged:
 
 - Secure and password fields, and all input while macOS Secure Input is active.
-- Non-text controls and editing contexts whose text-entry role macOS cannot prove.
+- Non-text, disabled, and read-only controls, plus editing contexts whose
+  writable text value macOS Accessibility cannot prove.
 - URLs, email addresses, file paths, domains, and numbers.
 - Shortcuts and modified key combinations.
 - Source-code-like identifiers, mixed-script tokens, and punctuation-dominated tokens.
@@ -76,7 +77,7 @@ Akuo intentionally leaves these unchanged:
 - Ambiguous or unknown words and low-confidence candidates.
 - Unsupported navigation or editing sequences.
 
-Some applications block global observation or synthetic keyboard events. Akuo fails open before emission: uncertainty in policy, focus context, security state, or preparation leaves the original input untouched. After Akuo posts a fully prepared delete/insert/boundary event batch, however, Core Graphics does not acknowledge delivery as a transaction, so Akuo cannot guarantee that another application accepts every event atomically. This is a platform boundary, not a known replacement failure. Any partial replacement or input loss is a release blocker: turn Akuo off in that application or context, preserve the evidence, and do not accept that release.
+Some applications block global observation or synthetic keyboard events. Akuo fails open before emission: uncertainty in policy, focus context, security state, or preparation leaves the original input untouched. It verifies a stable frontmost application and focused Accessibility element while inspecting editability, then rechecks the same eligible focus immediately before correction or immediate undo. After Akuo posts a fully prepared delete/insert/boundary event batch, however, Core Graphics does not acknowledge delivery as a transaction, so Akuo cannot guarantee that another application accepts every event atomically. This is a platform boundary, not a known replacement failure. Any partial replacement or input loss is a release blocker: turn Akuo off in that application or context, preserve the evidence, and do not accept that release.
 
 ## Release acceptance
 

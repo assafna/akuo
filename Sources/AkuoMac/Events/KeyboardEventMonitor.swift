@@ -134,9 +134,13 @@ protocol CorrectionCoordinating: AnyObject {
         _ completedWord: CompletedWord,
         boundaryKeyCode: Int?,
         context: FocusContext,
-        priorInputLanguage: Language
+        priorInputLanguage: Language,
+        isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult
-    func handleImmediateUndo(context: FocusContext) -> CorrectionHandlingResult
+    func handleImmediateUndo(
+        context: FocusContext,
+        isContextStillEligible: () -> Bool
+    ) -> CorrectionHandlingResult
     func noteOrdinaryInput()
 }
 
@@ -516,7 +520,10 @@ public final class KeyboardEventMonitor {
                     completedWord,
                     boundaryKeyCode: keyCode.map(Int.init),
                     context: context,
-                    priorInputLanguage: language
+                    priorInputLanguage: language,
+                    isContextStillEligible: {
+                        self.isContextStillEligible(context)
+                    }
                 )
                 if case let .handledWithInputSourceSelectionFailure(expectedLanguage) = result {
                     delegate?.didFailInputSourceSelection(.init(
@@ -540,7 +547,12 @@ public final class KeyboardEventMonitor {
 
         case .commandZ:
             wordBuffer.reset()
-            let result = coordinator.handleImmediateUndo(context: context)
+            let result = coordinator.handleImmediateUndo(
+                context: context,
+                isContextStillEligible: {
+                    self.isContextStillEligible(context)
+                }
+            )
             if case let .handledWithInputSourceSelectionFailure(expectedLanguage) = result {
                 delegate?.didFailInputSourceSelection(.init(
                     operation: .immediateUndo,
@@ -560,6 +572,17 @@ public final class KeyboardEventMonitor {
 
     var currentTokenForTesting: String {
         wordBuffer.currentToken
+    }
+
+    private func isContextStillEligible(_ expected: FocusContext) -> Bool {
+        guard !secureInput.isSecureInputEnabled,
+              let current = focusContextProvider.current() else {
+            return false
+        }
+        return current == expected
+            && current.elementIdentifier != nil
+            && !current.isSecureField
+            && current.isEditableTextInput
     }
 
     private var prerequisitesAreMet: Bool {
