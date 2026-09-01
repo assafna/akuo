@@ -60,7 +60,7 @@ final class CorrectionPolicyTests: XCTestCase {
 
     func testKeepsRecognizedPunctuatedOriginalWithTargetWordShape() {
         let policy = makePolicy(recognizer: StubRecognizer(
-            english: ["the,"],
+            english: ["the"],
             hebrew: ["איקת"]
         ))
 
@@ -97,6 +97,46 @@ final class CorrectionPolicyTests: XCTestCase {
         ))
 
         XCTAssertEqual(policy.decision(for: "akuo.app"), .keep(.excluded))
+    }
+
+    func testCompletePhysicalEvidenceDoesNotBypassStructuredTokenExclusions() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: [],
+            hebrew: ["שלום"]
+        ))
+        let cases: [(source: String, target: String)] = [
+            ("me@example.com", "צק@קסשצפךקץבםצ"),
+            ("https://akuo.app", "יאאפד.//שלוםץשפפ"),
+            ("/tmp/file", ".אצפ.כןךק"),
+            ("file_name", "כןךק_משצק"),
+            ("foo.bar", "כםםץנשר"),
+            ("abc123", "שנב123"),
+        ]
+
+        for testCase in cases {
+            let sourceCharacters = Array(testCase.source).map(String.init)
+            let targetCharacters = Array(testCase.target).map(String.init)
+            XCTAssertEqual(sourceCharacters.count, targetCharacters.count)
+            let keyStrokes = zip(sourceCharacters, targetCharacters)
+                .enumerated()
+                .map { index, pair in
+                    ObservedKeyStroke(
+                        text: pair.0,
+                        keyCode: index,
+                        targetText: pair.1
+                    )
+                }
+
+            XCTAssertEqual(
+                policy.decision(
+                    for: testCase.source,
+                    sourceHint: .english,
+                    keyStrokes: keyStrokes
+                ),
+                .keep(.excluded),
+                testCase.source
+            )
+        }
     }
 
     func testKeepsInteriorHebrewSlashExcludedEvenWhenMappedCandidateIsRecognized() {

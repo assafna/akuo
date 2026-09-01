@@ -1,6 +1,5 @@
 public struct TokenExcluder: Sendable {
     private static let excludedPunctuation = Set<Character>("/\\@_.,;[]':׳")
-    private static let hebrewFinalLetters = Set<Character>("ךםןףץ")
 
     public init() {}
 
@@ -26,6 +25,11 @@ public struct TokenExcluder: Sendable {
 
         if hasDomainLikeShape(token) { return true }
 
+        if let conversion,
+           isPunctuationDominated(conversion.candidate) {
+            return true
+        }
+
         if token.contains(where: Self.excludedPunctuation.contains),
            !isPermittedLayoutLetterPunctuation(token, conversion: conversion) {
             return true
@@ -45,7 +49,6 @@ public struct TokenExcluder: Sendable {
               hasTargetWordShape(conversion) else {
             return false
         }
-
         // A physical conversion exists only when every observed key position
         // aligns with the visible token. That evidence safely covers Apple's
         // silent and composite Hebrew Shift outputs without maintaining a
@@ -63,7 +66,15 @@ public struct TokenExcluder: Sendable {
         _ token: String,
         conversion: LayoutConversion
     ) -> Bool {
-        guard conversion.source == .hebrew else { return true }
+        guard conversion.source == .hebrew else {
+            // Without a complete physical trace, retain the legacy English to
+            // Hebrew allowance only for punctuation keys that map to letters.
+            // Terminal punctuation envelopes require the exact target-layout
+            // output recorded by the live event monitor.
+            return conversion.candidate.allSatisfy(
+                KeyboardLayoutMap.hebrewLetters.contains
+            )
+        }
         if conversion.target == .english,
            OrthographicWordShape.isJoinedEnglishWord(conversion.candidate) {
             return hasSupportedHebrewSourceForJoinedEnglishWord(token)
@@ -97,19 +108,10 @@ public struct TokenExcluder: Sendable {
         case .english:
             return OrthographicWordShape.isEnglishWord(conversion.candidate)
         case .hebrew:
-            return hasHebrewWordShape(conversion.candidate)
-        }
-    }
-
-    private func hasHebrewWordShape(_ candidate: String) -> Bool {
-        let characters = Array(candidate)
-        guard !characters.isEmpty,
-              characters.allSatisfy(KeyboardLayoutMap.hebrewLetters.contains) else {
-            return false
-        }
-
-        return characters.dropLast().allSatisfy {
-            !Self.hebrewFinalLetters.contains($0)
+            return OrthographicWordShape.recognitionToken(
+                for: conversion.candidate,
+                language: .hebrew
+            ) != nil
         }
     }
 

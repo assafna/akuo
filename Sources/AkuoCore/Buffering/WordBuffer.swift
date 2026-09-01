@@ -8,13 +8,33 @@ public enum BufferedInput: Equatable, Sendable {
     case reset
 }
 
+public struct ObservedKeyModifiers: OptionSet, Equatable, Sendable {
+    public let rawValue: Int
+
+    public init(rawValue: Int) {
+        self.rawValue = rawValue
+    }
+
+    public static let shift = Self(rawValue: 1 << 0)
+    public static let capsLock = Self(rawValue: 1 << 1)
+}
+
 public struct ObservedKeyStroke: Equatable, Sendable {
     public let text: String
     public let keyCode: Int
+    public let modifiers: ObservedKeyModifiers
+    public let targetText: String?
 
-    public init(text: String, keyCode: Int) {
+    public init(
+        text: String,
+        keyCode: Int,
+        modifiers: ObservedKeyModifiers = [],
+        targetText: String? = nil
+    ) {
         self.text = text
         self.keyCode = keyCode
+        self.modifiers = modifiers
+        self.targetText = targetText
     }
 }
 

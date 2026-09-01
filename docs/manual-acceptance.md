@@ -55,7 +55,7 @@ Record the blocker here before stopping:
 
 - [ ] **Release bundle built.** Run `swift test` and `Scripts/build-app.sh release`; record the passing test count, bundle path, and printed executable SHA-256. **Result:**
   **Evidence:**
-- [ ] **Bundle identity verified.** Confirm `CFBundleIdentifier = app.akuo.Akuo`, version `0.2.0`, build `2`, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. **Result:**
+- [ ] **Bundle identity verified.** Confirm `CFBundleIdentifier = app.akuo.Akuo`, version `0.3.0`, build `3`, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. **Result:**
   **Evidence:**
 - [ ] **Installed before permission.** Move the release candidate to `/Applications/Akuo.app`, confirm its executable hash matches the built candidate, and launch only that copy. **Result:**
   **Evidence:**
@@ -81,7 +81,7 @@ Record the blocker here before stopping:
 
 Perform these first in TextEdit with a new empty plain-text document.
 
-Version 1 completes a token only at whitespace or Return. Printable punctuation does not trigger correction and remains part of the unfinished token until one of those boundaries arrives. At the boundary, punctuation-shaped keys are eligible only when the complete opposite-layout conversion is a target-language word shape: letters only, or English letter segments joined by internal straight or curly apostrophes. Structured and unsupported punctuation remains excluded.
+Version 1 completes a token only at whitespace or Return. Printable punctuation does not trigger correction and remains part of the unfinished token until one of those boundaries arrives. Each live key is translated through the installed Apple target layout with its Shift/Caps Lock state. At the boundary, punctuation is eligible only when the complete trace still matches the visible token and converts to a valid target-language lexical core, optionally surrounded by supported terminal punctuation or balanced wrappers. Structured and unsupported punctuation remains excluded.
 
 - [ ] **English-layout Hebrew correction.** Select English, type `akuo `, and confirm the visible result is exactly `שלום ` with one space and the active input source changes to standard Hebrew. **Result:**
   **Evidence:**
@@ -90,6 +90,16 @@ Version 1 completes a token only at whitespace or Return. Printable punctuation 
 - [ ] **Other punctuation keys as Hebrew letters.** Select English and separately type `tr. ` and `gu; `. Confirm the visible results are exactly `ארץ ` and `עוף ` with one Space each and the active input source changes to standard Hebrew after each recognized candidate. Confirm both Hebrew candidates are recognized on that Mac. **Result:**
   **Evidence:**
 - [ ] **Hebrew-layout English correction.** Select Hebrew, type the physical keys that produce `יקךךם `, and confirm the visible result is exactly `hello ` with one space and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Hebrew-layout terminal exclamation.** Select Hebrew, type the physical keys that produce `יקךךם! `, including Shift+1 and the final Space. Confirm the visible result is exactly `hello! ` and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **English-layout terminal question mark.** Select English, type `knv? `, including Shift+/ and the final Space. Confirm the visible result is exactly `למה? ` and the active input source changes to standard Hebrew. **Result:**
+  **Evidence:**
+- [ ] **Malformed visible Hebrew shape resolved by its physical trace.** Select Hebrew, type the physical W, O, W keys so the unfinished token is exactly `׳ם׳`, then press Space. Confirm the visible result is exactly `wow ` and the active input source changes to English. **Result:**
+  **Evidence:**
+- [ ] **Remapped terminal punctuation in both directions.** Select English, type `akuo' ` and confirm the exact result `שלום, `. Then select Hebrew and type the physical H, E, L, L, O, comma keys followed by Space; confirm the Hebrew unfinished token ends in `ת` and the exact result is `hello, `. **Result:**
+  **Evidence:**
+- [ ] **Mirrored wrapper pair.** Select English and type the physical keys whose English text is `)knv?(`, followed by Space. Confirm the exact result is `(למה?) `, with the parentheses in target-language order, and the active input source changes to standard Hebrew. **Result:**
   **Evidence:**
 - [ ] **Hebrew-layout English contraction.** Select Hebrew, type the physical D, O, N, apostrophe, T keys and pause. Confirm the visible unfinished token is exactly `גםמ,א`. Press Space and confirm the visible result is exactly `don't ` with one space and the active input source changes to English. **Result:**
   **Evidence:**

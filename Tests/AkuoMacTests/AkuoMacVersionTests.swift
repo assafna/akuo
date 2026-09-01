@@ -3,6 +3,6 @@ import XCTest
 
 final class AkuoMacVersionTests: XCTestCase {
     func testMacVersionBridgesCoreVersion() {
-        XCTAssertEqual(AkuoMacVersion.current, "0.2.0")
+        XCTAssertEqual(AkuoMacVersion.current, "0.3.0")
     }
 }
