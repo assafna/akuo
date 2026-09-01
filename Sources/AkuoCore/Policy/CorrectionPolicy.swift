@@ -55,23 +55,32 @@ public struct CorrectionPolicy {
         guard !excluder.shouldExclude(token, conversion: conversion) else { return .keep(.excluded) }
         guard let conversion else { return .keep(.noConversion) }
 
-        let original = originalScorer.evidence(
+        let originalRecognitionToken = OrthographicWordShape.recognitionToken(
             for: conversion.original,
             language: conversion.source
         )
-        switch original.status {
-        case .recognized:
-            guard conversion.hasAuthoritativePhysicalEvidence else {
-                return .keep(.originalRecognized)
+        let original = originalRecognitionToken.map {
+            originalScorer.evidence(for: $0, language: conversion.source)
+        }
+        if let original {
+            switch original.status {
+            case .recognized:
+                guard conversion.hasAuthoritativePhysicalEvidence else {
+                    return .keep(.originalRecognized)
+                }
+            case .unavailable:
+                return .keep(.recognitionUnavailable)
+            case .unknown:
+                break
             }
-        case .unavailable:
-            return .keep(.recognitionUnavailable)
-        case .unknown:
-            break
         }
 
-        let candidate = candidateScorer.evidence(
+        guard let candidateRecognitionToken = OrthographicWordShape.recognitionToken(
             for: conversion.candidate,
+            language: conversion.target
+        ) else { return .keep(.excluded) }
+        let candidate = candidateScorer.evidence(
+            for: candidateRecognitionToken,
             language: conversion.target
         )
         switch candidate.status {
@@ -83,7 +92,7 @@ public struct CorrectionPolicy {
             return .keep(.recognitionUnavailable)
         }
         if !conversion.hasAuthoritativePhysicalEvidence {
-            guard candidate.score - original.score >= 60 else {
+            guard candidate.score - (original?.score ?? 0) >= 60 else {
                 return .keep(.ambiguous)
             }
         }

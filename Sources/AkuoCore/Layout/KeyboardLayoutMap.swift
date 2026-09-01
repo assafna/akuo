@@ -119,6 +119,22 @@ public struct KeyboardLayoutMap: Sendable {
         guard let source = source ?? sourceHint else { return nil }
         let target: Language = source == .english ? .hebrew : .english
 
+        if let physicalConversion = Self.translatedPhysicalCandidate(
+            for: token,
+            source: source,
+            keyStrokes: keyStrokes
+        ) {
+            return LayoutConversion(
+                original: token,
+                candidate: physicalConversion.candidate,
+                source: source,
+                target: target,
+                physicalEvidence: .init(
+                    recoveredShift: physicalConversion.recoveredShift
+                )
+            )
+        }
+
         if source == .hebrew,
            let physicalConversion = Self.physicalEnglishCandidate(
                for: token,
@@ -149,6 +165,30 @@ public struct KeyboardLayoutMap: Sendable {
         }
 
         return LayoutConversion(original: token, candidate: candidate, source: source, target: target)
+    }
+
+    private static func translatedPhysicalCandidate(
+        for token: String,
+        source: Language,
+        keyStrokes: [ObservedKeyStroke]
+    ) -> (candidate: String, recoveredShift: Bool)? {
+        guard !keyStrokes.isEmpty,
+              keyStrokes.map(\.text).joined() == token,
+              keyStrokes.allSatisfy({ $0.targetText != nil }) else {
+            return nil
+        }
+
+        let candidate = keyStrokes.compactMap(\.targetText).joined()
+        guard !candidate.isEmpty else { return nil }
+        let recoveredShift = source == .hebrew && keyStrokes.contains { keyStroke in
+            guard keyStroke.modifiers.contains(.shift)
+                    || keyStroke.modifiers.contains(.capsLock),
+                  let targetText = keyStroke.targetText else {
+                return false
+            }
+            return targetText.contains(where: isUppercaseEnglishLetter)
+        }
+        return (candidate, recoveredShift)
     }
 
     private static func physicalEnglishCandidate(
@@ -186,6 +226,14 @@ public struct KeyboardLayoutMap: Sendable {
             return false
         }
         return (scalar.value >= 65 && scalar.value <= 90) || (scalar.value >= 97 && scalar.value <= 122)
+    }
+
+    private static func isUppercaseEnglishLetter(_ character: Character) -> Bool {
+        guard character.unicodeScalars.count == 1,
+              let scalar = character.unicodeScalars.first else {
+            return false
+        }
+        return (65...90).contains(scalar.value)
     }
 
     private static func lowercaseASCII(_ character: Character) -> Character {

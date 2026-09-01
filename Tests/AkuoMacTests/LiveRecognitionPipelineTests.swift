@@ -110,6 +110,227 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         }
     }
 
+    func testHebrewLayoutWordWithTrailingExclamationCorrectsCompleteToken() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["hello"], hebrew: []),
+            layoutTranslator: LiveTargetLayoutTranslator()
+        )
+
+        for (text, keyCode, flags) in [
+            ("י", CGKeyCode(4), CGEventFlags()),
+            ("ק", CGKeyCode(14), CGEventFlags()),
+            ("ך", CGKeyCode(37), CGEventFlags()),
+            ("ך", CGKeyCode(37), CGEventFlags()),
+            ("ם", CGKeyCode(31), CGEventFlags()),
+            ("!", CGKeyCode(18), CGEventFlags.maskShift),
+        ] {
+            XCTAssertEqual(
+                fixture.passThroughStroke(text, keyCode: keyCode, flags: flags),
+                text
+            )
+        }
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "יקךךם!")
+        XCTAssertNil(fixture.process(" "))
+        XCTAssertEqual(fixture.document.text, "hello! ")
+    }
+
+    func testEnglishLayoutWordWithTrailingQuestionCorrectsCompleteToken() {
+        let fixture = makeFixture(
+            language: .english,
+            fallback: .init(english: [], hebrew: ["למה"]),
+            layoutTranslator: LiveTargetLayoutTranslator()
+        )
+
+        for (text, keyCode, flags) in [
+            ("k", CGKeyCode(40), CGEventFlags()),
+            ("n", CGKeyCode(45), CGEventFlags()),
+            ("v", CGKeyCode(9), CGEventFlags()),
+            ("?", CGKeyCode(44), CGEventFlags.maskShift),
+        ] {
+            XCTAssertEqual(
+                fixture.passThroughStroke(text, keyCode: keyCode, flags: flags),
+                text
+            )
+        }
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "knv?")
+        XCTAssertNil(fixture.process(" "))
+        XCTAssertEqual(fixture.document.text, "למה? ")
+    }
+
+    func testCompletePhysicalWordOutranksMalformedRecognizedHebrewShape() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["wow"], hebrew: ["׳ם׳"]),
+            layoutTranslator: LiveTargetLayoutTranslator()
+        )
+
+        for (text, keyCode) in [
+            ("׳", CGKeyCode(13)),
+            ("ם", CGKeyCode(31)),
+            ("׳", CGKeyCode(13)),
+        ] {
+            XCTAssertEqual(fixture.passThroughStroke(text, keyCode: keyCode), text)
+        }
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "׳ם׳")
+        XCTAssertNil(fixture.process(" "))
+        XCTAssertEqual(fixture.document.text, "wow ")
+    }
+
+    func testPhysicalTranslationCoversRemappedTerminalAndMirroredPunctuation() {
+        let cases: [(
+            language: Language,
+            strokes: [(String, CGKeyCode, CGEventFlags)],
+            fallback: LiveRecognitionFallback,
+            expected: String
+        )] = [
+            (
+                .english,
+                [("a", 0, []), ("k", 40, []), ("u", 32, []),
+                 ("o", 31, []), ("'", 39, [])],
+                .init(english: [], hebrew: ["שלום"]),
+                "שלום,"
+            ),
+            (
+                .english,
+                [("a", 0, []), ("k", 40, []), ("u", 32, []),
+                 ("o", 31, []), ("/", 44, [])],
+                .init(english: [], hebrew: ["שלום"]),
+                "שלום."
+            ),
+            (
+                .english,
+                [(")", 29, .maskShift), ("k", 40, []), ("n", 45, []),
+                 ("v", 9, []), ("?", 44, .maskShift),
+                 ("(", 25, .maskShift)],
+                .init(english: [], hebrew: ["למה"]),
+                "(למה?)"
+            ),
+            (
+                .hebrew,
+                [("י", 4, []), ("ק", 14, []), ("ך", 37, []),
+                 ("ך", 37, []), ("ם", 31, []), ("ת", 43, [])],
+                .init(english: ["hello"], hebrew: []),
+                "hello,"
+            ),
+            (
+                .hebrew,
+                [("י", 4, []), ("ק", 14, []), ("ך", 37, []),
+                 ("ך", 37, []), ("ם", 31, []), ("ץ", 47, [])],
+                .init(english: ["hello"], hebrew: []),
+                "hello."
+            ),
+            (
+                .hebrew,
+                [(")", 25, .maskShift), ("׳", 13, []), ("ם", 31, []),
+                 ("׳", 13, []), ("?", 44, .maskShift),
+                 ("(", 29, .maskShift)],
+                .init(english: ["wow"], hebrew: []),
+                "(wow?)"
+            ),
+        ]
+
+        for testCase in cases {
+            let fixture = makeFixture(
+                language: testCase.language,
+                fallback: testCase.fallback,
+                layoutTranslator: LiveTargetLayoutTranslator()
+            )
+            for (text, keyCode, flags) in testCase.strokes {
+                XCTAssertEqual(
+                    fixture.passThroughStroke(text, keyCode: keyCode, flags: flags),
+                    text,
+                    testCase.expected
+                )
+            }
+
+            XCTAssertNil(fixture.process(" "), testCase.expected)
+            XCTAssertEqual(
+                fixture.document.text,
+                "\(testCase.expected) ",
+                testCase.expected
+            )
+        }
+    }
+
+    func testUnavailableTargetLayoutTranslationClearsPartialPhysicalTrace() {
+        let translator = ScriptedTargetLayoutTranslator(outputs: ["ש", nil])
+        let fixture = makeFixture(
+            language: .english,
+            fallback: .init(english: [], hebrew: ["שלום"]),
+            layoutTranslator: translator
+        )
+
+        XCTAssertEqual(fixture.passThroughStroke("a", keyCode: 0), "a")
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "a")
+        XCTAssertEqual(fixture.passThroughStroke("k", keyCode: 40), "k")
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+
+        XCTAssertTrue(fixture.process(" ") === fixture.nativeEvent)
+        XCTAssertTrue(fixture.replacer.calls.isEmpty)
+        XCTAssertTrue(fixture.backend.selectedIdentifiers.isEmpty)
+    }
+
+    func testPunctuationDominatedPhysicalCandidateStaysUnchanged() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["hello"], hebrew: []),
+            layoutTranslator: LiveTargetLayoutTranslator()
+        )
+
+        for (text, keyCode, flags) in [
+            ("י", CGKeyCode(4), CGEventFlags()),
+            ("ק", CGKeyCode(14), CGEventFlags()),
+            ("ך", CGKeyCode(37), CGEventFlags()),
+            ("ך", CGKeyCode(37), CGEventFlags()),
+            ("ם", CGKeyCode(31), CGEventFlags()),
+            ("!", CGKeyCode(18), CGEventFlags.maskShift),
+            ("!", CGKeyCode(18), CGEventFlags.maskShift),
+            ("!", CGKeyCode(18), CGEventFlags.maskShift),
+            ("!", CGKeyCode(18), CGEventFlags.maskShift),
+            ("!", CGKeyCode(18), CGEventFlags.maskShift),
+            ("!", CGKeyCode(18), CGEventFlags.maskShift),
+        ] {
+            XCTAssertEqual(
+                fixture.passThroughStroke(text, keyCode: keyCode, flags: flags),
+                text
+            )
+        }
+
+        XCTAssertEqual(fixture.passThrough(" "), " ")
+        XCTAssertEqual(fixture.document.text, "יקךךם!!!!!! ")
+        XCTAssertTrue(fixture.replacer.calls.isEmpty)
+    }
+
+    func testTargetTranslationFailureSuppressesCorrectionUntilBoundary() {
+        let translator = ScriptedTargetLayoutTranslator(
+            outputs: [nil, "ש", "ל", "ו", "ם"]
+        )
+        let fixture = makeFixture(
+            language: .english,
+            fallback: .init(english: [], hebrew: ["שלום"]),
+            layoutTranslator: translator
+        )
+
+        for (text, keyCode) in [
+            ("x", CGKeyCode(7)),
+            ("a", CGKeyCode(0)),
+            ("k", CGKeyCode(40)),
+            ("u", CGKeyCode(32)),
+            ("o", CGKeyCode(31)),
+        ] {
+            XCTAssertEqual(fixture.passThroughStroke(text, keyCode: keyCode), text)
+        }
+
+        XCTAssertEqual(fixture.passThrough(" "), " ")
+        XCTAssertEqual(fixture.document.text, "xakuo ")
+        XCTAssertTrue(fixture.replacer.calls.isEmpty)
+        XCTAssertTrue(fixture.backend.selectedIdentifiers.isEmpty)
+    }
+
     func testInternalApostropheWaitsForBoundaryThenCorrectsContraction() {
         let fixture = makeFixture(
             language: .hebrew,
@@ -291,7 +512,7 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         let fixture = makeFixture(
             language: .english,
             fallback: .init(
-                english: ["hello,"],
+                english: ["hello"],
                 hebrew: ["יקךךםת"]
             )
         )
@@ -580,7 +801,8 @@ final class LiveRecognitionPipelineTests: XCTestCase {
 
     private func makeFixture(
         language: Language,
-        fallback: LiveRecognitionFallback = .init(english: [], hebrew: [])
+        fallback: LiveRecognitionFallback = .init(english: [], hebrew: []),
+        layoutTranslator: (any KeyboardLayoutTextTranslating)? = nil
     ) -> LiveRecognitionFixture {
         let backend = LiveRecognitionInputSourceBackend(language: language)
         let inputSources = InputSourceController(backend: backend)
@@ -610,6 +832,7 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             focusContextProvider: LiveRecognitionFocusProvider(),
             inputSources: inputSources,
             tapManager: LiveRecognitionTapManager(),
+            layoutTranslator: layoutTranslator,
             isAkuoEnabled: { true }
         )
         return .init(
@@ -870,6 +1093,68 @@ private final class PhysicalCurrentLayoutRetranslator: CurrentKeyboardTextRetran
     }
 }
 
+private struct LiveTargetLayoutTranslator: KeyboardLayoutTextTranslating {
+    private static let englishCharacter: [Int: Character] = [
+        0: "a", 11: "b", 8: "c", 2: "d", 14: "e", 3: "f", 5: "g",
+        4: "h", 34: "i", 38: "j", 40: "k", 37: "l", 46: "m",
+        45: "n", 31: "o", 35: "p", 12: "q", 15: "r", 1: "s",
+        17: "t", 32: "u", 9: "v", 13: "w", 7: "x", 16: "y", 6: "z",
+    ]
+
+    func characters(
+        keyCode: Int,
+        modifiers: ObservedKeyModifiers,
+        inputSourceIdentifier: String
+    ) -> String? {
+        let shifted = modifiers.contains(.shift)
+        if keyCode == 18, shifted { return "!" }
+        if keyCode == 44, shifted { return "?" }
+        if inputSourceIdentifier == "com.apple.keylayout.Hebrew" {
+            switch (keyCode, shifted) {
+            case (29, true): return "("
+            case (25, true): return ")"
+            case (39, false): return ","
+            case (44, false): return "."
+            default: break
+            }
+        } else {
+            switch (keyCode, shifted) {
+            case (25, true): return "("
+            case (29, true): return ")"
+            case (39, false): return "'"
+            case (43, false): return ","
+            case (47, false): return "."
+            case (44, false): return "/"
+            default: break
+            }
+        }
+        guard let english = Self.englishCharacter[keyCode] else { return nil }
+        if inputSourceIdentifier == "com.apple.keylayout.Hebrew" {
+            return KeyboardLayoutMap.englishToHebrew[english].map(String.init)
+        }
+        return shifted
+            ? String(english).uppercased()
+            : String(english)
+    }
+}
+
+private final class ScriptedTargetLayoutTranslator: KeyboardLayoutTextTranslating {
+    private var outputs: [String?]
+
+    init(outputs: [String?]) {
+        self.outputs = outputs
+    }
+
+    func characters(
+        keyCode: Int,
+        modifiers: ObservedKeyModifiers,
+        inputSourceIdentifier: String
+    ) -> String? {
+        guard !outputs.isEmpty else { return nil }
+        return outputs.removeFirst()
+    }
+}
+
 private struct LiveRecognitionFocusProvider: FocusContextProviding {
     func current() -> FocusContext? {
         .init(
@@ -946,7 +1231,13 @@ private struct LiveRecognitionFixture {
         return passedThrough
     }
 
-    func passThroughStroke(_ text: String, keyCode: CGKeyCode) -> String {
+    func passThroughStroke(
+        _ text: String,
+        keyCode: CGKeyCode,
+        flags: CGEventFlags = []
+    ) -> String {
+        nativeEvent.flags = flags
+        defer { nativeEvent.flags = [] }
         guard process(text, keyCode: keyCode) === nativeEvent else { return "" }
         document.append(text)
         return text

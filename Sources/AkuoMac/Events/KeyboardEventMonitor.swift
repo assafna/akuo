@@ -152,9 +152,14 @@ protocol InputSourceStateProviding {
     var readiness: InputSourceReadiness { get }
     var currentLanguage: Language? { get }
     var currentSource: InputSourceSnapshot? { get }
+    func preferredSource(for language: Language) -> InputSourceSnapshot?
 }
 
 extension InputSourceController: InputSourceStateProviding {}
+
+extension InputSourceStateProviding {
+    func preferredSource(for language: Language) -> InputSourceSnapshot? { nil }
+}
 
 protocol NativeEventTapManaging: AnyObject {
     var isInstalled: Bool { get }
@@ -281,11 +286,13 @@ public final class KeyboardEventMonitor {
     private let focusContextProvider: any FocusContextProviding
     private let inputSources: any InputSourceStateProviding
     private let tapManager: any NativeEventTapManaging
+    private let layoutTranslator: (any KeyboardLayoutTextTranslating)?
     private let isAkuoEnabled: () -> Bool
 
     private var wordBuffer = WordBuffer()
     private var lastFocusContext: FocusContext?
     private var lastInputSourceIdentifier: String?
+    private var suppressCorrectionUntilBoundary = false
 
     public convenience init(
         coordinator: CorrectionCoordinator,
@@ -303,6 +310,7 @@ public final class KeyboardEventMonitor {
             focusContextProvider: focusContextProvider,
             inputSources: inputSources,
             tapManager: SystemNativeEventTapManager(),
+            layoutTranslator: AppleKeyboardLayoutTextTranslator(),
             isAkuoEnabled: isAkuoEnabled
         )
     }
@@ -315,6 +323,7 @@ public final class KeyboardEventMonitor {
         focusContextProvider: any FocusContextProviding,
         inputSources: any InputSourceStateProviding,
         tapManager: any NativeEventTapManaging,
+        layoutTranslator: (any KeyboardLayoutTextTranslating)? = nil,
         isAkuoEnabled: @escaping () -> Bool
     ) {
         self.decoder = decoder
@@ -324,6 +333,7 @@ public final class KeyboardEventMonitor {
         self.focusContextProvider = focusContextProvider
         self.inputSources = inputSources
         self.tapManager = tapManager
+        self.layoutTranslator = layoutTranslator
         self.isAkuoEnabled = isAkuoEnabled
     }
 
@@ -452,12 +462,47 @@ public final class KeyboardEventMonitor {
             let isSilentShiftedHebrewLetter = language == .hebrew
                 && text.isEmpty
                 && keyCode.map { KeyboardLayoutMap.isAlphabeticKeyCode(Int($0)) } == true
-            if isTokenText(text, keyCode: keyCode, language: language)
-                || isSilentShiftedHebrewLetter {
+            let isBufferedTokenText = isTokenText(
+                text,
+                keyCode: keyCode,
+                language: language
+            ) || isSilentShiftedHebrewLetter
+            if suppressCorrectionUntilBoundary {
+                if !isBufferedTokenText {
+                    suppressCorrectionUntilBoundary = false
+                }
+                return event
+            }
+            if isBufferedTokenText {
                 if let keyCode {
+                    var modifiers = ObservedKeyModifiers()
+                    if event.flags.contains(.maskShift) {
+                        modifiers.insert(.shift)
+                    }
+                    if event.flags.contains(.maskAlphaShift) {
+                        modifiers.insert(.capsLock)
+                    }
+                    let targetLanguage: Language = language == .english
+                        ? .hebrew
+                        : .english
+                    let targetText = inputSources.preferredSource(for: targetLanguage)
+                        .flatMap { targetSource in
+                            layoutTranslator?.characters(
+                                keyCode: Int(keyCode),
+                                modifiers: modifiers,
+                                inputSourceIdentifier: targetSource.identifier
+                            )
+                    }
+                    if layoutTranslator != nil, targetText == nil {
+                        clearTransientState()
+                        suppressCorrectionUntilBoundary = true
+                        return event
+                    }
                     _ = wordBuffer.consume(.observedKeyStroke(.init(
                         text: text,
-                        keyCode: Int(keyCode)
+                        keyCode: Int(keyCode),
+                        modifiers: modifiers,
+                        targetText: targetText
                     )))
                 } else {
                     _ = wordBuffer.consume(.text(text))
@@ -552,6 +597,7 @@ public final class KeyboardEventMonitor {
         wordBuffer.reset()
         lastFocusContext = nil
         lastInputSourceIdentifier = nil
+        suppressCorrectionUntilBoundary = false
         if invalidateImmediateUndo {
             coordinator.noteOrdinaryInput()
         }

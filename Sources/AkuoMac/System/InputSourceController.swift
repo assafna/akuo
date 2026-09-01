@@ -148,8 +148,7 @@ public struct InputSourceController: InputSourceSelecting {
         return nil
     }
 
-    @discardableResult
-    public func select(_ language: Language) -> Bool {
+    func preferredSource(for language: Language) -> InputSourceSnapshot? {
         let availableIdentifiers = Set(backend.sources.map(\.identifier))
         let identifier: String?
         switch language {
@@ -160,8 +159,12 @@ public struct InputSourceController: InputSourceSelecting {
                 ? Self.standardHebrew
                 : nil
         }
+        return identifier.map { .init(identifier: $0, language: language) }
+    }
 
-        guard let identifier else { return false }
+    @discardableResult
+    public func select(_ language: Language) -> Bool {
+        guard let identifier = preferredSource(for: language)?.identifier else { return false }
         guard backend.select(identifier: identifier) else { return false }
         selectionOriginTracker.recordSuccessfulSelection(to: language)
         return true

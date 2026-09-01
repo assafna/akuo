@@ -4,8 +4,19 @@ All notable changes to Akuo are documented in this file.
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-01
+
 ### Fixed
 
+- Translate every captured key through the installed Apple target layout with
+  its Shift/Caps Lock state, fixing terminal punctuation in both directions
+  (`יקךךם!` to `hello!` and `knv?` to `למה?`), remapped punctuation, and
+  directionally mirrored wrapper pairs without a punctuation-specific map.
+- Recognize only the lexical core of a trace-backed punctuated candidate while
+  preserving its punctuation in the replacement, and let a valid complete
+  physical trace resolve malformed source shapes such as `׳ם׳` to `wow`.
+- Keep punctuation-dominated translated candidates excluded, and suppress the
+  remainder of a token after any target-layout translation failure.
 - Re-translate captured physical key events with AppKit's current input source
   and require the same supported source before and after decoding, fixing
   repeated corrections after source switches without trusting stale Core
