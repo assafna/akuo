@@ -9,6 +9,10 @@ public struct TokenExcluder: Sendable {
     ) -> Bool {
         let hasAuthoritativePhysicalEvidence =
             conversion?.hasAuthoritativePhysicalEvidence == true
+        if let physicalEvidence = conversion?.physicalEvidence,
+           !physicalEvidence.hasAlphabeticKey {
+            return true
+        }
         guard !token.isEmpty else {
             return !hasAuthoritativePhysicalEvidence
         }

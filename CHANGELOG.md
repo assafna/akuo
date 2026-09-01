@@ -4,6 +4,13 @@ All notable changes to Akuo are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Require trace-backed word corrections to include at least one alphabetic
+  physical key, preventing punctuation-only input such as `.`, `,`, or `;`
+  from becoming recognized single Hebrew letters while preserving punctuation
+  within words and silent shifted-letter recovery.
+
 ## 0.3.0 - 2026-09-01
 
 ### Fixed

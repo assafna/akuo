@@ -186,6 +186,13 @@ Use recognizable test data that contains no real credentials or personal informa
   **Evidence:**
 - [ ] **Unknown punctuation conversion unchanged.** In a new empty TextEdit document, select English, type `akuo. `, and confirm the visible text is exactly `akuo. `: the dot remains buffered until Space, the mapped candidate `שלוםץ` is unknown, and the active input source remains English. **Result:**
   **Evidence:**
+- [ ] **Punctuation-only keys unchanged.** In a new empty TextEdit document,
+  select English and type `. `, `, `, and `; ` separately. Repeat each with
+  Return instead of Space. Confirm every punctuation mark and boundary remains
+  exactly as typed, the input source remains English, and Command-Z retains the
+  host application's normal behavior because Akuo created no correction or
+  undo record. **Result:**
+  **Evidence:**
 - [ ] **URLs unchanged.** Type `https://akuo.app ` and confirm exact pass-through. **Result:**
   **Evidence:**
 - [ ] **Emails unchanged.** Type `me@example.com ` and confirm exact pass-through. **Result:**

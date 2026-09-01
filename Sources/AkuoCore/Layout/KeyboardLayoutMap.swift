@@ -1,8 +1,14 @@
 public struct PhysicalLayoutEvidence: Equatable, Sendable {
     public let recoveredShift: Bool
+    public let hasAlphabeticKey: Bool
 
     public init(recoveredShift: Bool) {
+        self.init(recoveredShift: recoveredShift, hasAlphabeticKey: true)
+    }
+
+    public init(recoveredShift: Bool, hasAlphabeticKey: Bool) {
         self.recoveredShift = recoveredShift
+        self.hasAlphabeticKey = hasAlphabeticKey
     }
 }
 
@@ -28,7 +34,8 @@ public struct LayoutConversion: Equatable, Sendable {
     }
 
     public var hasAuthoritativePhysicalEvidence: Bool {
-        guard let physicalEvidence else { return false }
+        guard let physicalEvidence,
+              physicalEvidence.hasAlphabeticKey else { return false }
         if physicalEvidence.recoveredShift { return true }
 
         // A complete physical trace resolves the otherwise ambiguous Hebrew
@@ -130,7 +137,10 @@ public struct KeyboardLayoutMap: Sendable {
                 source: source,
                 target: target,
                 physicalEvidence: .init(
-                    recoveredShift: physicalConversion.recoveredShift
+                    recoveredShift: physicalConversion.recoveredShift,
+                    hasAlphabeticKey: keyStrokes.contains {
+                        Self.isAlphabeticKeyCode($0.keyCode)
+                    }
                 )
             )
         }
@@ -146,7 +156,10 @@ public struct KeyboardLayoutMap: Sendable {
                 source: source,
                 target: target,
                 physicalEvidence: .init(
-                    recoveredShift: physicalConversion.recoveredShift
+                    recoveredShift: physicalConversion.recoveredShift,
+                    hasAlphabeticKey: keyStrokes.contains {
+                        Self.isAlphabeticKeyCode($0.keyCode)
+                    }
                 )
             )
         }
