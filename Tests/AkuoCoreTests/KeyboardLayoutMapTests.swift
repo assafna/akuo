@@ -62,9 +62,19 @@ final class KeyboardLayoutMapTests: XCTestCase {
                 candidate: "We're",
                 source: .hebrew,
                 target: .english,
-                physicalEvidence: .init(recoveredShift: true)
+                physicalEvidence: .init(
+                    recoveredShift: true,
+                    hasAlphabeticKey: true
+                )
             )
         )
+    }
+
+    func testLegacyPhysicalEvidenceInitializerPreservesPriorAuthority() {
+        let evidence = PhysicalLayoutEvidence(recoveredShift: true)
+
+        XCTAssertTrue(evidence.recoveredShift)
+        XCTAssertTrue(evidence.hasAlphabeticKey)
     }
 
     func testEveryLetterEntryRoundTrips() {

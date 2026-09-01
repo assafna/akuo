@@ -160,6 +160,43 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         XCTAssertEqual(fixture.document.text, "למה? ")
     }
 
+    func testPunctuationOnlyPhysicalKeysStayUnchangedWhenTargetLettersAreRecognized() {
+        let cases: [(source: String, keyCode: CGKeyCode, target: String)] = [
+            (".", 47, "ץ"),
+            (",", 43, "ת"),
+            (";", 41, "ף"),
+        ]
+
+        for testCase in cases {
+            for boundary in [" ", "\r"] {
+                let fixture = makeFixture(
+                    language: .english,
+                    fallback: .init(english: [], hebrew: [testCase.target]),
+                    layoutTranslator: ScriptedTargetLayoutTranslator(
+                        outputs: [testCase.target]
+                    )
+                )
+
+                XCTAssertEqual(
+                    fixture.passThroughStroke(
+                        testCase.source,
+                        keyCode: testCase.keyCode
+                    ),
+                    testCase.source
+                )
+                XCTAssertEqual(fixture.passThrough(boundary), boundary)
+                XCTAssertEqual(
+                    fixture.document.text,
+                    "\(testCase.source)\(boundary)"
+                )
+                XCTAssertTrue(fixture.replacer.calls.isEmpty)
+                XCTAssertTrue(fixture.backend.selectedIdentifiers.isEmpty)
+                XCTAssertEqual(fixture.counter.incrementCount, 0)
+                XCTAssertTrue(fixture.undo.registered.isEmpty)
+            }
+        }
+    }
+
     func testCompletePhysicalWordOutranksMalformedRecognizedHebrewShape() {
         let fixture = makeFixture(
             language: .hebrew,
