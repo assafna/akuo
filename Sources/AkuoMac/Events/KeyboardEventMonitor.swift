@@ -6,6 +6,12 @@ import AkuoCore
 
 enum DecodedKeyboardEvent: Equatable {
     case text(String, keyCode: CGKeyCode? = nil, marker: Int64)
+    case shiftChanged(
+        side: ShiftKeySide,
+        phase: ShiftKeyPhase,
+        timestamp: TimeInterval,
+        marker: Int64
+    )
     case deleteBackward(marker: Int64)
     case navigation(marker: Int64)
     case commandZ(marker: Int64)
@@ -17,6 +23,7 @@ enum DecodedKeyboardEvent: Equatable {
     var marker: Int64? {
         switch self {
         case let .text(_, _, marker),
+             let .shiftChanged(_, _, _, marker),
              let .deleteBackward(marker),
              let .navigation(marker),
              let .commandZ(marker),
@@ -47,13 +54,16 @@ private struct AppKitCurrentKeyboardTextRetranslator: CurrentKeyboardTextRetrans
     }
 }
 
-struct SystemNativeEventDecoder: NativeEventDecoding {
+final class SystemNativeEventDecoder: NativeEventDecoding {
     private static let deleteKey: CGKeyCode = 51
+    private static let leftShiftKey: CGKeyCode = 56
+    private static let rightShiftKey: CGKeyCode = 60
     private static let zKey: CGKeyCode = 6
     private static let navigationKeys: Set<CGKeyCode> = [
         48, 115, 116, 117, 119, 121, 123, 124, 125, 126,
     ]
     private let retranslator: any CurrentKeyboardTextRetranslating
+    private var pressedShiftKeys: Set<ShiftKeySide> = []
 
     init(
         retranslator: any CurrentKeyboardTextRetranslating = AppKitCurrentKeyboardTextRetranslator()
@@ -82,6 +92,9 @@ struct SystemNativeEventDecoder: NativeEventDecoding {
         }
 
         let marker = event.getIntegerValueField(.eventSourceUserData)
+        if type == .flagsChanged {
+            return decodeShiftChange(event, marker: marker)
+        }
         guard type == .keyDown else { return .unhandled(marker: marker) }
 
         let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
@@ -127,6 +140,40 @@ struct SystemNativeEventDecoder: NativeEventDecoding {
             marker: marker
         )
     }
+
+    private func decodeShiftChange(
+        _ event: CGEvent,
+        marker: Int64
+    ) -> DecodedKeyboardEvent {
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let side: ShiftKeySide
+        switch keyCode {
+        case Self.leftShiftKey:
+            side = .left
+        case Self.rightShiftKey:
+            side = .right
+        default:
+            return .unhandled(marker: marker)
+        }
+
+        let phase: ShiftKeyPhase
+        if pressedShiftKeys.remove(side) != nil {
+            phase = .up
+        } else if event.flags.contains(.maskShift) {
+            pressedShiftKeys.insert(side)
+            phase = .down
+        } else {
+            pressedShiftKeys.removeAll(keepingCapacity: true)
+            phase = .up
+        }
+
+        return .shiftChanged(
+            side: side,
+            phase: phase,
+            timestamp: TimeInterval(event.timestamp) / 1_000_000_000,
+            marker: marker
+        )
+    }
 }
 
 protocol CorrectionCoordinating: AnyObject {
@@ -139,6 +186,12 @@ protocol CorrectionCoordinating: AnyObject {
     ) -> CorrectionHandlingResult
     func handleImmediateUndo(
         context: FocusContext,
+        isContextStillEligible: () -> Bool
+    ) -> CorrectionHandlingResult
+    func handleForcedCorrection(
+        _ unfinishedWord: CompletedWord?,
+        context: FocusContext,
+        priorInputLanguage: Language?,
         isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult
     func noteOrdinaryInput()
@@ -247,6 +300,7 @@ public extension KeyboardEventMonitorDelegate {
 
 public enum InputSourceSelectionOperation: Equatable, Sendable {
     case correction
+    case forcedCorrection
     case immediateUndo
 }
 
@@ -273,6 +327,7 @@ public final class KeyboardEventMonitor {
     public static let syntheticMarker: Int64 = 0x414B554F
     static let productionEventMask = [
         CGEventType.keyDown,
+        .flagsChanged,
         .leftMouseDown,
         .rightMouseDown,
         .otherMouseDown,
@@ -291,12 +346,14 @@ public final class KeyboardEventMonitor {
     private let inputSources: any InputSourceStateProviding
     private let tapManager: any NativeEventTapManaging
     private let layoutTranslator: (any KeyboardLayoutTextTranslating)?
+    private let forceConversionGesture: () -> ForceConversionGesture
     private let isAkuoEnabled: () -> Bool
 
     private var wordBuffer = WordBuffer()
     private var lastFocusContext: FocusContext?
     private var lastInputSourceIdentifier: String?
     private var suppressCorrectionUntilBoundary = false
+    private var shiftGestureRecognizer = ShiftGestureRecognizer(activationInterval: 0.4)
 
     public convenience init(
         coordinator: CorrectionCoordinator,
@@ -304,6 +361,7 @@ public final class KeyboardEventMonitor {
         secureInput: any SecureInputChecking,
         focusContextProvider: FocusContextProvider,
         inputSources: InputSourceController,
+        forceConversionGesture: @escaping () -> ForceConversionGesture = { .doubleShift },
         isAkuoEnabled: @escaping () -> Bool
     ) {
         self.init(
@@ -315,6 +373,7 @@ public final class KeyboardEventMonitor {
             inputSources: inputSources,
             tapManager: SystemNativeEventTapManager(),
             layoutTranslator: AppleKeyboardLayoutTextTranslator(),
+            forceConversionGesture: forceConversionGesture,
             isAkuoEnabled: isAkuoEnabled
         )
     }
@@ -328,6 +387,7 @@ public final class KeyboardEventMonitor {
         inputSources: any InputSourceStateProviding,
         tapManager: any NativeEventTapManaging,
         layoutTranslator: (any KeyboardLayoutTextTranslating)? = nil,
+        forceConversionGesture: @escaping () -> ForceConversionGesture = { .doubleShift },
         isAkuoEnabled: @escaping () -> Bool
     ) {
         self.decoder = decoder
@@ -338,6 +398,7 @@ public final class KeyboardEventMonitor {
         self.inputSources = inputSources
         self.tapManager = tapManager
         self.layoutTranslator = layoutTranslator
+        self.forceConversionGesture = forceConversionGesture
         self.isAkuoEnabled = isAkuoEnabled
     }
 
@@ -447,7 +508,49 @@ public final class KeyboardEventMonitor {
             return event
         }
 
+        if case .shiftChanged = decoded {
+            // Keep a modifier-only sequence alive until it completes.
+        } else {
+            shiftGestureRecognizer.reset()
+        }
+
         switch decoded {
+        case let .shiftChanged(side, phase, timestamp, _):
+            guard shiftGestureRecognizer.consume(
+                side: side,
+                phase: phase,
+                timestamp: timestamp,
+                gesture: forceConversionGesture()
+            ) else {
+                return event
+            }
+            let unfinishedWord = wordBuffer.unfinishedWord
+            let sourceAtGesture = inputSources.currentSource
+            if unfinishedWord != nil,
+               lastInputSourceIdentifier != sourceAtGesture?.identifier {
+                clearTransientState()
+                return event
+            }
+            let result = coordinator.handleForcedCorrection(
+                unfinishedWord,
+                context: context,
+                priorInputLanguage: sourceAtGesture?.language,
+                isContextStillEligible: {
+                    self.isContextStillEligible(context)
+                        && self.inputSources.currentSource == sourceAtGesture
+                }
+            )
+            if case let .handledWithInputSourceSelectionFailure(expectedLanguage) = result {
+                delegate?.didFailInputSourceSelection(.init(
+                    operation: .forcedCorrection,
+                    expectedLanguage: expectedLanguage
+                ))
+            }
+            if result != .notHandled, unfinishedWord != nil {
+                resetInputContext(invalidateImmediateUndo: false)
+            }
+            return event
+
         case let .text(text, keyCode, _):
             guard let sourceBeforeDecoding,
                   let sourceAfterDecoding = inputSources.currentSource,
@@ -636,6 +739,7 @@ public final class KeyboardEventMonitor {
         lastFocusContext = nil
         lastInputSourceIdentifier = nil
         suppressCorrectionUntilBoundary = false
+        shiftGestureRecognizer.reset()
         if invalidateImmediateUndo {
             coordinator.noteOrdinaryInput()
         }

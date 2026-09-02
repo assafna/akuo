@@ -168,9 +168,43 @@ final class KeyboardEventMonitorTests: XCTestCase {
         }
     }
 
+    func testProductionDecoderTracksPhysicalShiftTransitions() {
+        let decoder = SystemNativeEventDecoder()
+
+        XCTAssertEqual(
+            decoder.decode(
+                nativeShiftEvent(keyCode: 56, flags: [.maskShift], timestamp: 1),
+                type: .flagsChanged
+            ),
+            .shiftChanged(side: .left, phase: .down, timestamp: 1, marker: 0)
+        )
+        XCTAssertEqual(
+            decoder.decode(
+                nativeShiftEvent(keyCode: 60, flags: [.maskShift], timestamp: 1.1),
+                type: .flagsChanged
+            ),
+            .shiftChanged(side: .right, phase: .down, timestamp: 1.1, marker: 0)
+        )
+        XCTAssertEqual(
+            decoder.decode(
+                nativeShiftEvent(keyCode: 60, flags: [.maskShift], timestamp: 1.2),
+                type: .flagsChanged
+            ),
+            .shiftChanged(side: .right, phase: .up, timestamp: 1.2, marker: 0)
+        )
+        XCTAssertEqual(
+            decoder.decode(
+                nativeShiftEvent(keyCode: 56, flags: [], timestamp: 1.3),
+                type: .flagsChanged
+            ),
+            .shiftChanged(side: .left, phase: .up, timestamp: 1.3, marker: 0)
+        )
+    }
+
     func testProductionEventTapMaskIncludesKeyboardAndEveryMouseDown() {
         for eventType in [
             CGEventType.keyDown,
+            .flagsChanged,
             .leftMouseDown,
             .rightMouseDown,
             .otherMouseDown,
@@ -688,6 +722,115 @@ final class KeyboardEventMonitorTests: XCTestCase {
         ])
     }
 
+    func testDoubleShiftForcesCorrectionAndPassesEveryShiftEventThrough() {
+        let fixture = makeFixture()
+        fixture.coordinator.forcedResult = .handled
+
+        for event in [
+            DecodedKeyboardEvent.shiftChanged(
+                side: .left,
+                phase: .down,
+                timestamp: 1,
+                marker: 0
+            ),
+            .shiftChanged(side: .left, phase: .up, timestamp: 1.05, marker: 0),
+            .shiftChanged(side: .left, phase: .down, timestamp: 1.2, marker: 0),
+            .shiftChanged(side: .left, phase: .up, timestamp: 1.25, marker: 0),
+        ] {
+            fixture.decoder.event = event
+            XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        }
+
+        XCTAssertEqual(fixture.coordinator.forcedContexts, [fixture.focus.context!])
+        XCTAssertEqual(fixture.coordinator.forcedInputLanguages, [.english])
+        XCTAssertEqual(fixture.coordinator.noteOrdinaryInputCalls, 0)
+    }
+
+    func testBothShiftsPreferenceTriggersOnlyTheOverlappingGesture() {
+        let fixture = makeFixture(forceConversionGesture: .bothShifts)
+        fixture.coordinator.forcedResult = .handled
+
+        fixture.decoder.event = .shiftChanged(
+            side: .left,
+            phase: .down,
+            timestamp: 1,
+            marker: 0
+        )
+        XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        fixture.decoder.event = .shiftChanged(
+            side: .right,
+            phase: .down,
+            timestamp: 1.2,
+            marker: 0
+        )
+        XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+
+        XCTAssertEqual(fixture.coordinator.forcedContexts, [fixture.focus.context!])
+    }
+
+    func testOrdinaryInputInterruptsDoubleShiftSequence() {
+        let fixture = makeFixture()
+        fixture.coordinator.forcedResult = .handled
+        fixture.decoder.event = .shiftChanged(
+            side: .left,
+            phase: .down,
+            timestamp: 1,
+            marker: 0
+        )
+        _ = fixture.monitor.process(fakeNativeEvent)
+        fixture.decoder.event = .shiftChanged(
+            side: .left,
+            phase: .up,
+            timestamp: 1.05,
+            marker: 0
+        )
+        _ = fixture.monitor.process(fakeNativeEvent)
+
+        type("a", in: fixture)
+        fixture.decoder.event = .shiftChanged(
+            side: .left,
+            phase: .down,
+            timestamp: 1.2,
+            marker: 0
+        )
+        _ = fixture.monitor.process(fakeNativeEvent)
+        fixture.decoder.event = .shiftChanged(
+            side: .left,
+            phase: .up,
+            timestamp: 1.25,
+            marker: 0
+        )
+        _ = fixture.monitor.process(fakeNativeEvent)
+
+        XCTAssertTrue(fixture.coordinator.forcedContexts.isEmpty)
+    }
+
+    func testForcedCorrectionSelectionFailureIsReportedWithoutSwallowingShift() {
+        let fixture = makeFixture()
+        fixture.coordinator.forcedResult = .handledWithInputSourceSelectionFailure(
+            expectedLanguage: .hebrew
+        )
+
+        for event in [
+            DecodedKeyboardEvent.shiftChanged(
+                side: .right,
+                phase: .down,
+                timestamp: 1,
+                marker: 0
+            ),
+            .shiftChanged(side: .right, phase: .up, timestamp: 1.05, marker: 0),
+            .shiftChanged(side: .right, phase: .down, timestamp: 1.2, marker: 0),
+            .shiftChanged(side: .right, phase: .up, timestamp: 1.25, marker: 0),
+        ] {
+            fixture.decoder.event = event
+            XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        }
+
+        XCTAssertEqual(fixture.delegate.selectionFailures, [
+            .init(operation: .forcedCorrection, expectedLanguage: .hebrew),
+        ])
+    }
+
     func testTapTimeoutClearsStateAndReenablesExistingTapOnce() {
         let fixture = makeFixture()
         XCTAssertTrue(fixture.monitor.start())
@@ -742,6 +885,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
     private func makeFixture(
         language: Language = .english,
         isAkuoEnabled: Bool = true,
+        forceConversionGesture: ForceConversionGesture = .doubleShift,
         permissionGranted: Bool = true,
         secureInputEnabled: Bool = false,
         readiness: InputSourceReadiness = .init(
@@ -770,6 +914,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
             focusContextProvider: focus,
             inputSources: inputSources,
             tapManager: tapManager,
+            forceConversionGesture: { forceConversionGesture },
             isAkuoEnabled: { isAkuoEnabled }
         )
         monitor.delegate = delegate
@@ -803,6 +948,22 @@ final class KeyboardEventMonitorTests: XCTestCase {
                 unicodeString: buffer.baseAddress
             )
         }
+        return event
+    }
+
+    private func nativeShiftEvent(
+        keyCode: CGKeyCode,
+        flags: CGEventFlags,
+        timestamp: TimeInterval
+    ) -> CGEvent {
+        let event = CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: keyCode,
+            keyDown: true
+        )!
+        event.type = .flagsChanged
+        event.flags = flags
+        event.timestamp = CGEventTimestamp(timestamp * 1_000_000_000)
         return event
     }
 }
@@ -864,9 +1025,12 @@ private struct BoundaryCall: Equatable {
 private final class FakeCorrectionCoordinator: CorrectionCoordinating {
     var boundaryResult: CorrectionHandlingResult = .notHandled
     var undoResult: CorrectionHandlingResult = .notHandled
+    var forcedResult: CorrectionHandlingResult = .notHandled
     var armUndoOnHandledBoundary = false
     private(set) var boundaryCalls: [BoundaryCall] = []
     private(set) var undoContexts: [FocusContext] = []
+    private(set) var forcedContexts: [FocusContext] = []
+    private(set) var forcedInputLanguages: [Language?] = []
     private(set) var noteOrdinaryInputCalls = 0
     private var isUndoArmed = false
 
@@ -906,6 +1070,18 @@ private final class FakeCorrectionCoordinator: CorrectionCoordinating {
             : (isUndoArmed ? .handled : .notHandled)
         isUndoArmed = false
         return result
+    }
+
+    func handleForcedCorrection(
+        _ unfinishedWord: CompletedWord?,
+        context: FocusContext,
+        priorInputLanguage: Language?,
+        isContextStillEligible: () -> Bool
+    ) -> CorrectionHandlingResult {
+        forcedContexts.append(context)
+        forcedInputLanguages.append(priorInputLanguage)
+        guard isContextStillEligible() else { return .notHandled }
+        return forcedResult
     }
 
     func noteOrdinaryInput() {

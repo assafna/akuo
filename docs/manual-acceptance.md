@@ -149,6 +149,86 @@ Version 1 completes a token only at Space or Return/Enter. Tab and Shift-Tab pas
   source is standard Hebrew. **Result:**
   **Evidence:**
 
+### Force the current or previous eligible word
+
+Run these in a new empty TextEdit document. A force request deliberately bypasses
+automatic dictionary ambiguity, but it must retain every token-shape, focus,
+security, and timing safeguard.
+
+- [ ] **Double Shift converts the unfinished word by default.** With **Force
+  conversion** set to **Double-tap Shift**, select English, type `go` without
+  Space or Return, and confirm it remains exactly `go` because both `go` and its
+  Hebrew mapping `עם` are recognized. Tap and release the same physical Shift
+  key twice. Confirm the text becomes exactly `עם`, the source changes to
+  standard Hebrew, the correction count increases once, and every Shift press
+  still reaches macOS. Repeat double-Shift twice and confirm the text and source
+  alternate exactly `go`/ABC, then `עם`/Hebrew, while the correction count does
+  not increase again. **Result:**
+  **Evidence:**
+- [ ] **Literal layout output survives realistic mixed context.** In one
+  continuous TextEdit sentence, force English `go`, `hello`, `world`, and
+  `test`; type the physical Hebrew-layout H, E, L, L, O keys and force the
+  resulting `יקךךם` back to `hello`; force English `knv?`; challenge
+  `https://akuo.app`, `me@example.com`, and `file_name`; then type the physical
+  Hebrew-layout G and O keys and force `עם` back to `go`. Include ordinary
+  numbers, operators, wrappers, and terminal punctuation between those tokens.
+  Vary source-to-key delay from immediate to 250 ms, last-key-to-gesture delay
+  from immediate to 500 ms, and valid press/gap timing below the 400 ms gesture
+  limit. Confirm the exact final sentence is
+  `Mix: עם, יקךךם; ׳םרךג! אקדא | 123 + 45 = 168 | hello, למה? | https://akuo.app | me@example.com | file_name | go; symbols []{}!? #42.`,
+  the protected structural tokens remain unchanged, and ABC is selected.
+  **Result:**
+  **Evidence:**
+- [ ] **Completed-word fallback remains available.** Select English, type `go `,
+  and within five seconds double-tap the same Shift key. Confirm the text becomes
+  exactly `עם `, the source changes to standard Hebrew, the
+  correction count increases once, and every Shift press still reaches macOS.
+  **Result:**
+  **Evidence:**
+- [ ] **Automatic corrections toggle too.** Select English, type `akuo ` and
+  confirm the automatic result is exactly `שלום ` with Hebrew selected.
+  Double-tap the same Shift key three times in succession and confirm the exact
+  states alternate `akuo `/ABC, `שלום `/Hebrew, and `akuo `/ABC. Confirm the
+  correction count increased only for the original automatic correction.
+  **Result:**
+  **Evidence:**
+- [ ] **Reverse-direction force and immediate undo.** Select standard Hebrew,
+  type the physical G and O keys without a boundary so the text is exactly `עם`.
+  Double-tap the same Shift key and confirm the exact result is `go` with the
+  English source selected. Double-tap again to restore `עם`/Hebrew, then press
+  Command-Z and confirm Akuo restores exactly `go` and ABC. Double-tap once more
+  and confirm nothing changes because Command-Z ended the toggle chain. **Result:**
+  **Evidence:**
+- [ ] **Return boundary is preserved.** Select English, type `go`, press Return,
+  and confirm the host receives exactly one newline. Double-tap the same Shift
+  key within five seconds and confirm the first line becomes exactly `עם`, the
+  caret remains on the empty second line, and no boundary is lost or duplicated.
+  **Result:**
+  **Evidence:**
+- [ ] **Both Shift keys alternative.** From the menu choose **Press both Shift
+  keys**. Type a fresh `go`, then press the left and right Shift keys so they
+  overlap within a short chord. Confirm exactly one `עם` conversion occurs.
+  Type another fresh `go` and double-tap only one Shift key; confirm no force
+  occurs. Restore **Double-tap Shift** before continuing. **Result:**
+  **Evidence:**
+- [ ] **Completed-word eligibility expires.** In separate fresh cases, type
+  `go ` and then (a) wait more than five seconds, (b) type one ordinary character,
+  (c) click elsewhere in the same editor, and (d) change applications or fields.
+  Perform the configured gesture after each invalidation. Confirm no old word is
+  changed, no source switch or count increase occurs, and the Shift events retain
+  their normal behavior. **Result:**
+  **Evidence:**
+- [ ] **Structural exclusions cannot be forced.** In fresh cases type
+  `https://akuo.app`, `me@example.com`, `/tmp/file`, `file_name`, and `.` without
+  a boundary. Perform the configured gesture after each value. Confirm every
+  value remains exact, the input source does not change, and the correction count
+  does not increase. **Result:**
+  **Evidence:**
+- [ ] **No pending word is harmless.** In an empty document, perform the
+  configured gesture. Confirm no text is deleted or inserted and no source
+  switch or correction-count increase occurs. **Result:**
+  **Evidence:**
+
 ### Learned-word candidate authority
 
 Use TextEdit's spelling menu to learn and later unlearn only the disposable values below. Before learning, confirm macOS marks each value unknown. If either value is already built in or previously learned, choose a new harmless value whose physical-key mapping contains only letters and record both forms.
@@ -258,7 +338,7 @@ For every item below, start from a fresh field and use Return itself as the corr
 
 - [ ] **Disable pass-through.** Turn Akuo off and repeat both wrong-layout examples; confirm text and source remain unchanged. Turn Akuo back on and confirm correction resumes only from a fresh token. **Result:**
   **Evidence:**
-- [ ] **Deterministic source-selection failure.** Do not force a live Carbon failure if doing so could disturb system input-source state. Instead, from the release source run `swift test --filter 'CorrectionCoordinatorTests/testSourceSelectionFailureKeepsVisibleCorrectionAndUndoRecord|CorrectionCoordinatorTests/testUndoSelectionFailureKeepsVisibleRestorationWithoutRetry|KeyboardEventMonitorTests/testCorrectionSelectionFailureIsSignaledAfterSuppressingBoundary|KeyboardEventMonitorTests/testUndoSelectionFailureIsSignaledAfterSuppressingCommandZ|AppModelTests/testCorrectionSelectionFailureRefreshesDisplayWithoutRestartOrRetry|AppModelTests/testUndoSelectionFailureUsesSameActionableStatusAndRefreshOnly'`. Confirm all injected correction and undo failure paths pass: the visible edit/count/eligible undo are retained, selection is not retried, displayed language refreshes, and the menu reports **Input source switch failed — select a language manually** rather than **Active** or a keyboard-monitor failure. **Result:**
+- [ ] **Deterministic source-selection failure.** Do not force a live Carbon failure if doing so could disturb system input-source state. Instead, from the release source run `swift test --filter 'CorrectionCoordinatorTests/testSourceSelectionFailureKeepsVisibleCorrectionAndUndoRecord|CorrectionCoordinatorTests/testForcedSourceSelectionFailureKeepsVisibleCorrectionAndUndo|CorrectionCoordinatorTests/testUndoSelectionFailureKeepsVisibleRestorationWithoutRetry|KeyboardEventMonitorTests/testCorrectionSelectionFailureIsSignaledAfterSuppressingBoundary|KeyboardEventMonitorTests/testForcedCorrectionSelectionFailureIsReportedWithoutSwallowingShift|KeyboardEventMonitorTests/testUndoSelectionFailureIsSignaledAfterSuppressingCommandZ|AppModelTests/testCorrectionSelectionFailureRefreshesDisplayWithoutRestartOrRetry|AppModelTests/testUndoSelectionFailureUsesSameActionableStatusAndRefreshOnly'`. Confirm all injected automatic-correction, forced-correction, and undo failure paths pass: the visible edit/count/eligible undo are retained, selection is not retried, displayed language refreshes, and the menu reports **Input source switch failed — select a language manually** rather than **Active** or a keyboard-monitor failure. **Result:**
   **Evidence:**
 - [ ] **Event-tap timeout recovery.** Use the controlled procedure below to prove that the installed tap clears a partial token when macOS disables it. Do not post synthetic events or use real user data. **Result:**
   **Evidence:** Exact PID, executable, recorded start fingerprint, and shell transcript or screen-recording timestamp; stop/continue times; unchanged-focus proof; partial-token outcome; fresh-token outcome.
@@ -408,7 +488,7 @@ For every item below, start from a fresh field and use Return itself as the corr
      ```
 
   If rescue identity cannot be proven, do not send any signal. In Activity Monitor, find the single Akuo row, use **Inspect → Open Files and Ports** to verify `/Applications/Akuo.app/Contents/MacOS/Akuo`, then use the Stop control to force-quit only that verified row. If there is not one verifiable row, restart macOS instead of guessing. Preserve the transcript/screen recording and keep the acceptance item `BLOCKED`.
-- [ ] **Relaunch persistence.** Record enabled state, onboarding completion, aggregate count, and Launch at Login state; quit and reopen Akuo. Confirm exactly those values are restored or reconciled with macOS. **Result:**
+- [ ] **Relaunch persistence.** Record enabled state, onboarding completion, aggregate count, Launch at Login state, and force-conversion gesture; quit and reopen Akuo. Confirm exactly those values are restored or reconciled with macOS. **Result:**
   **Evidence:**
 - [ ] **Launch at Login enable.** Turn it on, approve in **System Settings → General → Login Items** if required, log out/in or restart in an appropriate test environment, and confirm Akuo starts menu-bar-only. **Result:**
   **Evidence:**
@@ -423,7 +503,7 @@ Use a unique, non-secret canary token that does not occur elsewhere in the proje
 
 - [ ] **No in-app history.** Type the canary and exercise both correction directions. Confirm no word/correction-history UI exists in the menu, setup, or Test Area. **Result:**
   **Evidence:**
-- [ ] **Only four preference categories.** After relaunch, inspect Akuo’s preferences and confirm the only Akuo-owned categories are enabled state, onboarding completion, aggregate correction count, and Launch at Login preference; no canary, word, candidate, focus, app, or undo data is present. **Result:**
+- [ ] **Only five preference categories.** After relaunch, inspect Akuo’s preferences and confirm the only Akuo-owned categories are enabled state, onboarding completion, aggregate correction count, Launch at Login preference, and force-conversion gesture choice; no canary, word, candidate, focus, app, or undo data is present. **Result:**
   **Evidence:**
 - [ ] **No typed-text logs.** Inspect macOS Console/log output for the Akuo process across typing, correction, undo, secure input, quit, and relaunch. Confirm the canary and all typed test words are absent. **Result:**
   **Evidence:**

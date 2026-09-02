@@ -102,7 +102,7 @@ private final class LiveUndoTextReplacer: TextReplacing {
         deleteCount: Int,
         replacement: String,
         boundary: String,
-        boundaryKeyCode: Int
+        boundaryKeyCode: Int?
     ) -> Bool {
         calls.append(.init(
             deleteCount: deleteCount,

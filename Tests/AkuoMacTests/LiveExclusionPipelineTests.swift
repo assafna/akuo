@@ -176,7 +176,7 @@ private final class LiveExclusionTextReplacer: TextReplacing {
         deleteCount: Int,
         replacement: String,
         boundary: String,
-        boundaryKeyCode: Int
+        boundaryKeyCode: Int?
     ) -> Bool {
         calls.append(.init(
             deleteCount: deleteCount,

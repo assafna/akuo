@@ -65,6 +65,17 @@ public struct WordBuffer: Sendable {
     public private(set) var currentToken = ""
     private var currentKeyStrokes: [ObservedKeyStroke] = []
 
+    public var unfinishedWord: CompletedWord? {
+        guard !currentToken.isEmpty || !currentKeyStrokes.isEmpty else {
+            return nil
+        }
+        return CompletedWord(
+            token: currentToken,
+            boundary: "",
+            keyStrokes: currentKeyStrokes
+        )
+    }
+
     public init() {}
 
     public mutating func consume(_ input: BufferedInput) -> BufferResult {

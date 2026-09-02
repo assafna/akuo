@@ -189,6 +189,7 @@ public final class AppModel: ObservableObject, KeyboardEventMonitorDelegate {
     @Published public private(set) var currentLanguage: Language?
     @Published public private(set) var launchAtLoginEnabled = false
     @Published public private(set) var launchAtLoginMessage: String?
+    @Published public private(set) var forceConversionGesture: ForceConversionGesture
 
     public var canCompleteSetup: Bool {
         permissionGranted
@@ -236,6 +237,7 @@ public final class AppModel: ObservableObject, KeyboardEventMonitorDelegate {
         isEnabled = preferences.isEnabled
         onboardingCompleted = preferences.onboardingCompleted
         correctionCount = preferences.correctionCount
+        forceConversionGesture = preferences.forceConversionGesture
         currentLanguage = inputSources.currentLanguage
         enabledSessionGeneration.update(isActive: isEnabled)
 
@@ -298,6 +300,9 @@ public final class AppModel: ObservableObject, KeyboardEventMonitorDelegate {
             secureInput: secureInput,
             focusContextProvider: FocusContextProvider(),
             inputSources: inputSources,
+            forceConversionGesture: { [weak preferences] in
+                preferences?.forceConversionGesture ?? .doubleShift
+            },
             isAkuoEnabled: { [weak preferences] in
                 preferences?.isEnabled ?? false
             }
@@ -354,6 +359,11 @@ public final class AppModel: ObservableObject, KeyboardEventMonitorDelegate {
             launchAtLoginMessage = (error as? LocalizedError)?.errorDescription
                 ?? error.localizedDescription
         }
+    }
+
+    public func setForceConversionGesture(_ gesture: ForceConversionGesture) {
+        preferences.forceConversionGesture = gesture
+        forceConversionGesture = gesture
     }
 
     public func completeOnboarding() {
@@ -551,6 +561,7 @@ public final class AppModel: ObservableObject, KeyboardEventMonitorDelegate {
         enabledSessionGeneration.update(isActive: isEnabled)
         onboardingCompleted = preferences.onboardingCompleted
         correctionCount = preferences.correctionCount
+        forceConversionGesture = preferences.forceConversionGesture
         permissionGranted = permission.isGranted
         inputSourceReadiness = inputSources.readiness
         currentLanguage = inputSources.currentLanguage

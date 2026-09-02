@@ -30,7 +30,7 @@ public protocol TextReplacing {
         deleteCount: Int,
         replacement: String,
         boundary: String,
-        boundaryKeyCode: Int
+        boundaryKeyCode: Int?
     ) -> Bool
 }
 

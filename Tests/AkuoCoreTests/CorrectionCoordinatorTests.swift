@@ -96,6 +96,304 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(counter.incrementCount, 0)
     }
 
+    func testSafeKeptWordCanBeForcedAfterBoundaryAndImmediatelyUndone() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["and"], hebrew: ["שמג"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "שמג", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .hebrew
+        ), .notHandled)
+        XCTAssertTrue(replacer.calls.isEmpty)
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(context: context), .handled)
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 4, replacement: "and", boundary: " "),
+        ])
+        XCTAssertEqual(selector.selected, [.english])
+        XCTAssertEqual(counter.incrementCount, 1)
+
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .handled)
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 4, replacement: "and", boundary: " "),
+            .init(deleteCount: 4, replacement: "שמג", boundary: " "),
+        ])
+        XCTAssertEqual(selector.selected, [.english, .hebrew])
+    }
+
+    func testUnfinishedForcedCorrectionCanBeImmediatelyUndoneWithoutBoundary() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+            replacer: replacer,
+            selector: selector,
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            .init(token: "go", boundary: ""),
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 2, replacement: "עם", boundary: ""),
+        ])
+        XCTAssertEqual(replacer.boundaryKeyCodes, [nil])
+
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .handled)
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 2, replacement: "עם", boundary: ""),
+            .init(deleteCount: 2, replacement: "go", boundary: ""),
+        ])
+        XCTAssertEqual(replacer.boundaryKeyCodes, [nil, nil])
+        XCTAssertEqual(selector.selected, [.hebrew, .english])
+    }
+
+    func testRepeatedForceGesturesToggleBoundarylessConversionWithoutRecounting() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            .init(token: "go", boundary: ""),
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .handled)
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .notHandled)
+
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 2, replacement: "עם", boundary: ""),
+            .init(deleteCount: 2, replacement: "go", boundary: ""),
+            .init(deleteCount: 2, replacement: "עם", boundary: ""),
+            .init(deleteCount: 2, replacement: "go", boundary: ""),
+        ])
+        XCTAssertEqual(selector.selected, [.hebrew, .english, .hebrew, .english])
+        XCTAssertEqual(counter.incrementCount, 1)
+    }
+
+    func testForceGestureTogglesAnAutomaticCorrection() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english
+        ), .handled)
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            isContextStillEligible: { true }
+        ), .handled)
+
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 4, replacement: "שלום", boundary: " "),
+            .init(deleteCount: 5, replacement: "akuo", boundary: " "),
+        ])
+        XCTAssertEqual(selector.selected, [.hebrew, .english])
+        XCTAssertEqual(counter.incrementCount, 1)
+    }
+
+    func testImmediateUndoDeletesUnicodeScalarCountForCompositeReplacement() {
+        let replacer = RecordingReplacer()
+        let undoController = UndoController()
+        undoController.register(.init(
+            original: "cool",
+            corrected: "לֹם",
+            boundary: " ",
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            createdAt: createdAt
+        ))
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: [], hebrew: []),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt),
+            undoController: undoController
+        )
+
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .handled)
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 4, replacement: "cool", boundary: " "),
+        ])
+    }
+
+    func testPendingForcedCorrectionExpiresAfterFiveSeconds() {
+        let replacer = RecordingReplacer()
+        let clock = MutableClock(now: createdAt)
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["and"], hebrew: ["שמג"]),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: clock
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "שמג", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .hebrew
+        ), .notHandled)
+        clock.now = createdAt.addingTimeInterval(5.001)
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(context: context), .notHandled)
+        XCTAssertTrue(replacer.calls.isEmpty)
+    }
+
+    func testForcedSourceSelectionFailureKeepsVisibleCorrectionAndUndo() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector(results: [false, true])
+        let counter = RecordingCounter()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt)
+        )
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "go", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english
+        ), .notHandled)
+
+        XCTAssertEqual(
+            coordinator.handleForcedCorrection(context: context),
+            .handledWithInputSourceSelectionFailure(expectedLanguage: .hebrew)
+        )
+        XCTAssertEqual(counter.incrementCount, 1)
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .handled)
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 3, replacement: "עם", boundary: " "),
+            .init(deleteCount: 3, replacement: "go", boundary: " "),
+        ])
+        XCTAssertEqual(selector.selected, [.hebrew, .english])
+    }
+
+    func testOrdinaryInputInvalidatesPendingForcedCorrection() {
+        let replacer = RecordingReplacer()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["and"], hebrew: ["שמג"]),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "שמג", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .hebrew
+        ), .notHandled)
+        coordinator.noteOrdinaryInput()
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(context: context), .notHandled)
+        XCTAssertTrue(replacer.calls.isEmpty)
+    }
+
+    func testChangedContextInvalidatesPendingForcedCorrectionBeforeFocusReturns() {
+        let replacer = RecordingReplacer()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["and"], hebrew: ["שמג"]),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "שמג", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .hebrew
+        ), .notHandled)
+
+        let otherContext = FocusContext(
+            processIdentifier: 43,
+            elementIdentifier: "field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        XCTAssertEqual(
+            coordinator.handleForcedCorrection(context: otherContext),
+            .notHandled
+        )
+        XCTAssertEqual(coordinator.handleForcedCorrection(context: context), .notHandled)
+        XCTAssertTrue(replacer.calls.isEmpty)
+    }
+
+    func testPendingForcedCorrectionRevalidatesContextBeforeArming() {
+        let replacer = RecordingReplacer()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "go", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { false }
+        ), .notHandled)
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(context: context), .notHandled)
+        XCTAssertTrue(replacer.calls.isEmpty)
+    }
+
     func testSecureFieldPassesBoundaryThroughWithoutRuntimeOperations() {
         let replacer = RecordingReplacer()
         let selector = RecordingSelector()
@@ -394,7 +692,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         replacer: RecordingReplacer,
         selector: RecordingSelector,
         counter: RecordingCounter,
-        clock: FixedClock,
+        clock: any RuntimeClock,
         undoController: any UndoRecording = UndoController()
     ) -> CorrectionCoordinator {
         let scorer = WordScorer(recognizer: recognizer)
@@ -446,6 +744,13 @@ private extension CorrectionCoordinator {
             isContextStillEligible: { true }
         )
     }
+
+    func handleForcedCorrection(context: FocusContext) -> CorrectionHandlingResult {
+        handleForcedCorrection(
+            context: context,
+            isContextStillEligible: { true }
+        )
+    }
 }
 
 private struct ReplacementCall: Equatable {
@@ -457,7 +762,7 @@ private struct ReplacementCall: Equatable {
 private final class RecordingReplacer: TextReplacing {
     private var results: [Bool]
     private(set) var calls: [ReplacementCall] = []
-    private(set) var boundaryKeyCodes: [Int] = []
+    private(set) var boundaryKeyCodes: [Int?] = []
     var events: RuntimeEvents?
 
     init(results: [Bool] = []) {
@@ -468,7 +773,7 @@ private final class RecordingReplacer: TextReplacing {
         deleteCount: Int,
         replacement: String,
         boundary: String,
-        boundaryKeyCode: Int
+        boundaryKeyCode: Int?
     ) -> Bool {
         events?.values.append(.replace)
         calls.append(.init(deleteCount: deleteCount, replacement: replacement, boundary: boundary))
@@ -510,6 +815,14 @@ private final class RecordingCounter: CorrectionCounting {
 
 private struct FixedClock: RuntimeClock {
     let now: Date
+}
+
+private final class MutableClock: RuntimeClock {
+    var now: Date
+
+    init(now: Date) {
+        self.now = now
+    }
 }
 
 private enum RuntimeEvent: Equatable {

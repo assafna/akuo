@@ -4,6 +4,23 @@ All notable changes to Akuo are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Let the user force a safe layout conversion of the unfinished word without
+  first pressing Space or Return, or of the immediately preceding eligible
+  word for up to five seconds. Double-tapping the same Shift key is the default
+  gesture; pressing both Shift keys is available from the menu.
+- Preserve the automatic policy's structured-token and punctuation-only
+  exclusions during forced conversion, then retain source switching,
+  aggregate correction counting, and immediate Command-Z restoration.
+- Allow an explicit force request to use literal target-layout output, such as
+  internal Hebrew final-form letters or the Hebrew W-key geresh, only when a
+  complete physical trace contains an alphabetic key. Automatic correction
+  retains strict target-word validation.
+- Let repeated force gestures toggle the latest Akuo conversion between its
+  original and corrected layouts without inflating the correction count.
+  Command-Z still performs a one-shot reversal and ends the toggle chain.
+
 ### Changed
 
 - Require a focused text control to expose a writable Accessibility value and
@@ -27,6 +44,8 @@ All notable changes to Akuo are documented in this file.
   physical key, preventing punctuation-only input such as `.`, `,`, or `;`
   from becoming recognized single Hebrew letters while preserving punctuation
   within words and silent shifted-letter recovery.
+- Count Unicode scalars when immediate undo removes a corrected word, preserving
+  exact deletion for composite keyboard-layout output.
 
 ## 0.3.0 - 2026-09-01
 

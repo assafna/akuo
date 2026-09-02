@@ -174,6 +174,89 @@ final class CorrectionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.decision(for: "עם"), .keep(.originalRecognized))
     }
 
+    func testForcedDecisionOverridesRecognizedOriginalWithoutChangingAutomaticPolicy() {
+        let policy = makePolicy(recognizer: StubRecognizer(
+            english: ["and"],
+            hebrew: ["שמג"]
+        ))
+
+        XCTAssertEqual(
+            policy.decision(for: "שמג", sourceHint: .hebrew),
+            .keep(.originalRecognized)
+        )
+        XCTAssertEqual(
+            policy.forcedDecision(for: "שמג", sourceHint: .hebrew),
+            .correct(.init(original: "שמג", replacement: "and", target: .english))
+        )
+    }
+
+    func testForcedDecisionAllowsSafeUnknownCandidate() {
+        let policy = makePolicy(recognizer: StubRecognizer(english: [], hebrew: []))
+
+        XCTAssertEqual(
+            policy.forcedDecision(for: "akuo", sourceHint: .english),
+            .correct(.init(original: "akuo", replacement: "שלום", target: .hebrew))
+        )
+    }
+
+    func testForcedDecisionRequiresCompletePhysicalEvidenceForLiteralLayoutShapes() {
+        let policy = makePolicy(recognizer: StubRecognizer(english: [], hebrew: []))
+        let cases: [(source: String, target: String, keyCodes: [Int])] = [
+            ("hello", "יקךךם", [4, 14, 37, 37, 31]),
+            ("world", "׳םרךג", [13, 31, 15, 37, 2]),
+        ]
+
+        for testCase in cases {
+            XCTAssertEqual(
+                policy.forcedDecision(
+                    for: testCase.source,
+                    sourceHint: .english
+                ),
+                .keep(.excluded),
+                "A literal layout shape still needs its complete physical trace"
+            )
+
+            let sourceCharacters = Array(testCase.source).map(String.init)
+            let targetCharacters = Array(testCase.target).map(String.init)
+            XCTAssertEqual(sourceCharacters.count, targetCharacters.count)
+            XCTAssertEqual(sourceCharacters.count, testCase.keyCodes.count)
+            let keyStrokes = sourceCharacters.enumerated().map { index, text in
+                ObservedKeyStroke(
+                    text: text,
+                    keyCode: testCase.keyCodes[index],
+                    targetText: targetCharacters[index]
+                )
+            }
+
+            XCTAssertEqual(
+                policy.forcedDecision(
+                    for: testCase.source,
+                    sourceHint: .english,
+                    keyStrokes: keyStrokes
+                ),
+                .correct(.init(
+                    original: testCase.source,
+                    replacement: testCase.target,
+                    target: .hebrew
+                )),
+                testCase.source
+            )
+        }
+    }
+
+    func testForcedDecisionRetainsStructuredAndPunctuationOnlyExclusions() {
+        let policy = makePolicy(recognizer: StubRecognizer(english: [], hebrew: []))
+
+        XCTAssertEqual(
+            policy.forcedDecision(for: "akuo.app", sourceHint: .english),
+            .keep(.excluded)
+        )
+        XCTAssertEqual(
+            policy.forcedDecision(for: ";", sourceHint: .english),
+            .keep(.excluded)
+        )
+    }
+
     func testKeepsWhenNeitherFormIsKnown() {
         let policy = makePolicy(recognizer: StubRecognizer(english: [], hebrew: []))
 

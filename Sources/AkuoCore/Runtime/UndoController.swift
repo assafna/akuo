@@ -4,7 +4,7 @@ public struct UndoRecord: Equatable, Sendable {
     public let original: String
     public let corrected: String
     public let boundary: String
-    public let boundaryKeyCode: Int
+    public let boundaryKeyCode: Int?
     public let context: FocusContext
     public let priorInputLanguage: Language
     public let createdAt: Date
@@ -13,7 +13,7 @@ public struct UndoRecord: Equatable, Sendable {
         original: String,
         corrected: String,
         boundary: String,
-        boundaryKeyCode: Int,
+        boundaryKeyCode: Int?,
         context: FocusContext,
         priorInputLanguage: Language,
         createdAt: Date

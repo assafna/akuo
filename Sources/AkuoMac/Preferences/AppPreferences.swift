@@ -7,6 +7,7 @@ enum PreferenceKey {
     static let onboardingCompleted = "onboardingCompleted"
     static let correctionCount = "correctionCount"
     static let launchAtLogin = "launchAtLogin"
+    static let forceConversionGesture = "forceConversionGesture"
 }
 
 public final class AppPreferences: ObservableObject, CorrectionCounting {
@@ -30,6 +31,15 @@ public final class AppPreferences: ObservableObject, CorrectionCounting {
         didSet { defaults.set(launchAtLogin, forKey: PreferenceKey.launchAtLogin) }
     }
 
+    @Published public var forceConversionGesture: ForceConversionGesture {
+        didSet {
+            defaults.set(
+                forceConversionGesture.rawValue,
+                forKey: PreferenceKey.forceConversionGesture
+            )
+        }
+    }
+
     public convenience init() {
         self.init(defaults: .standard)
     }
@@ -40,6 +50,9 @@ public final class AppPreferences: ObservableObject, CorrectionCounting {
         onboardingCompleted = defaults.bool(forKey: PreferenceKey.onboardingCompleted)
         correctionCount = defaults.integer(forKey: PreferenceKey.correctionCount)
         launchAtLogin = defaults.bool(forKey: PreferenceKey.launchAtLogin)
+        forceConversionGesture = ForceConversionGesture(
+            rawValue: defaults.string(forKey: PreferenceKey.forceConversionGesture) ?? ""
+        ) ?? .doubleShift
     }
 
     public func incrementCorrectionCount() {

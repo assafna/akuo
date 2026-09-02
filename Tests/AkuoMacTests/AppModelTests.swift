@@ -559,6 +559,20 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(fixture.model.correctionCount, 1)
     }
 
+    func testForceConversionGestureDefaultsAndPersistsThroughModel() {
+        let fixture = makeFixture()
+        XCTAssertEqual(fixture.model.forceConversionGesture, .doubleShift)
+
+        fixture.model.setForceConversionGesture(.bothShifts)
+
+        XCTAssertEqual(fixture.model.forceConversionGesture, .bothShifts)
+        XCTAssertEqual(fixture.preferences.forceConversionGesture, .bothShifts)
+        XCTAssertEqual(
+            AppPreferences(defaults: defaults).forceConversionGesture,
+            .bothShifts
+        )
+    }
+
     func testAccessibilityRequestOccursOnlyAfterExplicitModelAction() {
         let fixture = makeFixture()
         XCTAssertEqual(fixture.permission.requestCalls, 0)

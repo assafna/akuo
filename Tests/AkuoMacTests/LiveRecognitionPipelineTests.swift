@@ -76,6 +76,54 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         }
     }
 
+    func testDoubleShiftForcesUnfinishedWordWithoutBoundary() {
+        let fixture = makeFixture(
+            language: .english,
+            fallback: .init(english: ["go"], hebrew: ["עם"]),
+            layoutTranslator: LiveTargetLayoutTranslator()
+        )
+
+        XCTAssertEqual(fixture.passThroughStroke("g", keyCode: 5), "g")
+        XCTAssertEqual(fixture.passThroughStroke("o", keyCode: 31), "o")
+        XCTAssertEqual(fixture.document.text, "go")
+
+        fixture.doubleTapLeftShift()
+
+        XCTAssertEqual(fixture.document.text, "עם")
+        XCTAssertEqual(fixture.replacer.calls, [
+            .init(deleteCount: 2, replacement: "עם", boundary: ""),
+        ])
+        XCTAssertEqual(fixture.backend.selectedIdentifiers, ["com.apple.keylayout.Hebrew"])
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .hebrew)
+        XCTAssertEqual(fixture.counter.incrementCount, 1)
+        XCTAssertEqual(fixture.undo.registered.map(\.boundary), [""])
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+    }
+
+    func testUnfinishedForcePreservesSilentShiftPhysicalEvidence() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["yes"], hebrew: ["קד"]),
+            layoutTranslator: LiveTargetLayoutTranslator()
+        )
+
+        XCTAssertEqual(
+            fixture.passThroughStroke("", keyCode: 16, flags: [.maskShift]),
+            ""
+        )
+        XCTAssertEqual(fixture.passThroughStroke("ק", keyCode: 14), "ק")
+        XCTAssertEqual(fixture.passThroughStroke("ד", keyCode: 1), "ד")
+        XCTAssertEqual(fixture.document.text, "קד")
+
+        fixture.doubleTapLeftShift()
+
+        XCTAssertEqual(fixture.document.text, "Yes")
+        XCTAssertEqual(fixture.replacer.calls, [
+            .init(deleteCount: 2, replacement: "Yes", boundary: ""),
+        ])
+        XCTAssertEqual(fixture.backend.selectedIdentifiers, ["com.apple.keylayout.ABC"])
+    }
+
     func testTabPassesThroughWithoutCorrectingBufferedWord() {
         let fixture = makeFixture(language: .english)
 
@@ -1002,7 +1050,7 @@ private final class LiveRecognitionTextReplacer: TextReplacing {
         deleteCount: Int,
         replacement: String,
         boundary: String,
-        boundaryKeyCode: Int
+        boundaryKeyCode: Int?
     ) -> Bool {
         calls.append(.init(
             deleteCount: deleteCount,
@@ -1292,6 +1340,23 @@ private struct LiveRecognitionFixture {
         guard process(text, keyCode: keyCode) === nativeEvent else { return "" }
         document.append(text)
         return text
+    }
+
+    func doubleTapLeftShift() {
+        for event in [
+            DecodedKeyboardEvent.shiftChanged(
+                side: .left,
+                phase: .down,
+                timestamp: 1,
+                marker: 0
+            ),
+            .shiftChanged(side: .left, phase: .up, timestamp: 1.05, marker: 0),
+            .shiftChanged(side: .left, phase: .down, timestamp: 1.2, marker: 0),
+            .shiftChanged(side: .left, phase: .up, timestamp: 1.25, marker: 0),
+        ] {
+            decoder.event = event
+            XCTAssertTrue(monitor.process(nativeEvent) === nativeEvent)
+        }
     }
 }
 
