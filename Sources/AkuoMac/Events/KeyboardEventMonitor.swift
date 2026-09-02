@@ -38,6 +38,11 @@ enum DecodedKeyboardEvent: Equatable {
 
 protocol NativeEventDecoding {
     func decode(_ event: CGEvent, type: CGEventType) -> DecodedKeyboardEvent
+    func resetModifierState()
+}
+
+extension NativeEventDecoding {
+    func resetModifierState() {}
 }
 
 protocol CurrentKeyboardTextRetranslating {
@@ -141,6 +146,10 @@ final class SystemNativeEventDecoder: NativeEventDecoding {
         )
     }
 
+    func resetModifierState() {
+        pressedShiftKeys.removeAll(keepingCapacity: true)
+    }
+
     private func decodeShiftChange(
         _ event: CGEvent,
         marker: Int64
@@ -182,6 +191,7 @@ protocol CorrectionCoordinating: AnyObject {
         boundaryKeyCode: Int?,
         context: FocusContext,
         priorInputLanguage: Language,
+        priorInputSourceIdentifier: String?,
         isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult
     func handleImmediateUndo(
@@ -192,6 +202,7 @@ protocol CorrectionCoordinating: AnyObject {
         _ unfinishedWord: CompletedWord?,
         context: FocusContext,
         priorInputLanguage: Language?,
+        currentInputSourceIdentifier: String?,
         isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult
     func noteOrdinaryInput()
@@ -535,6 +546,7 @@ public final class KeyboardEventMonitor {
                 unfinishedWord,
                 context: context,
                 priorInputLanguage: sourceAtGesture?.language,
+                currentInputSourceIdentifier: sourceAtGesture?.identifier,
                 isContextStillEligible: {
                     self.isContextStillEligible(context)
                         && self.inputSources.currentSource == sourceAtGesture
@@ -629,6 +641,7 @@ public final class KeyboardEventMonitor {
                     boundaryKeyCode: keyCode.map(Int.init),
                     context: context,
                     priorInputLanguage: language,
+                    priorInputSourceIdentifier: sourceAfterDecoding.identifier,
                     isContextStillEligible: {
                         self.isContextStillEligible(context)
                     }
@@ -740,6 +753,7 @@ public final class KeyboardEventMonitor {
         lastInputSourceIdentifier = nil
         suppressCorrectionUntilBoundary = false
         shiftGestureRecognizer.reset()
+        decoder.resetModifierState()
         if invalidateImmediateUndo {
             coordinator.noteOrdinaryInput()
         }

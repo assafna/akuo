@@ -7,8 +7,8 @@ All notable changes to Akuo are documented in this file.
 ### Added
 
 - Let the user force a safe layout conversion of the unfinished word without
-  first pressing Space or Return, or of the immediately preceding eligible
-  word for up to five seconds. Double-tapping the same Shift key is the default
+  first pressing Space or Return, or of an eligible word completed by Space
+  for up to five seconds. Double-tapping the same Shift key is the default
   gesture; pressing both Shift keys is available from the menu.
 - Preserve the automatic policy's structured-token and punctuation-only
   exclusions during forced conversion, then retain source switching,
@@ -36,6 +36,15 @@ All notable changes to Akuo are documented in this file.
 
 ### Fixed
 
+- Revalidate the exact completed token and boundary immediately before a
+  delayed force conversion using a bounded Accessibility range query. Caret
+  movement, host text substitution, unavailable range evidence, or a changed
+  input-source identifier now leave the host text untouched. Return/Enter
+  never arms delayed fallback because submitted text may no longer be editable.
+- Invalidate physical-layout evidence after editing a tracked word, preventing
+  a post-Backspace force request from falling back to an unverified static map.
+- Reset the native Shift-key state together with the gesture recognizer after
+  focus loss, event-tap recovery, source changes, and other transient resets.
 - Restrict automatic correction boundaries to Space and Return/Enter. Tab and
   Shift-Tab now pass through untouched and clear Akuo's transient token and
   immediate-undo state, preserving application-owned completion and

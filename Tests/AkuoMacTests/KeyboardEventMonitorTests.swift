@@ -201,6 +201,27 @@ final class KeyboardEventMonitorTests: XCTestCase {
         )
     }
 
+    func testProductionDecoderResetMakesNextShiftChangeANewKeyDown() {
+        let decoder = SystemNativeEventDecoder()
+        let shiftDown = nativeShiftEvent(
+            keyCode: 56,
+            flags: [.maskShift],
+            timestamp: 1
+        )
+
+        XCTAssertEqual(
+            decoder.decode(shiftDown, type: .flagsChanged),
+            .shiftChanged(side: .left, phase: .down, timestamp: 1, marker: 0)
+        )
+
+        decoder.resetModifierState()
+
+        XCTAssertEqual(
+            decoder.decode(shiftDown, type: .flagsChanged),
+            .shiftChanged(side: .left, phase: .down, timestamp: 1, marker: 0)
+        )
+    }
+
     func testProductionEventTapMaskIncludesKeyboardAndEveryMouseDown() {
         for eventType in [
             CGEventType.keyDown,
@@ -332,6 +353,26 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "a")
+    }
+
+    func testFocusLossResetsDecoderModifierState() {
+        let fixture = makeFixture()
+        fixture.decoder.event = .shiftChanged(
+            side: .left,
+            phase: .down,
+            timestamp: 1,
+            marker: 0
+        )
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        let resetsBeforeFocusLoss = fixture.decoder.resetModifierStateCalls
+        fixture.focus.context = nil
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        XCTAssertEqual(
+            fixture.decoder.resetModifierStateCalls,
+            resetsBeforeFocusLoss + 1
+        )
     }
 
     func testSourceChangeDuringDecodeFailsClosedAndClearsPartialToken() {
@@ -558,7 +599,8 @@ final class KeyboardEventMonitorTests: XCTestCase {
                 ),
                 boundaryKeyCode: 49,
                 context: fixture.focus.context!,
-                priorInputLanguage: .hebrew
+                priorInputLanguage: .hebrew,
+                priorInputSourceIdentifier: "com.apple.keylayout.Hebrew"
             )
         ])
     }
@@ -836,11 +878,16 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertTrue(fixture.monitor.start())
         fixture.tapManager.enableCalls.removeAll()
         type("a", in: fixture)
+        let resetsBeforeTimeout = fixture.decoder.resetModifierStateCalls
         fixture.decoder.event = .tapDisabledByTimeout
 
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+        XCTAssertEqual(
+            fixture.decoder.resetModifierStateCalls,
+            resetsBeforeTimeout + 1
+        )
         XCTAssertEqual(fixture.tapManager.installCalls, 1)
         XCTAssertEqual(fixture.tapManager.enableCalls, [true])
         XCTAssertEqual(fixture.delegate.states.last, .active)
@@ -982,6 +1029,7 @@ private struct MonitorFixture {
 private final class FakeNativeEventDecoder: NativeEventDecoding {
     var event: DecodedKeyboardEvent = .unhandled(marker: 0)
     private(set) var decodeCalls = 0
+    private(set) var resetModifierStateCalls = 0
 
     func decode(_ event: CGEvent, type: CGEventType) -> DecodedKeyboardEvent {
         decodeCalls += 1
@@ -990,6 +1038,10 @@ private final class FakeNativeEventDecoder: NativeEventDecoding {
 
     func resetDecodeCalls() {
         decodeCalls = 0
+    }
+
+    func resetModifierState() {
+        resetModifierStateCalls += 1
     }
 }
 
@@ -1020,6 +1072,7 @@ private struct BoundaryCall: Equatable {
     let boundaryKeyCode: Int?
     let context: FocusContext
     let priorInputLanguage: Language
+    let priorInputSourceIdentifier: String?
 }
 
 private final class FakeCorrectionCoordinator: CorrectionCoordinating {
@@ -1031,6 +1084,7 @@ private final class FakeCorrectionCoordinator: CorrectionCoordinating {
     private(set) var undoContexts: [FocusContext] = []
     private(set) var forcedContexts: [FocusContext] = []
     private(set) var forcedInputLanguages: [Language?] = []
+    private(set) var forcedInputSourceIdentifiers: [String?] = []
     private(set) var noteOrdinaryInputCalls = 0
     private var isUndoArmed = false
 
@@ -1039,13 +1093,15 @@ private final class FakeCorrectionCoordinator: CorrectionCoordinating {
         boundaryKeyCode: Int?,
         context: FocusContext,
         priorInputLanguage: Language,
+        priorInputSourceIdentifier: String?,
         isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult {
         boundaryCalls.append(.init(
             completedWord: completedWord,
             boundaryKeyCode: boundaryKeyCode,
             context: context,
-            priorInputLanguage: priorInputLanguage
+            priorInputLanguage: priorInputLanguage,
+            priorInputSourceIdentifier: priorInputSourceIdentifier
         ))
         guard isContextStillEligible() else {
             return .notHandled
@@ -1076,10 +1132,12 @@ private final class FakeCorrectionCoordinator: CorrectionCoordinating {
         _ unfinishedWord: CompletedWord?,
         context: FocusContext,
         priorInputLanguage: Language?,
+        currentInputSourceIdentifier: String?,
         isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult {
         forcedContexts.append(context)
         forcedInputLanguages.append(priorInputLanguage)
+        forcedInputSourceIdentifiers.append(currentInputSourceIdentifier)
         guard isContextStillEligible() else { return .notHandled }
         return forcedResult
     }

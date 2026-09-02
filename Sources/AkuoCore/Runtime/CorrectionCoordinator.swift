@@ -9,6 +9,7 @@ public final class CorrectionCoordinator {
         let correction: Correction
         let context: FocusContext
         let priorInputLanguage: Language
+        let priorInputSourceIdentifier: String
         let createdAt: Date
     }
 
@@ -18,6 +19,7 @@ public final class CorrectionCoordinator {
     private let counter: any CorrectionCounting
     private let clock: any RuntimeClock
     private let undoController: any UndoRecording
+    private let previousTextValidator: any PreviousTextValidating
     private var pendingForcedCorrection: PendingForcedCorrection?
 
     public init(
@@ -26,7 +28,8 @@ public final class CorrectionCoordinator {
         inputSourceSelector: any InputSourceSelecting,
         counter: any CorrectionCounting,
         clock: any RuntimeClock,
-        undoController: any UndoRecording
+        undoController: any UndoRecording,
+        previousTextValidator: any PreviousTextValidating = RejectingPreviousTextValidator()
     ) {
         self.policy = policy
         self.textReplacer = textReplacer
@@ -34,6 +37,7 @@ public final class CorrectionCoordinator {
         self.counter = counter
         self.clock = clock
         self.undoController = undoController
+        self.previousTextValidator = previousTextValidator
     }
 
     public func handleBoundary(
@@ -41,6 +45,7 @@ public final class CorrectionCoordinator {
         boundaryKeyCode: Int? = nil,
         context: FocusContext,
         priorInputLanguage: Language,
+        priorInputSourceIdentifier: String? = nil,
         isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult {
         pendingForcedCorrection = nil
@@ -57,7 +62,11 @@ public final class CorrectionCoordinator {
             keyStrokes: completedWord.keyStrokes
         )
         guard case let .correct(correction) = decision else {
-            if case let .correct(forcedCorrection) = policy.forcedDecision(
+            if completedWord.physicalTraceIntegrity != .invalidated,
+               boundaryKeyCode == 49,
+               completedWord.boundary == " ",
+               let priorInputSourceIdentifier,
+               case let .correct(forcedCorrection) = policy.forcedDecision(
                 for: completedWord.token,
                 sourceHint: priorInputLanguage,
                 keyStrokes: completedWord.keyStrokes
@@ -69,6 +78,7 @@ public final class CorrectionCoordinator {
                     correction: forcedCorrection,
                     context: context,
                     priorInputLanguage: priorInputLanguage,
+                    priorInputSourceIdentifier: priorInputSourceIdentifier,
                     createdAt: clock.now
                 )
             }
@@ -139,6 +149,7 @@ public final class CorrectionCoordinator {
         _ unfinishedWord: CompletedWord? = nil,
         context: FocusContext,
         priorInputLanguage: Language? = nil,
+        currentInputSourceIdentifier: String? = nil,
         isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult {
         if let unfinishedWord {
@@ -148,6 +159,7 @@ public final class CorrectionCoordinator {
                   context.elementIdentifier != nil,
                   !context.isSecureField,
                   context.isEditableTextInput,
+                  unfinishedWord.physicalTraceIntegrity != .invalidated,
                   case let .correct(correction) = policy.forcedDecision(
                       for: unfinishedWord.token,
                       sourceHint: priorInputLanguage,
@@ -180,7 +192,17 @@ public final class CorrectionCoordinator {
         guard pendingForcedCorrection.context == context,
               elapsed >= 0,
               elapsed <= Self.forcedCorrectionEligibilityInterval,
+              pendingForcedCorrection.priorInputSourceIdentifier
+                  == currentInputSourceIdentifier,
+              priorInputLanguage == pendingForcedCorrection.priorInputLanguage,
               isContextStillEligible() else {
+            return .notHandled
+        }
+        guard previousTextValidator.hasExactTextImmediatelyBeforeCaret(
+            pendingForcedCorrection.completedWord.token
+                + pendingForcedCorrection.completedWord.boundary,
+            context: context
+        ) else {
             return .notHandled
         }
 

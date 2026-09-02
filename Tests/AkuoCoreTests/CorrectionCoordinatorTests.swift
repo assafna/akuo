@@ -100,23 +100,35 @@ final class CorrectionCoordinatorTests: XCTestCase {
         let replacer = RecordingReplacer()
         let selector = RecordingSelector()
         let counter = RecordingCounter()
+        let validator = RecordingPreviousTextValidator(result: true)
         let coordinator = makeCoordinator(
             recognizer: StubRecognizer(english: ["and"], hebrew: ["שמג"]),
             replacer: replacer,
             selector: selector,
             counter: counter,
-            clock: FixedClock(now: createdAt)
+            clock: FixedClock(now: createdAt),
+            previousTextValidator: validator
         )
 
         XCTAssertEqual(coordinator.handleBoundary(
             .init(token: "שמג", boundary: " "),
             boundaryKeyCode: 49,
             context: context,
-            priorInputLanguage: .hebrew
+            priorInputLanguage: .hebrew,
+            priorInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
         ), .notHandled)
         XCTAssertTrue(replacer.calls.isEmpty)
 
-        XCTAssertEqual(coordinator.handleForcedCorrection(context: context), .handled)
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "שמג ", context: context),
+        ])
         XCTAssertEqual(replacer.calls, [
             .init(deleteCount: 4, replacement: "and", boundary: " "),
         ])
@@ -129,6 +141,158 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(deleteCount: 4, replacement: "שמג", boundary: " "),
         ])
         XCTAssertEqual(selector.selected, [.english, .hebrew])
+    }
+
+    func testPendingForcedCorrectionRequiresExactOriginalSuffixAtCaret() {
+        let replacer = RecordingReplacer()
+        let validator = RecordingPreviousTextValidator(result: false)
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["and"], hebrew: ["שמג"]),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt),
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "שמג", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .hebrew,
+            priorInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .notHandled)
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .notHandled)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "שמג ", context: context),
+        ])
+        XCTAssertTrue(replacer.calls.isEmpty)
+    }
+
+    func testReturnSubmissionCannotApplyPendingCorrectionInReusedFocusElement() {
+        let replacer = RecordingReplacer()
+        let validator = RecordingPreviousTextValidator(result: true)
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["and"], hebrew: ["שמג"]),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt),
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "שמג", boundary: "\r"),
+            boundaryKeyCode: 36,
+            context: context,
+            priorInputLanguage: .hebrew,
+            priorInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .notHandled)
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .notHandled)
+        XCTAssertTrue(validator.calls.isEmpty)
+        XCTAssertTrue(replacer.calls.isEmpty)
+    }
+
+    func testPendingForcedCorrectionRejectsChangedInputSourceSnapshot() {
+        let changedSources: [(Language, String)] = [
+            (.english, "com.apple.keylayout.US"),
+            (.hebrew, "com.apple.keylayout.Hebrew"),
+        ]
+
+        for (language, identifier) in changedSources {
+            let replacer = RecordingReplacer()
+            let validator = RecordingPreviousTextValidator(result: true)
+            let coordinator = makeCoordinator(
+                recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+                replacer: replacer,
+                selector: RecordingSelector(),
+                counter: RecordingCounter(),
+                clock: FixedClock(now: createdAt),
+                previousTextValidator: validator
+            )
+            XCTAssertEqual(coordinator.handleBoundary(
+                .init(token: "go", boundary: " "),
+                boundaryKeyCode: 49,
+                context: context,
+                priorInputLanguage: .english,
+                priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+                isContextStillEligible: { true }
+            ), .notHandled)
+
+            XCTAssertEqual(coordinator.handleForcedCorrection(
+                context: context,
+                priorInputLanguage: language,
+                currentInputSourceIdentifier: identifier,
+                isContextStillEligible: { true }
+            ), .notHandled, identifier)
+            XCTAssertTrue(validator.calls.isEmpty, identifier)
+            XCTAssertTrue(replacer.calls.isEmpty, identifier)
+        }
+    }
+
+    func testPendingForcedCorrectionIsNotArmedWithoutExactSourceIdentifier() {
+        let replacer = RecordingReplacer()
+        let validator = RecordingPreviousTextValidator(result: true)
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt),
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "go", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .notHandled)
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .notHandled)
+        XCTAssertTrue(validator.calls.isEmpty)
+        XCTAssertTrue(replacer.calls.isEmpty)
+    }
+
+    func testEditedUnfinishedWordCannotUseInvalidatedPhysicalTrace() {
+        let replacer = RecordingReplacer()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: [], hebrew: []),
+            replacer: replacer,
+            selector: RecordingSelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            .init(
+                token: "aku",
+                boundary: "",
+                physicalTraceIntegrity: .invalidated
+            ),
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .notHandled)
+        XCTAssertTrue(replacer.calls.isEmpty)
     }
 
     func testUnfinishedForcedCorrectionCanBeImmediatelyUndoneWithoutBoundary() {
@@ -281,11 +445,18 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(token: "שמג", boundary: " "),
             boundaryKeyCode: 49,
             context: context,
-            priorInputLanguage: .hebrew
+            priorInputLanguage: .hebrew,
+            priorInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
         ), .notHandled)
         clock.now = createdAt.addingTimeInterval(5.001)
 
-        XCTAssertEqual(coordinator.handleForcedCorrection(context: context), .notHandled)
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .notHandled)
         XCTAssertTrue(replacer.calls.isEmpty)
     }
 
@@ -304,11 +475,18 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(token: "go", boundary: " "),
             boundaryKeyCode: 49,
             context: context,
-            priorInputLanguage: .english
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            isContextStillEligible: { true }
         ), .notHandled)
 
         XCTAssertEqual(
-            coordinator.handleForcedCorrection(context: context),
+            coordinator.handleForcedCorrection(
+                context: context,
+                priorInputLanguage: .english,
+                currentInputSourceIdentifier: "com.apple.keylayout.ABC",
+                isContextStillEligible: { true }
+            ),
             .handledWithInputSourceSelectionFailure(expectedLanguage: .hebrew)
         )
         XCTAssertEqual(counter.incrementCount, 1)
@@ -334,7 +512,9 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(token: "שמג", boundary: " "),
             boundaryKeyCode: 49,
             context: context,
-            priorInputLanguage: .hebrew
+            priorInputLanguage: .hebrew,
+            priorInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
         ), .notHandled)
         coordinator.noteOrdinaryInput()
 
@@ -355,7 +535,9 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(token: "שמג", boundary: " "),
             boundaryKeyCode: 49,
             context: context,
-            priorInputLanguage: .hebrew
+            priorInputLanguage: .hebrew,
+            priorInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
         ), .notHandled)
 
         let otherContext = FocusContext(
@@ -365,7 +547,12 @@ final class CorrectionCoordinatorTests: XCTestCase {
             isEditableTextInput: true
         )
         XCTAssertEqual(
-            coordinator.handleForcedCorrection(context: otherContext),
+            coordinator.handleForcedCorrection(
+                context: otherContext,
+                priorInputLanguage: .hebrew,
+                currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+                isContextStillEligible: { true }
+            ),
             .notHandled
         )
         XCTAssertEqual(coordinator.handleForcedCorrection(context: context), .notHandled)
@@ -387,6 +574,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
             boundaryKeyCode: 49,
             context: context,
             priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
             isContextStillEligible: { false }
         ), .notHandled)
 
@@ -693,7 +881,10 @@ final class CorrectionCoordinatorTests: XCTestCase {
         selector: RecordingSelector,
         counter: RecordingCounter,
         clock: any RuntimeClock,
-        undoController: any UndoRecording = UndoController()
+        undoController: any UndoRecording = UndoController(),
+        previousTextValidator: any PreviousTextValidating = RecordingPreviousTextValidator(
+            result: true
+        )
     ) -> CorrectionCoordinator {
         let scorer = WordScorer(recognizer: recognizer)
         return CorrectionCoordinator(
@@ -707,7 +898,8 @@ final class CorrectionCoordinatorTests: XCTestCase {
             inputSourceSelector: selector,
             counter: counter,
             clock: clock,
-            undoController: undoController
+            undoController: undoController,
+            previousTextValidator: previousTextValidator
         )
     }
 
@@ -779,6 +971,28 @@ private final class RecordingReplacer: TextReplacing {
         calls.append(.init(deleteCount: deleteCount, replacement: replacement, boundary: boundary))
         boundaryKeyCodes.append(boundaryKeyCode)
         return results.isEmpty ? true : results.removeFirst()
+    }
+}
+
+private struct PreviousTextValidationCall: Equatable {
+    let expectedText: String
+    let context: FocusContext
+}
+
+private final class RecordingPreviousTextValidator: PreviousTextValidating {
+    private let result: Bool
+    private(set) var calls: [PreviousTextValidationCall] = []
+
+    init(result: Bool) {
+        self.result = result
+    }
+
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool {
+        calls.append(.init(expectedText: expectedText, context: context))
+        return result
     }
 }
 

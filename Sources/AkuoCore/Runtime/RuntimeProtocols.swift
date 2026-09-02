@@ -34,6 +34,24 @@ public protocol TextReplacing {
     ) -> Bool
 }
 
+public protocol PreviousTextValidating {
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool
+}
+
+public struct RejectingPreviousTextValidator: PreviousTextValidating {
+    public init() {}
+
+    public func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool {
+        false
+    }
+}
+
 public protocol InputSourceSelecting {
     @discardableResult func select(_ language: Language) -> Bool
 }

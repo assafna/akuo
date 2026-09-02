@@ -185,6 +185,27 @@ security, and timing safeguard.
   correction count increases once, and every Shift press still reaches macOS.
   **Result:**
   **Evidence:**
+- [ ] **Completed-word fallback requires the exact caret suffix.** In disposable
+  editable fields, type `go ` and separately test (a) moving the caret without
+  typing, (b) letting the host substitute or replace the completed text, and
+  (c) pressing Return in a single-line field that submits or clears its value
+  while reusing the same control. Then perform the configured gesture. Confirm
+  Akuo never deletes unrelated text, switches the source, or increases the
+  correction count. **Result:**
+  **Evidence:**
+- [ ] **A manual source change invalidates completed-word fallback.** Select ABC,
+  type `go `, manually switch first to U.S. in one fresh case and to Hebrew in
+  another, then perform the configured gesture within five seconds. Confirm
+  `go ` remains exact and Akuo does not switch the source or increase the count.
+  **Result:**
+  **Evidence:**
+- [ ] **Backspace invalidates an edited word's physical trace.** Select English,
+  type `akuo`, delete the final `o`, and perform the configured gesture. Confirm
+  the visible `aku` remains exact rather than becoming its static Hebrew mapping
+  `שלו`, and no source switch or count increase occurs. At an empty caret, press
+  Backspace, type a fresh `go`, and confirm the gesture still converts that new
+  unedited word to `עם`. **Result:**
+  **Evidence:**
 - [ ] **Automatic corrections toggle too.** Select English, type `akuo ` and
   confirm the automatic result is exactly `שלום ` with Hebrew selected.
   Double-tap the same Shift key three times in succession and confirm the exact
@@ -199,11 +220,13 @@ security, and timing safeguard.
   Command-Z and confirm Akuo restores exactly `go` and ABC. Double-tap once more
   and confirm nothing changes because Command-Z ended the toggle chain. **Result:**
   **Evidence:**
-- [ ] **Return boundary is preserved.** Select English, type `go`, press Return,
-  and confirm the host receives exactly one newline. Double-tap the same Shift
-  key within five seconds and confirm the first line becomes exactly `עם`, the
-  caret remains on the empty second line, and no boundary is lost or duplicated.
-  **Result:**
+- [ ] **Return never arms delayed fallback.** Select English, type `go`, press
+  Return, and confirm the host receives exactly one newline or performs its
+  normal submission. Double-tap the same Shift key within five seconds and
+  confirm Akuo does not alter the submitted `go`, insert text at the new caret,
+  switch the source, or increase the correction count. In a fresh case, type
+  `go` and double-tap before Return to confirm unfinished-word force still
+  produces exactly `עם`. **Result:**
   **Evidence:**
 - [ ] **Both Shift keys alternative.** From the menu choose **Press both Shift
   keys**. Type a fresh `go`, then press the left and right Shift keys so they

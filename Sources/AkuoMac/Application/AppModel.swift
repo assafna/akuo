@@ -285,6 +285,7 @@ public final class AppModel: ObservableObject, KeyboardEventMonitorDelegate {
         let permission = SystemAccessibilityPermission()
         let secureInput = SystemSecureInputChecker()
         let inputSources = InputSourceController()
+        let focusContextProvider = FocusContextProvider()
         let policy = makeRecognitionPolicy(fallback: SystemSpellChecker())
         let coordinator = CorrectionCoordinator(
             policy: policy,
@@ -292,13 +293,14 @@ public final class AppModel: ObservableObject, KeyboardEventMonitorDelegate {
             inputSourceSelector: inputSources,
             counter: preferences,
             clock: SystemRuntimeClock(),
-            undoController: UndoController()
+            undoController: UndoController(),
+            previousTextValidator: focusContextProvider
         )
         let monitor = KeyboardEventMonitor(
             coordinator: coordinator,
             permission: permission,
             secureInput: secureInput,
-            focusContextProvider: FocusContextProvider(),
+            focusContextProvider: focusContextProvider,
             inputSources: inputSources,
             forceConversionGesture: { [weak preferences] in
                 preferences?.forceConversionGesture ?? .doubleShift
