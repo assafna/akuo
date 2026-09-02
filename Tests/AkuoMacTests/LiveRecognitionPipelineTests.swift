@@ -76,6 +76,20 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         }
     }
 
+    func testTabPassesThroughWithoutCorrectingBufferedWord() {
+        let fixture = makeFixture(language: .english)
+
+        XCTAssertEqual(fixture.passThrough("akuo\t"), "akuo\t")
+
+        XCTAssertEqual(fixture.document.text, "akuo\t")
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+        XCTAssertTrue(fixture.replacer.calls.isEmpty)
+        XCTAssertEqual(fixture.counter.incrementCount, 0)
+        XCTAssertTrue(fixture.undo.registered.isEmpty)
+        XCTAssertTrue(fixture.backend.selectedIdentifiers.isEmpty)
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+    }
+
     func testLayoutLetterPunctuationWaitsForBoundaryThenCorrectsCompleteToken() {
         let boundaries: [(String, CGKeyCode)] = [(" ", 49), ("\r", 36)]
 

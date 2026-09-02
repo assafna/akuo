@@ -19,6 +19,10 @@ All notable changes to Akuo are documented in this file.
 
 ### Fixed
 
+- Restrict automatic correction boundaries to Space and Return/Enter. Tab and
+  Shift-Tab now pass through untouched and clear Akuo's transient token and
+  immediate-undo state, preserving application-owned completion and
+  focus-navigation behavior.
 - Require trace-backed word corrections to include at least one alphabetic
   physical key, preventing punctuation-only input such as `.`, `,`, or `;`
   from becoming recognized single Hebrew letters while preserving punctuation

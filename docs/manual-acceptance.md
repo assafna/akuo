@@ -81,7 +81,10 @@ Record the blocker here before stopping:
 
 Perform these first in TextEdit with a new empty plain-text document.
 
-Version 1 completes a token only at whitespace or Return. Printable punctuation does not trigger correction and remains part of the unfinished token until one of those boundaries arrives. Each live key is translated through the installed Apple target layout with its Shift/Caps Lock state. At the boundary, punctuation is eligible only when the complete trace still matches the visible token and converts to a valid target-language lexical core, optionally surrounded by supported terminal punctuation or balanced wrappers. Structured and unsupported punctuation remains excluded.
+Version 1 completes a token only at Space or Return/Enter. Tab and Shift-Tab pass through untouched and clear the unfinished token so application-owned completion and focus navigation remain in control. Printable punctuation does not trigger correction and remains part of the unfinished token until one of the correction boundaries arrives. Each live key is translated through the installed Apple target layout with its Shift/Caps Lock state. At the boundary, punctuation is eligible only when the complete trace still matches the visible token and converts to a valid target-language lexical core, optionally surrounded by supported terminal punctuation or balanced wrappers. Structured and unsupported punctuation remains excluded.
+
+- [ ] **Tab and Shift-Tab pass through.** In an editable control where the application's native Tab and Shift-Tab behavior is observable, select English and type `akuo`, then press each key in a fresh field. Confirm Akuo leaves `akuo` unchanged, does not switch the input source, and the application performs its own completion or focus navigation. After a separate Akuo correction, press Tab and confirm Command-Z is passed to the application instead of undoing that earlier correction. After each case, type a fresh `akuo ` and confirm Space still produces exactly `שלום ` and selects standard Hebrew. **Result:**
+  **Evidence:**
 
 - [ ] **English-layout Hebrew correction.** Select English, type `akuo `, and confirm the visible result is exactly `שלום ` with one space and the active input source changes to standard Hebrew. **Result:**
   **Evidence:**

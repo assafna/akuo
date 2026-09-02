@@ -51,7 +51,7 @@ struct SystemNativeEventDecoder: NativeEventDecoding {
     private static let deleteKey: CGKeyCode = 51
     private static let zKey: CGKeyCode = 6
     private static let navigationKeys: Set<CGKeyCode> = [
-        115, 116, 117, 119, 121, 123, 124, 125, 126,
+        48, 115, 116, 117, 119, 121, 123, 124, 125, 126,
     ]
     private let retranslator: any CurrentKeyboardTextRetranslating
 
@@ -514,6 +514,11 @@ public final class KeyboardEventMonitor {
                 return event
             }
 
+            guard isCorrectionBoundary(text, keyCode: keyCode) else {
+                resetInputContext(invalidateImmediateUndo: false)
+                return event
+            }
+
             switch wordBuffer.consume(.boundary(text)) {
             case let .completed(completedWord):
                 let result = coordinator.handleBoundary(
@@ -605,10 +610,20 @@ public final class KeyboardEventMonitor {
         }
         guard !text.isEmpty else { return false }
         // Keep printable punctuation with the unfinished token so structured
-        // shapes reach the exclusion policy intact at whitespace or Return.
+        // shapes reach the exclusion policy intact at Space or Return/Enter.
         return text.unicodeScalars.allSatisfy {
             !CharacterSet.whitespacesAndNewlines.contains($0)
                 && !CharacterSet.controlCharacters.contains($0)
+        }
+    }
+
+    private func isCorrectionBoundary(_ text: String, keyCode: CGKeyCode?) -> Bool {
+        guard let keyCode else { return false }
+        switch (keyCode, text) {
+        case (49, " "), (36, "\r"), (36, "\n"), (76, "\u{3}"):
+            return true
+        default:
+            return false
         }
     }
 
