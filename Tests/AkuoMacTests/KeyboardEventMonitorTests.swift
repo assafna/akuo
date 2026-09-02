@@ -114,6 +114,25 @@ final class KeyboardEventMonitorTests: XCTestCase {
         }
     }
 
+    func testProductionDecoderClassifiesTabAndShiftTabAsNavigation() {
+        for flags in [CGEventFlags(), .maskShift] {
+            let event = CGEvent(
+                keyboardEventSource: nil,
+                virtualKey: 48,
+                keyDown: true
+            )!
+            event.flags = flags
+            let retranslator = RecordingCurrentLayoutRetranslator(characters: "private")
+            let decoder = SystemNativeEventDecoder(retranslator: retranslator)
+
+            XCTAssertEqual(
+                decoder.decode(event, type: .keyDown),
+                .navigation(marker: 0)
+            )
+            XCTAssertEqual(retranslator.events.count, 0)
+        }
+    }
+
     func testProductionDecoderClassifiesEverySilentShiftedAlphabeticKey() {
         let alphabeticKeyCodes: [CGKeyCode] = [
             0, 11, 8, 2, 14, 3, 5, 4, 34, 38, 40, 37, 46,
@@ -338,6 +357,26 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
     }
 
+    func testTabNavigationPreservesModifiersAndDisarmsImmediateUndo() {
+        for flags in [CGEventFlags(), .maskShift] {
+            let fixture = makeFixture()
+            fixture.coordinator.armUndoOnHandledBoundary = true
+            fixture.coordinator.boundaryResult = .handled
+            type("a", in: fixture)
+            fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+            XCTAssertNil(fixture.monitor.process(fakeNativeEvent))
+
+            fakeNativeEvent.flags = flags
+            fixture.decoder.event = .navigation(marker: 0)
+            XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+            XCTAssertEqual(fakeNativeEvent.flags, flags)
+
+            fakeNativeEvent.flags = []
+            fixture.decoder.event = .commandZ(marker: 0)
+            XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        }
+    }
+
     func testEveryMouseDownTypeInvalidatesWithoutFocusOrPayloadInspection() {
         for eventType in [
             CGEventType.leftMouseDown,
@@ -367,7 +406,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
 
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent, type: .leftMouseDown))
 
-        fixture.decoder.event = .text(" ", marker: 0)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
         XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
     }
@@ -472,7 +511,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
         for character in "וןבל" {
             type(String(character), in: fixture)
         }
-        fixture.decoder.event = .text(" ", marker: 0)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
 
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
@@ -483,7 +522,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
                     boundary: " ",
                     keyStrokes: [.init(text: "/", keyCode: 12)]
                 ),
-                boundaryKeyCode: nil,
+                boundaryKeyCode: 49,
                 context: fixture.focus.context!,
                 priorInputLanguage: .hebrew
             )
@@ -495,7 +534,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
         fixture.decoder.event = .text("'", keyCode: 13, marker: 0)
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
         type("ן", in: fixture)
-        fixture.decoder.event = .text(" ", marker: 0)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
 
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
@@ -514,7 +553,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
         for character in "https://akuo.app" {
             type(String(character), in: fixture)
         }
-        fixture.decoder.event = .text(" ", marker: 0)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
 
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
@@ -535,11 +574,47 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord.boundary, "\r")
     }
 
+    func testKeypadEnterBoundaryKeyCodeReachesCoordinator() {
+        let fixture = makeFixture()
+        type("a", in: fixture)
+        fixture.decoder.event = .text("\u{3}", keyCode: 76, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.boundaryKeyCode, 76)
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord.boundary, "\u{3}")
+    }
+
+    func testCorrectionBoundaryRequiresMatchingPhysicalKey() {
+        let mismatches: [(text: String, keyCode: CGKeyCode?)] = [
+            (" ", 36),
+            ("\r", 49),
+            ("\n", 49),
+            ("\u{3}", 36),
+            (" ", nil),
+        ]
+
+        for mismatch in mismatches {
+            let fixture = makeFixture()
+            type("a", in: fixture)
+            fixture.coordinator.boundaryResult = .handled
+            fixture.decoder.event = .text(
+                mismatch.text,
+                keyCode: mismatch.keyCode,
+                marker: 0
+            )
+
+            XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+            XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+            XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+        }
+    }
+
     func testKeepBoundaryReturnsOriginalEvent() {
         let fixture = makeFixture()
         type("a", in: fixture)
         fixture.coordinator.boundaryResult = .notHandled
-        fixture.decoder.event = .text(" ", marker: 0)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
 
         let returned = fixture.monitor.process(fakeNativeEvent)
 
