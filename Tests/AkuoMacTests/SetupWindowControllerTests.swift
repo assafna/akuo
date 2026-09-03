@@ -228,6 +228,43 @@ final class SetupWindowControllerTests: XCTestCase {
         XCTAssertFalse(controller.setupWindow?.isVisible == true)
     }
 
+    func testNestedPresentationDuringContentAttachmentRetainsNestedContent() {
+        var contentFactoryCalls = 0
+        var createdOuterContentController: NSViewController?
+        var createdNestedContentController: NSViewController?
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { controller, completion in
+                contentFactoryCalls += 1
+                if contentFactoryCalls == 1 {
+                    let contentController = CompletingOnLoadViewController {
+                        XCTAssertTrue(completion.complete())
+                        controller.presentFromMenu()
+                    }
+                    createdOuterContentController = contentController
+                    return contentController
+                }
+
+                let contentController = NSViewController()
+                createdNestedContentController = contentController
+                return contentController
+            }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+
+        let retainedWindow = try! XCTUnwrap(controller.setupWindow)
+        let outerContentController = try! XCTUnwrap(createdOuterContentController)
+        let nestedContentController = try! XCTUnwrap(createdNestedContentController)
+        XCTAssertEqual(contentFactoryCalls, 2)
+        XCTAssertTrue(retainedWindow.isVisible)
+        XCTAssertTrue(retainedWindow.contentViewController === nestedContentController)
+        XCTAssertTrue(retainedWindow.contentView === nestedContentController.view)
+        XCTAssertFalse(retainedWindow.contentViewController === outerContentController)
+    }
+
     func testCompletionDuringHostingOnAppearDoesNotShowCompletedWindow() {
         var completionResult: Bool?
         let controller = SetupWindowController(
