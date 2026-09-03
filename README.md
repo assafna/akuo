@@ -41,7 +41,19 @@ macOS associates privacy permissions with an application's designated code requi
      Scripts/install-local.sh release
    ```
 
-   The build derives the certificate's Apple team ID and embeds Akuo's controlled designated requirement: Apple-issued signer, exact Akuo identifier, and exact team. The installer rejects any other policy and refuses an update unless the staged and installed signed applications satisfy each other's requirements.
+   This convenient mode builds a fresh candidate and immediately installs it. The build derives the certificate's Apple team ID and embeds Akuo's controlled designated requirement: Apple-issued signer, exact Akuo identifier, and exact team. The installer rejects any other policy and refuses an update unless the staged and installed signed applications satisfy each other's requirements.
+
+   When the candidate must be inspected or accepted before installation, build it once, run the signing and metadata checks against that bundle, and install that exact path without rebuilding:
+
+   ```bash
+   AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' \
+     Scripts/build-app.sh release
+   Scripts/verify-local-signing.sh "$PWD/dist/Akuo.app"
+   shasum -a 256 "$PWD/dist/Akuo.app/Contents/MacOS/Akuo"
+   Scripts/install-local.sh --candidate "$PWD/dist/Akuo.app"
+   ```
+
+   Prebuilt-candidate mode does not invoke `build-app.sh`. It rechecks the candidate and staged bundle, carries the candidate executable hash through staging and installation, and rejects a signature, bundle, or hash mismatch before replacing the existing application.
 4. Open `/Applications/Akuo.app`. On the first migration from the old ad-hoc build, remove the obsolete Akuo entry from **System Settings → Privacy & Security → Accessibility**, add `/Applications/Akuo.app`, and enable it one final time. Later builds installed with the same signing team and compatible designated requirement retain that permission.
 5. In **System Settings → Keyboard → Text Input → Edit**, add **ABC** (preferred) or **U.S.**, and **Hebrew**. Do not choose Hebrew – QWERTY for version 1.
 6. Return to Akuo, recheck setup, complete onboarding, and turn Akuo on.

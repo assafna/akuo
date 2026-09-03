@@ -2,31 +2,46 @@
 set -euo pipefail
 
 AKUO_PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
-AKUO_BUILD_CONFIGURATION="${1:-}"
 AKUO_CODE_SIGN_IDENTITY="${AKUO_CODE_SIGN_IDENTITY:-}"
-AKUO_CANDIDATE_PATH="$AKUO_PROJECT_ROOT/dist/Akuo.app"
-AKUO_INSTALL_PATH="/Applications/Akuo.app"
+AKUO_BUILD_CONFIGURATION=""
+AKUO_CANDIDATE_PATH=""
+AKUO_APPLICATIONS_PATH="/Applications"
+# Packaging contract tests redirect the fixed installation target into a
+# disposable root; normal installation always uses /Applications.
+if [[ -n "${AKUO_INSTALLER_TEST_ROOT:-}" ]]; then
+    AKUO_APPLICATIONS_PATH="$AKUO_INSTALLER_TEST_ROOT/Applications"
+fi
+AKUO_INSTALL_PATH="$AKUO_APPLICATIONS_PATH/Akuo.app"
 AKUO_EXPECTED_BUNDLE_ID="app.akuo.Akuo"
 
 # Resolved from this script's absolute project root.
 # shellcheck disable=SC1091
 source "$AKUO_PROJECT_ROOT/Scripts/lib/install-safety.sh"
 
-if [[ "$#" -ne 1 || ( "$AKUO_BUILD_CONFIGURATION" != "debug" && "$AKUO_BUILD_CONFIGURATION" != "release" ) ]]; then
+if [[ "$#" -eq 1 && ( "$1" == "debug" || "$1" == "release" ) ]]; then
+    AKUO_BUILD_CONFIGURATION="$1"
+    AKUO_CANDIDATE_PATH="$AKUO_PROJECT_ROOT/dist/Akuo.app"
+elif [[ "$#" -eq 2 && "$1" == "--candidate" && -n "$2" ]]; then
+    AKUO_CANDIDATE_PATH="$2"
+else
     echo "usage: AKUO_CODE_SIGN_IDENTITY='Apple Development: Name (TEAMID)' $0 [debug|release]" >&2
-    exit 2
-fi
-if [[ -z "$AKUO_CODE_SIGN_IDENTITY" ]]; then
-    echo "local installation requires AKUO_CODE_SIGN_IDENTITY to name a persistent Apple signing certificate" >&2
-    exit 2
-fi
-if [[ "$AKUO_CODE_SIGN_IDENTITY" == "-" ]]; then
-    echo "local installation does not accept the ad-hoc identity '-'" >&2
+    echo "       $0 --candidate /path/to/Akuo.app" >&2
     exit 2
 fi
 
-AKUO_CODE_SIGN_IDENTITY="$AKUO_CODE_SIGN_IDENTITY" \
-    "$AKUO_PROJECT_ROOT/Scripts/build-app.sh" "$AKUO_BUILD_CONFIGURATION"
+if [[ -n "$AKUO_BUILD_CONFIGURATION" ]]; then
+    if [[ -z "$AKUO_CODE_SIGN_IDENTITY" ]]; then
+        echo "local installation requires AKUO_CODE_SIGN_IDENTITY to name a persistent Apple signing certificate" >&2
+        exit 2
+    fi
+    if [[ "$AKUO_CODE_SIGN_IDENTITY" == "-" ]]; then
+        echo "local installation does not accept the ad-hoc identity '-'" >&2
+        exit 2
+    fi
+
+    AKUO_CODE_SIGN_IDENTITY="$AKUO_CODE_SIGN_IDENTITY" \
+        "$AKUO_PROJECT_ROOT/Scripts/build-app.sh" "$AKUO_BUILD_CONFIGURATION"
+fi
 "$AKUO_PROJECT_ROOT/Scripts/verify-local-signing.sh" "$AKUO_CANDIDATE_PATH"
 AKUO_CANDIDATE_SHA256="$(shasum -a 256 "$AKUO_CANDIDATE_PATH/Contents/MacOS/Akuo" | awk '{print $1}')"
 
@@ -58,11 +73,11 @@ if [[ -d "$AKUO_INSTALL_PATH" ]]; then
 fi
 
 if pgrep -f "^$AKUO_INSTALL_PATH/Contents/MacOS/Akuo([[:space:]]|$)" >/dev/null; then
-    echo "refusing local install: quit the running /Applications/Akuo.app first" >&2
+    printf 'refusing local install: quit the running %s first\n' "$AKUO_INSTALL_PATH" >&2
     exit 1
 fi
 
-AKUO_STAGE_ROOT="$(mktemp -d "/Applications/.akuo-install.XXXXXX")"
+AKUO_STAGE_ROOT="$(mktemp -d "$AKUO_APPLICATIONS_PATH/.akuo-install.XXXXXX")"
 AKUO_STAGE_APP="$AKUO_STAGE_ROOT/Akuo.app"
 AKUO_BACKUP_APP=""
 AKUO_REPLACEMENT_INSTALLED=false
