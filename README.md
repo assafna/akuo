@@ -22,11 +22,10 @@ Akuo is menu-bar-only and does not appear in the Dock. It works through the same
 The project uses Swift Package Manager and the command-line tools included with Xcode.
 
 ```bash
-swift test
-Scripts/build-app.sh release
+Scripts/verify.sh
 ```
 
-The packaging script accepts exactly `debug` or `release`, creates `dist/Akuo.app`, validates its property list, signs and verifies the bundle, and prints the SHA-256 digest and designated requirement of its final executable. With no additional configuration it uses an ad-hoc signature suitable for CI and source verification, but not for an installed copy that should retain Accessibility permission across updates.
+This fail-fast verification entry point first checks its own orchestration contract, then runs the local-signing packaging contracts, the Swift test suite, and a release build through `Scripts/build-app.sh`, in that order. The packaging script accepts exactly `debug` or `release`, creates `dist/Akuo.app`, validates its property list, signs and verifies the bundle, and prints the SHA-256 digest and designated requirement of its final executable. With no additional configuration it uses an ad-hoc signature suitable for CI and source verification, but not for an installed copy that should retain Accessibility permission across updates.
 
 ## Stable local installation and Accessibility permission
 
