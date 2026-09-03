@@ -1,6 +1,6 @@
 # Akuo
 
-Akuo 0.3.0 is an early development preview of a local, private-by-design native macOS menu-bar utility that corrects completed English and Hebrew words typed with the wrong keyboard layout. The name comes from typing `שלום` while the English layout is active: `akuo`.
+Akuo is an early development preview of a local, private-by-design native macOS menu-bar utility that corrects completed English and Hebrew words typed with the wrong keyboard layout. The name comes from typing `שלום` while the English layout is active: `akuo`.
 
 This repository currently publishes source and local build instructions only. It does not provide a Developer ID-signed or notarized public binary.
 
@@ -25,7 +25,17 @@ The project uses Swift Package Manager and the command-line tools included with 
 Scripts/verify.sh
 ```
 
-This fail-fast verification entry point first checks its own orchestration contract, then runs the local-signing packaging contracts, the Swift test suite, and a release build through `Scripts/build-app.sh`, in that order. The packaging script accepts exactly `debug` or `release`, creates `dist/Akuo.app`, validates its property list, signs and verifies the bundle, and prints the SHA-256 digest and designated requirement of its final executable. With no additional configuration it uses an ad-hoc signature suitable for CI and source verification, but not for an installed copy that should retain Accessibility permission across updates.
+This fail-fast verification entry point first checks its own orchestration contract, then runs the candidate-version and local-signing packaging contracts, the Swift test suite, a release build through `Scripts/build-app.sh`, and an independent identity check of the finished bundle, in that order. The packaging script accepts exactly `debug` or `release`, creates `dist/Akuo.app`, validates its property list, signs and verifies the bundle, and prints the SHA-256 digest and designated requirement of its final executable. With no additional configuration it uses an ad-hoc signature suitable for CI and source verification, but not for an installed copy that should retain Accessibility permission across updates.
+
+`Sources/AkuoCore/AkuoCoreVersion.swift` is the single committed authority for the candidate marketing version and build number. `Configuration/Akuo-Info.plist` deliberately contains neither bundle-version key; packaging reads strict string literals from the Swift declaration and injects both values into the copied candidate plist. Verification compares that declaration with the packaged plist and the built executable's runtime identity. It also inspects released `v*` tags at their source commits, including the legacy tagged plist when needed, so an Unreleased candidate cannot reuse a released version/build pair.
+
+A rebuild of the exact same Git commit with the same identity is the same candidate. Every new distributable source commit must advance the authoritative build number; `Scripts/build-app.sh` rejects an unchanged or decreasing build identity. An exact commit carrying its own `v*` release tag remains rebuildable. To read a built candidate's identity without copying values into documentation or commands, run:
+
+```bash
+Scripts/verify-candidate-version.sh dist/Akuo.app
+plutil -extract CFBundleShortVersionString raw -o - dist/Akuo.app/Contents/Info.plist
+plutil -extract CFBundleVersion raw -o - dist/Akuo.app/Contents/Info.plist
+```
 
 ## Stable local installation and Accessibility permission
 

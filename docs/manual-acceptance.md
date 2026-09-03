@@ -26,6 +26,27 @@ Use this checklist only with the exact release candidate you intend to accept. B
 
 For each checkbox, write `PASS`, `FAIL`, or `BLOCKED` in **Result** and add concise evidence such as a screenshot name, screen recording timestamp, observed text/source, Console export, or command output. Redact unrelated private content.
 
+Read the candidate identity from the exact bundle under acceptance; do not copy a
+version or build literal from an issue, checklist, or previous candidate. From the
+repository commit used to build it, record the output of:
+
+```bash
+AKUO_CANDIDATE_PATH=/Applications/Akuo.app
+Scripts/verify-candidate-version.sh "$AKUO_CANDIDATE_PATH"
+plutil -extract CFBundleShortVersionString raw -o - \
+  "$AKUO_CANDIDATE_PATH/Contents/Info.plist"
+plutil -extract CFBundleVersion raw -o - \
+  "$AKUO_CANDIDATE_PATH/Contents/Info.plist"
+git rev-parse HEAD
+shasum -a 256 "$AKUO_CANDIDATE_PATH/Contents/MacOS/Akuo"
+```
+
+The verifier compares the authoritative source declaration, the packaged plist,
+the runtime identity reported by that executable, Git source history, and released
+`v*` tag contents. Rebuilding the exact source commit retains the same candidate
+identity; accepting a new distributable source commit requires advancing the
+authoritative build number before building it.
+
 Run this local inspection command and record whether each required language is
 advertised by either its base identifier or its locale-specific identifier:
 
@@ -57,7 +78,7 @@ Record the blocker here before stopping:
 
 - [ ] **Release bundle built once.** Run `swift test` and `AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' Scripts/build-app.sh release`; record the passing test count, absolute bundle path, signing identity, and designated requirement. Do not rebuild or modify this candidate during the remaining metadata and installation steps. **Result:**
   **Evidence:**
-- [ ] **Bundle identity verified and candidate hash recorded once.** Set `AKUO_CANDIDATE_PATH="$PWD/dist/Akuo.app"`, run `Scripts/verify-local-signing.sh "$AKUO_CANDIDATE_PATH"` for signing policy, and use `plutil -p "$AKUO_CANDIDATE_PATH/Contents/Info.plist"` to confirm `CFBundleIdentifier = app.akuo.Akuo`, version `0.3.0`, build `3`, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. Confirm the verifier reports a non-ad-hoc, Apple-anchored signature, an Apple team identifier, and Akuo's repository-controlled designated requirement with that exact identifier and team. Then calculate `AKUO_CANDIDATE_SHA256="$(shasum -a 256 "$AKUO_CANDIDATE_PATH/Contents/MacOS/Akuo" | awk '{print $1}')"`, print it with `printf 'Record candidate SHA-256: %s\n' "$AKUO_CANDIDATE_SHA256"`, and record that exact lowercase value in the release evidence. Do not recalculate it before installation. **Result:**
+- [ ] **Bundle identity verified and candidate hash recorded once.** Set `AKUO_CANDIDATE_PATH="$PWD/dist/Akuo.app"`, run `Scripts/verify-candidate-version.sh "$AKUO_CANDIDATE_PATH"` for source, plist, runtime, Git-history, and released-tag identity agreement, then run `Scripts/verify-local-signing.sh "$AKUO_CANDIDATE_PATH"` for signing policy. Use `plutil -p "$AKUO_CANDIDATE_PATH/Contents/Info.plist"` to confirm `CFBundleIdentifier = app.akuo.Akuo`, the version and build reported by the candidate-version verifier, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. Confirm the signing verifier reports a non-ad-hoc, Apple-anchored signature, an Apple team identifier, and Akuo's repository-controlled designated requirement with that exact identifier and team. Then calculate `AKUO_CANDIDATE_SHA256="$(shasum -a 256 "$AKUO_CANDIDATE_PATH/Contents/MacOS/Akuo" | awk '{print $1}')"`, print it with `printf 'Record candidate SHA-256: %s\n' "$AKUO_CANDIDATE_SHA256"`, and record that exact lowercase value in the release evidence. Do not recalculate it before installation. **Result:**
   **Evidence:**
 - [ ] **Exact stable candidate installed.** Quit Akuo and run `Scripts/install-local.sh --candidate "$AKUO_CANDIDATE_PATH" --sha256 "$AKUO_CANDIDATE_SHA256"`, reusing the path and hash recorded above. This mode must not build again. Confirm its reported installed executable hash matches the hash recorded for the tested candidate, independently run `shasum -a 256 /Applications/Akuo.app/Contents/MacOS/Akuo`, and launch only `/Applications/Akuo.app`. **Result:**
   **Evidence:**

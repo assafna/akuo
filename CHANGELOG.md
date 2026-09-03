@@ -31,6 +31,9 @@ All notable changes to Akuo are documented in this file.
 
 ### Changed
 
+- Make the core Swift version declaration authoritative for both marketing and
+  build identity, inject those values during packaging, and reject malformed,
+  drifted, reused-release, or unadvanced new-source candidate identities.
 - Require a focused text control to expose a writable Accessibility value and
   reject it when Accessibility explicitly reports that it is disabled.
   Read-only, disabled, and otherwise unprovable editing contexts remain

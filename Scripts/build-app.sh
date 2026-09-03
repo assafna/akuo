@@ -8,6 +8,8 @@ AKUO_CODE_SIGN_IDENTITY="${AKUO_CODE_SIGN_IDENTITY:--}"
 # Resolved from this script's absolute project root.
 # shellcheck disable=SC1091
 source "$AKUO_PROJECT_ROOT/Scripts/lib/signing-policy.sh"
+# shellcheck disable=SC1091
+source "$AKUO_PROJECT_ROOT/Scripts/lib/candidate-version.sh"
 
 if [[ "$#" -ne 1 || ( "$AKUO_BUILD_CONFIGURATION" != "debug" && "$AKUO_BUILD_CONFIGURATION" != "release" ) ]]; then
     echo "usage: $0 [debug|release]" >&2
@@ -16,8 +18,14 @@ fi
 
 AKUO_APP_PATH="$AKUO_PROJECT_ROOT/dist/Akuo.app"
 AKUO_EXECUTABLE_PATH="$AKUO_APP_PATH/Contents/MacOS/Akuo"
+AKUO_VERSION_SOURCE="$AKUO_PROJECT_ROOT/Sources/AkuoCore/AkuoCoreVersion.swift"
+AKUO_INFO_PLIST="$AKUO_PROJECT_ROOT/Configuration/Akuo-Info.plist"
 
 cd "$AKUO_PROJECT_ROOT"
+akuo_read_candidate_identity "$AKUO_VERSION_SOURCE"
+plutil -lint "$AKUO_INFO_PLIST"
+akuo_assert_versionless_template "$AKUO_INFO_PLIST"
+akuo_validate_candidate_history "$AKUO_PROJECT_ROOT"
 swift build -c "$AKUO_BUILD_CONFIGURATION" --product Akuo
 AKUO_BIN_DIR="$(swift build -c "$AKUO_BUILD_CONFIGURATION" --show-bin-path)"
 
@@ -30,12 +38,16 @@ fi
 rm -rf -- "$AKUO_APP_PATH"
 mkdir -p -- "$AKUO_APP_PATH/Contents/MacOS" "$AKUO_APP_PATH/Contents/Resources"
 
-AKUO_INFO_PLIST="$AKUO_PROJECT_ROOT/Configuration/Akuo-Info.plist"
-plutil -lint "$AKUO_INFO_PLIST"
 cp "$AKUO_INFO_PLIST" "$AKUO_APP_PATH/Contents/Info.plist"
+plutil -insert CFBundleShortVersionString -string "$AKUO_CANDIDATE_VERSION" \
+    "$AKUO_APP_PATH/Contents/Info.plist"
+plutil -insert CFBundleVersion -string "$AKUO_CANDIDATE_BUILD" \
+    "$AKUO_APP_PATH/Contents/Info.plist"
 plutil -lint "$AKUO_APP_PATH/Contents/Info.plist"
 cp "$AKUO_BIN_DIR/Akuo" "$AKUO_EXECUTABLE_PATH"
 chmod 755 "$AKUO_EXECUTABLE_PATH"
+akuo_verify_candidate_plist "$AKUO_APP_PATH/Contents/Info.plist"
+akuo_verify_runtime_identity "$AKUO_EXECUTABLE_PATH"
 
 if [[ "$AKUO_CODE_SIGN_IDENTITY" == "-" ]]; then
     codesign --force --deep --sign - "$AKUO_APP_PATH"
