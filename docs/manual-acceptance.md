@@ -49,20 +49,31 @@ authoritative source declaration and exact `HEAD` SHA with the packaged plist,
 the runtime identity and compiled source revision reported by that executable,
 and every identity visible through local refs and reflogs. It also requires
 local `v*` tag objects to match the live origin result, then inspects their tagged
-source/plist contents. Before extraction, the build rejects tracked symlinks and
+source declarations. Before extraction, the build rejects tracked symlinks and
 gitlinks, then compiles an archived snapshot of the exact captured commit rather
 than caller-worktree or external target files. Rebuilding the exact clean
 source commit retains the same candidate identity. A rebase, squash,
 cherry-pick, merge, or other new candidate SHA requires a higher build number;
 if an older candidate is outside the local refs/reflogs, the operator must still
-advance it before build. A modern exact release tag must have advanced beyond
-every visible revision that is not its descendant and may not share its
-version/build pair with another visible source revision. True later descendants
-do not block rebuilding that older tag; divergent history does. A legacy source
-without a Swift build declaration is accepted only at its exact live-origin
-`v<marketing-version>` tag when its Swift version and plist identity agree. It
-may retain same-pair legacy ancestors or descendants, but divergent same-pair or
-unadvanced history and reuse by another live-origin release tag are rejected.
+advance it before build. The current candidate identity is parsed only from the
+archived strict, untyped Swift string literals; missing, attributed, typed,
+duplicate, computed, or malformed declarations fail closed and never use plist
+fallback. A modern
+exact release tag must have advanced beyond every visible modern revision that
+is not its descendant and may not share its version/build pair with another
+visible source revision. Creating or moving a tag onto a later same-pair commit
+does not bypass this rule. True later descendants do not block rebuilding that
+older modern tag; divergent history does. Declaration-free historical tags are
+outside the modern pipeline and reserve their Swift marketing version; visible
+declaration-free history with the same version also prevents a moved tag from
+laundering that release onto a later strict source.
+
+The `v0.3.0` tag predates the Swift build declaration, embedded source revision,
+and runtime identity probes. Its faithful rebuild procedure is a disposable
+checkout or archive of the authenticated live-origin tag followed by that tag's
+own `Scripts/build-app.sh release`. The current build and verifier intentionally
+reject that source and must not be copied into the historical tree; such a
+rebuild cannot claim modern candidate-verifier coverage.
 
 Run this local inspection command and record whether each required language is
 advertised by either its base identifier or its locale-specific identifier:

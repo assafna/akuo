@@ -38,8 +38,11 @@ All notable changes to Akuo are documented in this file.
   exact-tag-laundered, or unadvanced new-source identities across merges, local
   refs, and reflogs. Reject tracked symlinks and gitlinks before archive
   extraction, compare exact modern tags against divergent as well as ancestral
-  history, and preserve the narrowly authenticated end-to-end rebuild path for
-  exact legacy merge-tagged releases.
+  history, parse independent verification identity from the captured Git object,
+  and reject noncanonical declarations without plist fallback or tag-move
+  laundering across declaration-free history. Preserve v0.3.0 rebuildability
+  separately by authenticating its live tag and running the historical build
+  script contained in that immutable source.
 - Require a focused text control to expose a writable Accessibility value and
   reject it when Accessibility explicitly reports that it is disabled.
   Read-only, disabled, and otherwise unprovable editing contexts remain
