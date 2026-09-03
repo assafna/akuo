@@ -988,6 +988,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
             virtualKey: 0,
             keyDown: true
         )!
+        event.flags = []
         let characters = Array(text.utf16)
         characters.withUnsafeBufferPointer { buffer in
             event.keyboardSetUnicodeString(
