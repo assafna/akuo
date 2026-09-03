@@ -20,11 +20,9 @@ struct AkuoApp: App {
             onboardingCompleted: {
                 sharedModel.onboardingCompleted
             },
-            makeContentViewController: { controller in
+            makeContentViewController: { _, completion in
                 NSHostingController(
-                    rootView: SetupView(model: sharedModel) {
-                        controller.close()
-                    }
+                    rootView: SetupView(model: sharedModel, completion: completion)
                 )
             }
         )

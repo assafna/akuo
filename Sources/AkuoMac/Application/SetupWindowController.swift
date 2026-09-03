@@ -1,45 +1,94 @@
 import AppKit
 
 @MainActor
+public final class SetupPresentationCompletion {
+    private let completePresentation: () -> Bool
+
+    init(completePresentation: @escaping () -> Bool) {
+        self.completePresentation = completePresentation
+    }
+
+    @discardableResult
+    public func complete() -> Bool {
+        completePresentation()
+    }
+}
+
+@MainActor
 public final class SetupWindowController {
+    private struct Presentation {
+        let generation: Int
+        let completion: SetupPresentationCompletion
+    }
+
     private static let setupContentSize = NSSize(width: 440, height: 460)
     private let refreshState: () -> Void
     private let onboardingCompleted: () -> Bool
-    private let makeContentViewController: (SetupWindowController) -> NSViewController
+    private let makeContentViewController: (SetupWindowController, SetupPresentationCompletion) -> NSViewController
+    private var presentationGeneration = 0
+    private var completedPresentationGeneration: Int?
+    private var isInstallingPresentationContent = false
+    private var hasQueuedPresentation = false
+    private var isDrainingQueuedPresentation = false
     public private(set) var setupWindow: NSWindow?
 
     public init(
         refreshState: @escaping () -> Void,
         onboardingCompleted: @escaping () -> Bool,
-        makeContentViewController: @escaping (SetupWindowController) -> NSViewController
+        makeContentViewController: @escaping (SetupWindowController, SetupPresentationCompletion) -> NSViewController
     ) {
         self.refreshState = refreshState
         self.onboardingCompleted = onboardingCompleted
         self.makeContentViewController = makeContentViewController
     }
 
+    public convenience init(
+        refreshState: @escaping () -> Void,
+        onboardingCompleted: @escaping () -> Bool,
+        makeContentViewController: @escaping (SetupWindowController) -> NSViewController
+    ) {
+        self.init(
+            refreshState: refreshState,
+            onboardingCompleted: onboardingCompleted,
+            makeContentViewController: { controller, _ in
+                makeContentViewController(controller)
+            }
+        )
+    }
+
     public func presentFirstLaunchIfNeeded() {
         refreshState()
         guard !onboardingCompleted() else { return }
-        presentWindow()
+        requestPresentation()
     }
 
     public func presentFromMenu() {
         refreshState()
-        presentWindow()
+        requestPresentation()
     }
 
     public func close() {
         setupWindow?.close()
     }
 
+    private func requestPresentation() {
+        guard !isInstallingPresentationContent else {
+            hasQueuedPresentation = true
+            return
+        }
+        presentWindow()
+    }
+
     private func presentWindow() {
         let window = setupWindow ?? makeWindow()
         setupWindow = window
-        window.center()
-        window.orderFrontRegardless()
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        window.makeKey()
+        guard !window.isVisible else {
+            _ = activate(window, generation: presentationGeneration)
+            return
+        }
+        let presentation = makePresentation()
+        guard installPresentationContent(in: window, presentation: presentation) else { return }
+        _ = activate(window, generation: presentation.generation)
     }
 
     private func makeWindow() -> NSWindow {
@@ -51,11 +100,89 @@ public final class SetupWindowController {
         )
         window.title = "Akuo Setup"
         window.isReleasedWhenClosed = false
-        window.contentViewController = makeContentViewController(self)
         window.contentMinSize = Self.setupContentSize
         window.contentMaxSize = Self.setupContentSize
         window.setContentSize(Self.setupContentSize)
         return window
+    }
+
+    private func installPresentationContent(in window: NSWindow, presentation: Presentation) -> Bool {
+        isInstallingPresentationContent = true
+        defer {
+            isInstallingPresentationContent = false
+            drainQueuedPresentationIfNeeded()
+        }
+
+        let contentViewController = makeContentViewController(self, presentation.completion)
+        guard isCurrent(presentation, for: window) else { return false }
+
+        _ = contentViewController.view
+        guard isCurrent(presentation, for: window) else { return false }
+
+        window.contentViewController = contentViewController
+        guard isCurrent(presentation, for: window) else { return false }
+        window.setContentSize(Self.setupContentSize)
+        return isCurrent(presentation, for: window)
+    }
+
+    private func drainQueuedPresentationIfNeeded() {
+        guard !isInstallingPresentationContent,
+              !isDrainingQueuedPresentation,
+              hasQueuedPresentation
+        else {
+            return
+        }
+
+        isDrainingQueuedPresentation = true
+        defer { isDrainingQueuedPresentation = false }
+        while hasQueuedPresentation, !isInstallingPresentationContent {
+            hasQueuedPresentation = false
+            presentWindow()
+        }
+    }
+
+    private func activate(_ window: NSWindow, generation: Int) -> Bool {
+        guard isCurrent(generation, for: window) else { return false }
+        window.center()
+        guard isCurrent(generation, for: window) else { return false }
+        window.orderFrontRegardless()
+        guard isCurrent(generation, for: window) else { return false }
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        guard isCurrent(generation, for: window) else { return false }
+        window.makeKey()
+        return isCurrent(generation, for: window)
+    }
+
+    private func makePresentation() -> Presentation {
+        presentationGeneration += 1
+        let generation = presentationGeneration
+        completedPresentationGeneration = nil
+        let completion = SetupPresentationCompletion { [weak self] in
+            self?.completePresentation(generation: generation) ?? false
+        }
+        return Presentation(generation: generation, completion: completion)
+    }
+
+    private func isCurrent(_ presentation: Presentation, for window: NSWindow) -> Bool {
+        isCurrent(presentation.generation, for: window)
+    }
+
+    private func isCurrent(_ generation: Int, for window: NSWindow) -> Bool {
+        setupWindow === window
+            && presentationGeneration == generation
+            && completedPresentationGeneration != generation
+    }
+
+    private func completePresentation(generation: Int) -> Bool {
+        guard presentationGeneration == generation,
+              completedPresentationGeneration != generation
+        else {
+            return false
+        }
+
+        completedPresentationGeneration = generation
+        close()
+        return true
     }
 }
 
