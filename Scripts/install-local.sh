@@ -5,6 +5,7 @@ AKUO_PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 AKUO_CODE_SIGN_IDENTITY="${AKUO_CODE_SIGN_IDENTITY:-}"
 AKUO_BUILD_CONFIGURATION=""
 AKUO_CANDIDATE_PATH=""
+AKUO_RECORDED_CANDIDATE_SHA256=""
 AKUO_APPLICATIONS_PATH="/Applications"
 # Packaging contract tests redirect the fixed installation target into a
 # disposable root; normal installation always uses /Applications.
@@ -21,11 +22,16 @@ source "$AKUO_PROJECT_ROOT/Scripts/lib/install-safety.sh"
 if [[ "$#" -eq 1 && ( "$1" == "debug" || "$1" == "release" ) ]]; then
     AKUO_BUILD_CONFIGURATION="$1"
     AKUO_CANDIDATE_PATH="$AKUO_PROJECT_ROOT/dist/Akuo.app"
-elif [[ "$#" -eq 2 && "$1" == "--candidate" && -n "$2" ]]; then
+elif [[ "$#" -eq 4 && "$1" == "--candidate" && -n "$2" && "$3" == "--sha256" ]]; then
     AKUO_CANDIDATE_PATH="$2"
+    AKUO_RECORDED_CANDIDATE_SHA256="$4"
+    if [[ ! "$AKUO_RECORDED_CANDIDATE_SHA256" =~ ^[0-9a-f]{64}$ ]]; then
+        echo "prebuilt candidate SHA-256 must be exactly 64 lowercase hexadecimal characters" >&2
+        exit 2
+    fi
 else
     echo "usage: AKUO_CODE_SIGN_IDENTITY='Apple Development: Name (TEAMID)' $0 [debug|release]" >&2
-    echo "       $0 --candidate /path/to/Akuo.app" >&2
+    echo "       $0 --candidate /path/to/Akuo.app --sha256 64-lowercase-hex" >&2
     exit 2
 fi
 
@@ -44,6 +50,13 @@ if [[ -n "$AKUO_BUILD_CONFIGURATION" ]]; then
 fi
 "$AKUO_PROJECT_ROOT/Scripts/verify-local-signing.sh" "$AKUO_CANDIDATE_PATH"
 AKUO_CANDIDATE_SHA256="$(shasum -a 256 "$AKUO_CANDIDATE_PATH/Contents/MacOS/Akuo" | awk '{print $1}')"
+if [[ -n "$AKUO_RECORDED_CANDIDATE_SHA256" && \
+    "$AKUO_CANDIDATE_SHA256" != "$AKUO_RECORDED_CANDIDATE_SHA256" ]]; then
+    echo "refusing local install: candidate executable does not match recorded SHA-256" >&2
+    printf 'Recorded SHA-256: %s\n' "$AKUO_RECORDED_CANDIDATE_SHA256" >&2
+    printf 'Candidate SHA-256: %s\n' "$AKUO_CANDIDATE_SHA256" >&2
+    exit 1
+fi
 
 akuo_bundle_identifier() {
     plutil -extract CFBundleIdentifier raw -o - "$1/Contents/Info.plist" 2>/dev/null || true
