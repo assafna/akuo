@@ -170,6 +170,18 @@ public struct InputSourceController: InputSourceSelecting {
         return true
     }
 
+    @discardableResult
+    public func selectExact(identifier: String) -> Bool {
+        let approvedIdentifiers = Set(Self.englishPreference + [Self.standardHebrew])
+        guard approvedIdentifiers.contains(identifier),
+              backend.sources.contains(where: { $0.identifier == identifier }),
+              backend.select(identifier: identifier) else {
+            return false
+        }
+        selectionOriginTracker.recordSuccessfulSelection(identifier: identifier)
+        return true
+    }
+
     func consumeAkuoSelectionNotification() -> Bool {
         selectionOriginTracker.consumeIfMatching(currentIdentifier: currentSource?.identifier)
     }

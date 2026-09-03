@@ -98,6 +98,7 @@ final class UndoControllerTests: XCTestCase {
             boundaryKeyCode: 49,
             context: ineligibleContext,
             priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
             createdAt: createdAt
         ))
 
@@ -119,6 +120,7 @@ final class UndoControllerTests: XCTestCase {
             boundaryKeyCode: 49,
             context: uncertainContext,
             priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
             createdAt: createdAt
         ))
 
@@ -140,6 +142,7 @@ final class UndoControllerTests: XCTestCase {
             boundaryKeyCode: 49,
             context: secureContext,
             priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
             createdAt: createdAt
         ))
 
@@ -172,6 +175,21 @@ final class UndoControllerTests: XCTestCase {
         XCTAssertNil(controller.eligibleRecord(context: context, now: createdAt))
     }
 
+    @available(*, deprecated, message: "Exercises the deprecated compatibility initializer.")
+    func testLegacyInitializerLeavesExactSourceIdentifierUnknown() {
+        let record = UndoRecord(
+            original: "akuo",
+            corrected: "שלום",
+            boundary: " ",
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            createdAt: createdAt
+        )
+
+        XCTAssertNil(record.priorInputSourceIdentifier)
+    }
+
     private func makeRecord(
         original: String = "akuo",
         corrected: String = "שלום"
@@ -183,6 +201,7 @@ final class UndoControllerTests: XCTestCase {
             boundaryKeyCode: 49,
             context: context,
             priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
             createdAt: createdAt
         )
     }
