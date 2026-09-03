@@ -131,8 +131,8 @@ final class KeyboardLayoutMapTests: XCTestCase {
         }
     }
 
-    func testCombinedShiftAndCapsLockKeepsShiftedHebrewFallbackOutputLowercase() {
-        let cases: [(String, [ObservedKeyStroke], String)] = [
+    func testCombinedShiftAndCapsLockRejectsShiftedHebrewFallbackOutput() {
+        let cases: [(String, [ObservedKeyStroke])] = [
             (
                 "קךךם",
                 [
@@ -141,8 +141,7 @@ final class KeyboardLayoutMapTests: XCTestCase {
                     .init(text: "ך", keyCode: 37),
                     .init(text: "ך", keyCode: 37),
                     .init(text: "ם", keyCode: 31),
-                ],
-                "hello"
+                ]
             ),
             (
                 "לֹםםך",
@@ -151,57 +150,15 @@ final class KeyboardLayoutMapTests: XCTestCase {
                     .init(text: "ם", keyCode: 31),
                     .init(text: "ם", keyCode: 31),
                     .init(text: "ך", keyCode: 37),
-                ],
-                "cool"
+                ]
             ),
         ]
 
-        for (token, keyStrokes, candidate) in cases {
-            let conversion = map.convert(token, sourceHint: .hebrew, keyStrokes: keyStrokes)
-            XCTAssertEqual(conversion?.candidate, candidate, token)
-            XCTAssertFalse(conversion?.physicalEvidence?.recoveredShift == true, token)
-        }
-    }
-
-    func testCombinedShiftAndCapsLockKeepsShiftedHebrewTranslatedOutputLowercase() {
-        let cases: [(String, [ObservedKeyStroke], String)] = [
-            (
-                "קךךם",
-                [
-                    .init(
-                        text: "",
-                        keyCode: 4,
-                        modifiers: [.shift, .capsLock],
-                        targetText: "h"
-                    ),
-                    .init(text: "ק", keyCode: 14, targetText: "e"),
-                    .init(text: "ך", keyCode: 37, targetText: "l"),
-                    .init(text: "ך", keyCode: 37, targetText: "l"),
-                    .init(text: "ם", keyCode: 31, targetText: "o"),
-                ],
-                "hello"
-            ),
-            (
-                "לֹםםך",
-                [
-                    .init(
-                        text: "לֹ",
-                        keyCode: 8,
-                        modifiers: [.shift, .capsLock],
-                        targetText: "c"
-                    ),
-                    .init(text: "ם", keyCode: 31, targetText: "o"),
-                    .init(text: "ם", keyCode: 31, targetText: "o"),
-                    .init(text: "ך", keyCode: 37, targetText: "l"),
-                ],
-                "cool"
-            ),
-        ]
-
-        for (token, keyStrokes, candidate) in cases {
-            let conversion = map.convert(token, sourceHint: .hebrew, keyStrokes: keyStrokes)
-            XCTAssertEqual(conversion?.candidate, candidate, token)
-            XCTAssertFalse(conversion?.physicalEvidence?.recoveredShift == true, token)
+        for (token, keyStrokes) in cases {
+            XCTAssertNil(
+                map.convert(token, sourceHint: .hebrew, keyStrokes: keyStrokes),
+                token
+            )
         }
     }
 

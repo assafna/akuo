@@ -233,7 +233,7 @@ public struct KeyboardLayoutMap: Sendable {
             }
             let shiftedOutput = keyStroke.text.isEmpty
                 || shiftedHebrewOutputs.contains(keyStroke.text)
-            let wasShifted = shiftedOutput && Self.producesUppercaseEnglish(keyStroke)
+            let wasShifted = shiftedOutput && Self.hasExclusiveShiftOrCapsLock(keyStroke)
             recoveredShift = recoveredShift || wasShifted
             candidate.append(wasShifted ? uppercaseASCII(lowercase) : lowercase)
         }
@@ -252,16 +252,11 @@ public struct KeyboardLayoutMap: Sendable {
         return keyStrokes.contains { keyStroke in
             let shiftedOutput = keyStroke.text.isEmpty
                 || shiftedHebrewOutputs.contains(keyStroke.text)
-            return shiftedOutput && !hasShiftOrCapsLock(keyStroke)
+            return shiftedOutput && !hasExclusiveShiftOrCapsLock(keyStroke)
         }
     }
 
-    private static func hasShiftOrCapsLock(_ keyStroke: ObservedKeyStroke) -> Bool {
-        keyStroke.modifiers.contains(.shift)
-            || keyStroke.modifiers.contains(.capsLock)
-    }
-
-    private static func producesUppercaseEnglish(_ keyStroke: ObservedKeyStroke) -> Bool {
+    private static func hasExclusiveShiftOrCapsLock(_ keyStroke: ObservedKeyStroke) -> Bool {
         keyStroke.modifiers.contains(.shift)
             != keyStroke.modifiers.contains(.capsLock)
     }
