@@ -31,6 +31,21 @@ All notable changes to Akuo are documented in this file.
 
 ### Changed
 
+- Make the core Swift version declaration authoritative for both marketing and
+  build identity, compile an immutable archive of the clean source commit, embed
+  its revision in the runtime and plist, require a live read-only origin tag
+  query and non-shallow history, and reject malformed, drifted, reused-release,
+  exact-tag-laundered, or unadvanced new-source identities across merges, local
+  refs, and reflogs. Reject tracked symlinks and gitlinks before archive
+  extraction, compare exact modern tags against divergent as well as ancestral
+  history, parse independent verification identity from the captured Git object,
+  and reject noncanonical declarations without plist fallback or tag-move
+  laundering across declaration-free history. Key pair reuse to the complete
+  Git tree so a two-parent pull-request merge may retain its identical feature
+  content identity while the artifact still records the exact merge SHA; reject
+  the same pair whenever source content differs. Preserve v0.3.0 rebuildability
+  separately by authenticating its live tag and running the historical build
+  script contained in that immutable source.
 - Require a focused text control to expose a writable Accessibility value and
   reject it when Accessibility explicitly reports that it is disabled.
   Read-only, disabled, and otherwise unprovable editing contexts remain

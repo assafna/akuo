@@ -14,7 +14,7 @@ let package = Package(
         .target(name: "AkuoMac", dependencies: ["AkuoCore"]),
         .executableTarget(name: "Akuo", dependencies: ["AkuoCore", "AkuoMac"]),
         .testTarget(name: "AkuoCoreTests", dependencies: ["AkuoCore"]),
-        .testTarget(name: "AkuoMacTests", dependencies: ["AkuoMac"]),
+        .testTarget(name: "AkuoMacTests", dependencies: ["AkuoCore", "AkuoMac"]),
     ],
     swiftLanguageModes: [.v5]
 )

@@ -35,6 +35,14 @@ akuo_write_stub "$AKUO_CONTRACT_PROJECT/Tests/PackagingTests/VerifyContractTests
     'set -euo pipefail' \
     'printf "verify-contract\n" >>"${AKUO_STAGE_LOG:?}"' \
     '[[ "${AKUO_FAIL_STAGE:-}" != verify-contract ]] || exit 40'
+# Production mutation caught: omitting the executable candidate-version contract
+# suite from the unified verifier or running later stages after it fails.
+# shellcheck disable=SC2016
+akuo_write_stub "$AKUO_CONTRACT_PROJECT/Tests/PackagingTests/CandidateVersionContractTests.sh" \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf "candidate-version-contract\n" >>"${AKUO_STAGE_LOG:?}"' \
+    '[[ "${AKUO_FAIL_STAGE:-}" != candidate-version-contract ]] || exit 44'
 # shellcheck disable=SC2016
 akuo_write_stub "$AKUO_CONTRACT_BIN/swift" \
     '#!/usr/bin/env bash' \
@@ -53,6 +61,14 @@ akuo_write_stub "$AKUO_CONTRACT_PROJECT/Scripts/build-app.sh" \
     'set -euo pipefail' \
     'printf "build %s\n" "$*" >>"${AKUO_STAGE_LOG:?}"' \
     '[[ "${AKUO_FAIL_STAGE:-}" != build ]] || exit 43'
+# Production mutation caught: trusting packaging's self-check instead of
+# independently comparing the final app plist and runtime identity after build.
+# shellcheck disable=SC2016
+akuo_write_stub "$AKUO_CONTRACT_PROJECT/Scripts/verify-candidate-version.sh" \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf "candidate-version-verify %s\n" "$*" >>"${AKUO_STAGE_LOG:?}"' \
+    '[[ "${AKUO_FAIL_STAGE:-}" != candidate-version-verify ]] || exit 45'
 
 akuo_assert_run() {
     local failure_stage="$1"
@@ -87,10 +103,12 @@ akuo_assert_run() {
     fi
 }
 
-akuo_assert_run "" 0 $'verify-contract\nlocal-signing\nswift test\nbuild release'
+akuo_assert_run "" 0 $'verify-contract\ncandidate-version-contract\nlocal-signing\nswift test\nbuild release\ncandidate-version-verify dist/Akuo.app'
 akuo_assert_run verify-contract 40 'verify-contract'
-akuo_assert_run local-signing 42 $'verify-contract\nlocal-signing'
-akuo_assert_run swift 41 $'verify-contract\nlocal-signing\nswift test'
-akuo_assert_run build 43 $'verify-contract\nlocal-signing\nswift test\nbuild release'
+akuo_assert_run candidate-version-contract 44 $'verify-contract\ncandidate-version-contract'
+akuo_assert_run local-signing 42 $'verify-contract\ncandidate-version-contract\nlocal-signing'
+akuo_assert_run swift 41 $'verify-contract\ncandidate-version-contract\nlocal-signing\nswift test'
+akuo_assert_run build 43 $'verify-contract\ncandidate-version-contract\nlocal-signing\nswift test\nbuild release'
+akuo_assert_run candidate-version-verify 45 $'verify-contract\ncandidate-version-contract\nlocal-signing\nswift test\nbuild release\ncandidate-version-verify dist/Akuo.app'
 
 printf 'PASS: unified verification order and fail-fast propagation\n'

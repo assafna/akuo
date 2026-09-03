@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import AkuoMac
+import Darwin
 
 @main
 @MainActor
@@ -10,6 +11,15 @@ struct AkuoApp: App {
     @NSApplicationDelegateAdaptor(AkuoApplicationDelegate.self) private var applicationDelegate
 
     init() {
+        if Array(CommandLine.arguments.dropFirst()) == ["--candidate-identity"] {
+            print(AkuoMacVersion.packagingIdentity)
+            exit(EXIT_SUCCESS)
+        }
+        if Array(CommandLine.arguments.dropFirst()) == ["--candidate-source-revision"] {
+            print(AkuoMacVersion.sourceRevision)
+            exit(EXIT_SUCCESS)
+        }
+
         let sharedModel = AppModel.live()
         _model = StateObject(wrappedValue: sharedModel)
 
