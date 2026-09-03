@@ -16,6 +16,11 @@ public final class SetupPresentationCompletion {
 
 @MainActor
 public final class SetupWindowController {
+    private struct Presentation {
+        let generation: Int
+        let completion: SetupPresentationCompletion
+    }
+
     private static let setupContentSize = NSSize(width: 440, height: 460)
     private let refreshState: () -> Void
     private let onboardingCompleted: () -> Bool
@@ -67,11 +72,12 @@ public final class SetupWindowController {
         let window = setupWindow ?? makeWindow()
         setupWindow = window
         guard !window.isVisible else {
-            activate(window)
+            _ = activate(window, generation: presentationGeneration)
             return
         }
-        guard installPresentationContent(in: window) else { return }
-        activate(window)
+        let presentation = makePresentation()
+        guard installPresentationContent(in: window, presentation: presentation) else { return }
+        _ = activate(window, generation: presentation.generation)
     }
 
     private func makeWindow() -> NSWindow {
@@ -89,35 +95,46 @@ public final class SetupWindowController {
         return window
     }
 
-    private func installPresentationContent(in window: NSWindow) -> Bool {
-        let presentation = makePresentationCompletion()
+    private func installPresentationContent(in window: NSWindow, presentation: Presentation) -> Bool {
         let contentViewController = makeContentViewController(self, presentation.completion)
-        guard presentationGeneration == presentation.generation,
-              completedPresentationGeneration != presentation.generation
-        else {
-            return false
-        }
+        guard isCurrent(presentation, for: window) else { return false }
 
         window.contentViewController = contentViewController
+        guard isCurrent(presentation, for: window) else { return false }
         window.setContentSize(Self.setupContentSize)
-        return true
+        return isCurrent(presentation, for: window)
     }
 
-    private func activate(_ window: NSWindow) {
+    private func activate(_ window: NSWindow, generation: Int) -> Bool {
+        guard isCurrent(generation, for: window) else { return false }
         window.center()
+        guard isCurrent(generation, for: window) else { return false }
         window.orderFrontRegardless()
+        guard isCurrent(generation, for: window) else { return false }
         NSApplication.shared.activate(ignoringOtherApps: true)
+        guard isCurrent(generation, for: window) else { return false }
         window.makeKey()
+        return isCurrent(generation, for: window)
     }
 
-    private func makePresentationCompletion() -> (generation: Int, completion: SetupPresentationCompletion) {
+    private func makePresentation() -> Presentation {
         presentationGeneration += 1
         let generation = presentationGeneration
         completedPresentationGeneration = nil
         let completion = SetupPresentationCompletion { [weak self] in
             self?.completePresentation(generation: generation) ?? false
         }
-        return (generation, completion)
+        return Presentation(generation: generation, completion: completion)
+    }
+
+    private func isCurrent(_ presentation: Presentation, for window: NSWindow) -> Bool {
+        isCurrent(presentation.generation, for: window)
+    }
+
+    private func isCurrent(_ generation: Int, for window: NSWindow) -> Bool {
+        setupWindow === window
+            && presentationGeneration == generation
+            && completedPresentationGeneration != generation
     }
 
     private func completePresentation(generation: Int) -> Bool {

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import XCTest
 @testable import AkuoMac
 
@@ -208,6 +209,47 @@ final class SetupWindowControllerTests: XCTestCase {
         XCTAssertEqual(visibleSetupWindows.count, 1)
     }
 
+    func testCompletionDuringContentAttachmentDoesNotShowCompletedWindow() {
+        var completionResult: Bool?
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { _, completion in
+                CompletingOnLoadViewController {
+                    completionResult = completion.complete()
+                }
+            }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+
+        XCTAssertEqual(completionResult, true)
+        XCTAssertFalse(controller.setupWindow?.isVisible == true)
+    }
+
+    func testCompletionDuringHostingOnAppearDoesNotShowCompletedWindow() {
+        var completionResult: Bool?
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { _, completion in
+                NSHostingController(
+                    rootView: CompletingOnAppearView {
+                        completionResult = completion.complete()
+                    }
+                )
+            }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+
+        XCTAssertEqual(completionResult, true)
+        XCTAssertFalse(controller.setupWindow?.isVisible == true)
+    }
+
     func testMenuPresentationEnforcesSetupContentSizeAfterAttachingCollapsingContent() {
         let controller = SetupWindowController(
             refreshState: {},
@@ -263,5 +305,31 @@ private final class CollapsingContentViewController: NSViewController {
 
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 70, height: 3141))
+    }
+}
+
+private final class CompletingOnLoadViewController: NSViewController {
+    private let onLoad: () -> Void
+
+    init(onLoad: @escaping () -> Void) {
+        self.onLoad = onLoad
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func loadView() {
+        onLoad()
+        view = NSView()
+    }
+}
+
+private struct CompletingOnAppearView: View {
+    let onAppear: () -> Void
+
+    var body: some View {
+        Color.clear.onAppear(perform: onAppear)
     }
 }
