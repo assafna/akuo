@@ -75,11 +75,84 @@ final class SetupWindowControllerTests: XCTestCase {
         XCTAssertTrue(firstWindow.isVisible)
     }
 
+    func testLegacyOneArgumentContentFactoryInitializerRemainsAvailable() {
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { _ in NSViewController() }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+
+        XCTAssertTrue(controller.setupWindow?.isVisible == true)
+    }
+
+    func testMenuReopenRetainsWindowButCreatesFreshSetupContent() {
+        var contentControllerFactoryCalls = 0
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { _, _ in
+                contentControllerFactoryCalls += 1
+                return NSViewController()
+            }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+        let firstWindow = try! XCTUnwrap(controller.setupWindow)
+        let firstContentController = try! XCTUnwrap(firstWindow.contentViewController)
+
+        controller.close()
+        controller.presentFromMenu()
+
+        let secondContentController = try! XCTUnwrap(firstWindow.contentViewController)
+        XCTAssertTrue(controller.setupWindow === firstWindow)
+        XCTAssertEqual(contentControllerFactoryCalls, 2)
+        XCTAssertFalse(firstContentController === secondContentController)
+    }
+
+    func testMenuReopenRearmsCompletionAndRejectsStaleOrDuplicateCallbacks() {
+        var completions: [SetupPresentationCompletion] = []
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { _, completion in
+                completions.append(completion)
+                return NSViewController()
+            }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+        let setupWindow = try! XCTUnwrap(controller.setupWindow)
+        let firstCompletion = try! XCTUnwrap(completions.first)
+
+        XCTAssertTrue(firstCompletion.complete())
+        XCTAssertFalse(firstCompletion.complete())
+        XCTAssertFalse(setupWindow.isVisible)
+
+        controller.presentFromMenu()
+        let secondCompletion = try! XCTUnwrap(completions.last)
+        XCTAssertEqual(completions.count, 2)
+        XCTAssertTrue(setupWindow.isVisible)
+
+        controller.presentFromMenu()
+        XCTAssertEqual(completions.count, 2)
+
+        XCTAssertFalse(firstCompletion.complete())
+        XCTAssertTrue(setupWindow.isVisible)
+        XCTAssertTrue(secondCompletion.complete())
+        XCTAssertFalse(secondCompletion.complete())
+        XCTAssertFalse(setupWindow.isVisible)
+    }
+
     func testMenuPresentationEnforcesSetupContentSizeAfterAttachingCollapsingContent() {
         let controller = SetupWindowController(
             refreshState: {},
             onboardingCompleted: { false },
-            makeContentViewController: { _ in CollapsingContentViewController() }
+            makeContentViewController: { _, _ in CollapsingContentViewController() }
         )
         defer { controller.close() }
 
@@ -103,7 +176,7 @@ final class SetupWindowControllerTests: XCTestCase {
         SetupWindowController(
             refreshState: {},
             onboardingCompleted: onboardingCompleted,
-            makeContentViewController: { _ in NSViewController() }
+            makeContentViewController: { _, _ in NSViewController() }
         )
     }
 

@@ -3,13 +3,11 @@ import AkuoMac
 
 struct SetupView: View {
     @ObservedObject var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var hasHandledCompletion = false
-    private let onCompletion: () -> Void
+    private let completion: SetupPresentationCompletion
 
-    init(model: AppModel, onCompletion: @escaping () -> Void = {}) {
+    init(model: AppModel, completion: SetupPresentationCompletion) {
         self.model = model
-        self.onCompletion = onCompletion
+        self.completion = completion
     }
 
     var body: some View {
@@ -87,10 +85,7 @@ struct SetupView: View {
     }
 
     private func handleCompletion() {
-        guard !hasHandledCompletion else { return }
-        hasHandledCompletion = true
-        onCompletion()
-        dismiss()
+        completion.complete()
     }
 }
 
