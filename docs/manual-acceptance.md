@@ -15,6 +15,8 @@ Use this checklist only with the exact release candidate you intend to accept. B
 | Git commit | |
 | Installed app path | `/Applications/Akuo.app` |
 | Executable SHA-256 | |
+| Signing identity and team identifier | |
+| Designated requirement | |
 | English input source and identifier | |
 | Hebrew input source and identifier | |
 | macOS spelling languages (English: `en` or `en_US`; Hebrew: `he` or `he_IL`) | |
@@ -53,11 +55,11 @@ Record the blocker here before stopping:
 
 ## 1. Build, install, and metadata
 
-- [ ] **Release bundle built.** Run `swift test` and `Scripts/build-app.sh release`; record the passing test count, bundle path, and printed executable SHA-256. **Result:**
+- [ ] **Release bundle built.** Run `swift test` and `AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' Scripts/build-app.sh release`; record the passing test count, bundle path, executable SHA-256, signing identity, and designated requirement. **Result:**
   **Evidence:**
-- [ ] **Bundle identity verified.** Confirm `CFBundleIdentifier = app.akuo.Akuo`, version `0.3.0`, build `3`, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. **Result:**
+- [ ] **Bundle identity verified.** Run `Scripts/verify-local-signing.sh dist/Akuo.app` for signing policy. Use `plutil -p dist/Akuo.app/Contents/Info.plist` to confirm `CFBundleIdentifier = app.akuo.Akuo`, version `0.3.0`, build `3`, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. Confirm the verifier reports a non-ad-hoc, Apple-anchored signature, an Apple team identifier, and Akuo's repository-controlled designated requirement with that exact identifier and team. **Result:**
   **Evidence:**
-- [ ] **Installed before permission.** Move the release candidate to `/Applications/Akuo.app`, confirm its executable hash matches the built candidate, and launch only that copy. **Result:**
+- [ ] **Stable candidate installed.** Quit Akuo and run `AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' Scripts/install-local.sh release`. Confirm the installed executable hash matches the built candidate and launch only `/Applications/Akuo.app`. **Result:**
   **Evidence:**
 - [ ] **Menu-bar-only behavior.** Confirm Akuo appears in the menu bar and does not appear in the Dock. **Result:**
   **Evidence:**
@@ -67,6 +69,8 @@ Record the blocker here before stopping:
 - [ ] **Permission begins explicit.** With Accessibility disabled for Akuo, launch it and confirm it remains inactive and explains that permission is needed without prompting until **Request Accessibility Access** is pressed. **Result:**
   **Evidence:**
 - [ ] **Permission grant.** Grant Accessibility to the exact `/Applications/Akuo.app` entry, return to Akuo, recheck setup, and confirm permission becomes ready. **Result:**
+  **Evidence:**
+- [ ] **Permission survives a signed update.** After granting permission to a certificate-signed Akuo, quit it, install a newer build with the same signing identity, and relaunch `/Applications/Akuo.app`. Confirm Akuo reports Accessibility ready without removing, adding, or toggling its System Settings entry. **Result:**
   **Evidence:**
 - [ ] **English source detection.** With standard ABC or U.S. installed, confirm Akuo reports English input ready and identifies the current source as English when selected. **Result:**
   **Evidence:**

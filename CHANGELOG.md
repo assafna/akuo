@@ -6,6 +6,10 @@ All notable changes to Akuo are documented in this file.
 
 ### Added
 
+- Add a certificate-aware local installer that rejects ad-hoc or code-hash-based
+  identities and verifies update compatibility before replacing the installed
+  application, allowing Accessibility permission to survive consistently signed
+  local updates after a one-time migration.
 - Let the user force a safe layout conversion of the unfinished word without
   first pressing Space or Return, or of an eligible word completed by Space
   for up to five seconds. Double-tapping the same Shift key is the default

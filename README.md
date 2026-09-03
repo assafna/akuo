@@ -26,18 +26,27 @@ swift test
 Scripts/build-app.sh release
 ```
 
-The packaging script accepts exactly `debug` or `release`, creates `dist/Akuo.app`, validates its property list, ad-hoc signs and verifies the bundle, and prints the SHA-256 digest of its final executable.
+The packaging script accepts exactly `debug` or `release`, creates `dist/Akuo.app`, validates its property list, signs and verifies the bundle, and prints the SHA-256 digest and designated requirement of its final executable. With no additional configuration it uses an ad-hoc signature suitable for CI and source verification, but not for an installed copy that should retain Accessibility permission across updates.
 
-## Install before granting permission
+## Stable local installation and Accessibility permission
 
-For a stable local code identity, build first and then move `dist/Akuo.app` to `/Applications/Akuo.app` **before** granting Accessibility permission. Rebuilding or moving a previously authorized copy can cause macOS to treat it as a different application.
+macOS associates privacy permissions with an application's designated code requirement. An ad-hoc signature uses a requirement tied to the executable's code hash, so it changes on every build even though Akuo's path and bundle identifier remain unchanged. Local feature builds must instead use the same Apple Development signing identity each time.
 
-1. Build the release bundle with `Scripts/build-app.sh release`.
-2. Move `dist/Akuo.app` to `/Applications/Akuo.app`.
-3. Open the installed copy. Akuo appears in the menu bar and presents setup on first launch.
-4. In **System Settings → Privacy & Security → Accessibility**, enable the exact `/Applications/Akuo.app` copy when prompted.
+1. In **Xcode → Settings → Accounts**, sign in with your Apple developer account. Open **Manage Certificates** for the selected team and create an **Apple Development** certificate if one is not already available.
+2. List the available identities with `security find-identity -v -p codesigning` and copy the complete quoted Apple Development identity.
+3. Quit Akuo, then build and install with that identity:
+
+   ```bash
+   AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' \
+     Scripts/install-local.sh release
+   ```
+
+   The build derives the certificate's Apple team ID and embeds Akuo's controlled designated requirement: Apple-issued signer, exact Akuo identifier, and exact team. The installer rejects any other policy and refuses an update unless the staged and installed signed applications satisfy each other's requirements.
+4. Open `/Applications/Akuo.app`. On the first migration from the old ad-hoc build, remove the obsolete Akuo entry from **System Settings → Privacy & Security → Accessibility**, add `/Applications/Akuo.app`, and enable it one final time. Later builds installed with the same signing team and compatible designated requirement retain that permission.
 5. In **System Settings → Keyboard → Text Input → Edit**, add **ABC** (preferred) or **U.S.**, and **Hebrew**. Do not choose Hebrew – QWERTY for version 1.
 6. Return to Akuo, recheck setup, complete onboarding, and turn Akuo on.
+
+Do not install the default ad-hoc `dist/Akuo.app` manually. Changing signing teams, changing the bundle identifier, launching a build from another path, or bypassing these scripts can create a different privacy identity and require a new grant. Public distribution additionally requires a Developer ID Application certificate, hardened runtime, and notarization; this repository does not yet publish that binary workflow.
 
 Akuo requests Accessibility only after you press the setup button. It does not need contacts, files, microphone, camera, or location access.
 
@@ -85,7 +94,7 @@ Some applications block global observation or synthetic keyboard events. Akuo fa
 
 ## Release acceptance
 
-After building and installing the exact copy you intend to use, follow [the manual acceptance checklist](docs/manual-acceptance.md). Record evidence for every item and stop immediately on any input loss, secure-input observation, recursive event, or incorrect Command-Z behavior.
+After building and installing the exact certificate-signed copy you intend to use, follow [the manual acceptance checklist](docs/manual-acceptance.md). Record evidence for every item and stop immediately on any input loss, secure-input observation, recursive event, or incorrect Command-Z behavior.
 
 ## License
 
