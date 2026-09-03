@@ -137,6 +137,17 @@ public final class CorrectionCoordinator {
             undoController.invalidate()
             return .notHandled
         }
+        guard previousTextValidator.hasExactTextImmediatelyBeforeCaret(
+            record.corrected + record.boundary,
+            context: context
+        ) else {
+            undoController.invalidate()
+            return .notHandled
+        }
+        guard isContextStillEligible() else {
+            undoController.invalidate()
+            return .notHandled
+        }
         undoController.invalidate()
         guard restoreInputSource(for: record) else {
             return .handledWithInputSourceSelectionFailure(
@@ -179,6 +190,12 @@ public final class CorrectionCoordinator {
                   isContextStillEligible() else {
                 return .notHandled
             }
+            guard previousTextValidator.hasExactTextImmediatelyBeforeCaret(
+                unfinishedWord.token + unfinishedWord.boundary,
+                context: context
+            ), isContextStillEligible() else {
+                return .notHandled
+            }
             return applyForcedCorrection(
                 unfinishedWord,
                 boundaryKeyCode: nil,
@@ -215,7 +232,7 @@ public final class CorrectionCoordinator {
             pendingForcedCorrection.completedWord.token
                 + pendingForcedCorrection.completedWord.boundary,
             context: context
-        ) else {
+        ), isContextStillEligible() else {
             return .notHandled
         }
 
@@ -245,6 +262,13 @@ public final class CorrectionCoordinator {
         pendingForcedCorrection = nil
         guard let currentInputLanguage,
               isContextStillEligible() else {
+            undoController.invalidate()
+            return .notHandled
+        }
+        guard previousTextValidator.hasExactTextImmediatelyBeforeCaret(
+            record.corrected + record.boundary,
+            context: context
+        ), isContextStillEligible() else {
             undoController.invalidate()
             return .notHandled
         }
