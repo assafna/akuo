@@ -27,6 +27,9 @@ public final class SetupWindowController {
     private let makeContentViewController: (SetupWindowController, SetupPresentationCompletion) -> NSViewController
     private var presentationGeneration = 0
     private var completedPresentationGeneration: Int?
+    private var isInstallingPresentationContent = false
+    private var hasQueuedPresentation = false
+    private var isDrainingQueuedPresentation = false
     public private(set) var setupWindow: NSWindow?
 
     public init(
@@ -56,16 +59,24 @@ public final class SetupWindowController {
     public func presentFirstLaunchIfNeeded() {
         refreshState()
         guard !onboardingCompleted() else { return }
-        presentWindow()
+        requestPresentation()
     }
 
     public func presentFromMenu() {
         refreshState()
-        presentWindow()
+        requestPresentation()
     }
 
     public func close() {
         setupWindow?.close()
+    }
+
+    private func requestPresentation() {
+        guard !isInstallingPresentationContent else {
+            hasQueuedPresentation = true
+            return
+        }
+        presentWindow()
     }
 
     private func presentWindow() {
@@ -96,6 +107,12 @@ public final class SetupWindowController {
     }
 
     private func installPresentationContent(in window: NSWindow, presentation: Presentation) -> Bool {
+        isInstallingPresentationContent = true
+        defer {
+            isInstallingPresentationContent = false
+            drainQueuedPresentationIfNeeded()
+        }
+
         let contentViewController = makeContentViewController(self, presentation.completion)
         guard isCurrent(presentation, for: window) else { return false }
 
@@ -106,6 +123,22 @@ public final class SetupWindowController {
         guard isCurrent(presentation, for: window) else { return false }
         window.setContentSize(Self.setupContentSize)
         return isCurrent(presentation, for: window)
+    }
+
+    private func drainQueuedPresentationIfNeeded() {
+        guard !isInstallingPresentationContent,
+              !isDrainingQueuedPresentation,
+              hasQueuedPresentation
+        else {
+            return
+        }
+
+        isDrainingQueuedPresentation = true
+        defer { isDrainingQueuedPresentation = false }
+        while hasQueuedPresentation, !isInstallingPresentationContent {
+            hasQueuedPresentation = false
+            presentWindow()
+        }
     }
 
     private func activate(_ window: NSWindow, generation: Int) -> Bool {

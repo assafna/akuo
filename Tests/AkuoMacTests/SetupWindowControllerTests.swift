@@ -293,6 +293,38 @@ final class SetupWindowControllerTests: XCTestCase {
         XCTAssertTrue(controller.setupWindow?.isVisible == true)
     }
 
+    func testNestedPresentationDuringContentControllerAssignmentRetainsNestedContent() {
+        var contentFactoryCalls = 0
+        var createdNestedContentController: NSViewController?
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { controller, completion in
+                contentFactoryCalls += 1
+                if contentFactoryCalls == 1 {
+                    return CompletingOnMoveToWindowViewController {
+                        XCTAssertTrue(completion.complete())
+                        controller.presentFromMenu()
+                    }
+                }
+
+                let contentController = NSViewController()
+                createdNestedContentController = contentController
+                return contentController
+            }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+
+        let retainedWindow = try! XCTUnwrap(controller.setupWindow)
+        let nestedContentController = try! XCTUnwrap(createdNestedContentController)
+        XCTAssertEqual(contentFactoryCalls, 2)
+        XCTAssertTrue(retainedWindow.isVisible)
+        XCTAssertTrue(retainedWindow.contentViewController === nestedContentController)
+        XCTAssertTrue(retainedWindow.contentView === nestedContentController.view)
+    }
+
     func testCompletionDuringHostingOnAppearDoesNotShowCompletedWindow() {
         var completionResult: Bool?
         let controller = SetupWindowController(
@@ -388,6 +420,44 @@ private final class CompletingOnLoadViewController: NSViewController {
     override func loadView() {
         onLoad()
         view = NSView()
+    }
+}
+
+private final class CompletingOnMoveToWindowViewController: NSViewController {
+    private let onMoveToWindow: () -> Void
+
+    init(onMoveToWindow: @escaping () -> Void) {
+        self.onMoveToWindow = onMoveToWindow
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func loadView() {
+        view = CompletingOnMoveToWindowView(onMoveToWindow: onMoveToWindow)
+    }
+}
+
+private final class CompletingOnMoveToWindowView: NSView {
+    private let onMoveToWindow: () -> Void
+    private var didMoveToWindow = false
+
+    init(onMoveToWindow: @escaping () -> Void) {
+        self.onMoveToWindow = onMoveToWindow
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil, !didMoveToWindow else { return }
+        didMoveToWindow = true
+        onMoveToWindow()
     }
 }
 
