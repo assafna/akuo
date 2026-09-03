@@ -22,12 +22,15 @@ AKUO_VERSION_SOURCE="$AKUO_PROJECT_ROOT/Sources/AkuoCore/AkuoCoreVersion.swift"
 AKUO_INFO_PLIST="$AKUO_PROJECT_ROOT/Configuration/Akuo-Info.plist"
 
 cd "$AKUO_PROJECT_ROOT"
+akuo_capture_clean_source_revision "$AKUO_PROJECT_ROOT"
+AKUO_PACKAGED_SOURCE_REVISION="$AKUO_SOURCE_REVISION"
 akuo_read_candidate_identity "$AKUO_VERSION_SOURCE"
 plutil -lint "$AKUO_INFO_PLIST"
 akuo_assert_versionless_template "$AKUO_INFO_PLIST"
 akuo_validate_candidate_history "$AKUO_PROJECT_ROOT"
 swift build -c "$AKUO_BUILD_CONFIGURATION" --product Akuo
 AKUO_BIN_DIR="$(swift build -c "$AKUO_BUILD_CONFIGURATION" --show-bin-path)"
+akuo_assert_source_unchanged "$AKUO_PROJECT_ROOT" "$AKUO_PACKAGED_SOURCE_REVISION"
 
 # This is deliberately the only path packaging removes. Other files under dist/
 # may be release evidence or artifacts owned by another build.
@@ -43,10 +46,13 @@ plutil -insert CFBundleShortVersionString -string "$AKUO_CANDIDATE_VERSION" \
     "$AKUO_APP_PATH/Contents/Info.plist"
 plutil -insert CFBundleVersion -string "$AKUO_CANDIDATE_BUILD" \
     "$AKUO_APP_PATH/Contents/Info.plist"
+plutil -insert AkuoSourceRevision -string "$AKUO_PACKAGED_SOURCE_REVISION" \
+    "$AKUO_APP_PATH/Contents/Info.plist"
 plutil -lint "$AKUO_APP_PATH/Contents/Info.plist"
 cp "$AKUO_BIN_DIR/Akuo" "$AKUO_EXECUTABLE_PATH"
 chmod 755 "$AKUO_EXECUTABLE_PATH"
 akuo_verify_candidate_plist "$AKUO_APP_PATH/Contents/Info.plist"
+akuo_verify_candidate_source_revision "$AKUO_APP_PATH/Contents/Info.plist"
 akuo_verify_runtime_identity "$AKUO_EXECUTABLE_PATH"
 
 if [[ "$AKUO_CODE_SIGN_IDENTITY" == "-" ]]; then
@@ -66,6 +72,7 @@ else
         -r "=$AKUO_DESIGNATED_REQUIREMENT" "$AKUO_APP_PATH"
 fi
 codesign --verify --deep --strict "$AKUO_APP_PATH"
+akuo_assert_source_unchanged "$AKUO_PROJECT_ROOT" "$AKUO_PACKAGED_SOURCE_REVISION"
 
 AKUO_EXECUTABLE_SHA256="$(shasum -a 256 "$AKUO_EXECUTABLE_PATH" | awk '{print $1}')"
 printf 'Akuo executable SHA-256: %s\n' "$AKUO_EXECUTABLE_SHA256"

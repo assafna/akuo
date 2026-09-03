@@ -162,22 +162,120 @@ akuo_build_is_greater() {
     [[ "$candidate" > "$previous" ]]
 }
 
+akuo_capture_clean_source_revision() {
+    local project_root="$1"
+    local worktree_status
+
+    if ! AKUO_SOURCE_REVISION="$(
+        git -C "$project_root" rev-parse --verify HEAD 2>/dev/null
+    )"; then
+        echo 'candidate packaging requires a Git worktree with a committed HEAD' >&2
+        return 1
+    fi
+    if ! worktree_status="$(
+        git -C "$project_root" status --porcelain=v1 --untracked-files=all
+    )"; then
+        echo 'cannot inspect candidate source worktree state' >&2
+        return 1
+    fi
+    if [[ -n "$worktree_status" ]]; then
+        echo 'candidate source worktree must be clean' >&2
+        return 1
+    fi
+}
+
+akuo_assert_source_unchanged() {
+    local project_root="$1"
+    local expected_revision="$2"
+    local current_revision
+    local worktree_status
+
+    if ! current_revision="$(
+        git -C "$project_root" rev-parse --verify HEAD 2>/dev/null
+    )" || ! worktree_status="$(
+        git -C "$project_root" status --porcelain=v1 --untracked-files=all
+    )" || [[ "$current_revision" != "$expected_revision" || -n "$worktree_status" ]]; then
+        echo 'candidate source changed during packaging' >&2
+        return 1
+    fi
+}
+
+akuo_require_complete_release_tags() {
+    local project_root="$1"
+    local evidence_path="${AKUO_RELEASE_TAGS_EVIDENCE:-}"
+    local local_tags
+    local local_inventory=""
+    local evidence_inventory
+    local tag
+    local tag_object
+
+    if [[ -z "$evidence_path" || ! -f "$evidence_path" || ! -r "$evidence_path" || \
+        ! -s "$evidence_path" ]]; then
+        echo 'cannot prove complete released-tag provenance: set AKUO_RELEASE_TAGS_EVIDENCE' >&2
+        return 1
+    fi
+    if ! evidence_inventory="$(awk '
+        $0 !~ /^[0-9a-f]{40}[[:space:]]+refs\/tags\/v[^[:space:]]+$/ { invalid = 1 }
+        { print $1 "\t" $2 }
+        END { if (NR == 0 || invalid) exit 1 }
+    ' "$evidence_path")"; then
+        echo 'cannot prove complete released-tag provenance: malformed evidence' >&2
+        return 1
+    fi
+    if ! local_tags="$(git -C "$project_root" tag --list 'v*')"; then
+        echo 'cannot enumerate local release tags' >&2
+        return 1
+    fi
+    while IFS= read -r tag; do
+        [[ -n "$tag" ]] || continue
+        if ! tag_object="$(
+            git -C "$project_root" rev-parse --verify "refs/tags/$tag" 2>/dev/null
+        )"; then
+            echo 'cannot resolve a local release tag' >&2
+            return 1
+        fi
+        local_inventory+="${tag_object}"$'\t'"refs/tags/${tag}"$'\n'
+    done <<<"$local_tags"
+
+    local_inventory="$(printf '%s' "$local_inventory" | LC_ALL=C sort)"
+    evidence_inventory="$(printf '%s\n' "$evidence_inventory" | LC_ALL=C sort)"
+    if [[ "$local_inventory" != "$evidence_inventory" ]]; then
+        echo 'local release tags do not match origin evidence' >&2
+        return 1
+    fi
+    AKUO_RELEASE_TAGS="$local_tags"
+}
+
 akuo_validate_candidate_history() {
     local project_root="$1"
+    local shallow_state
     local head_commit
     local tag
     local tag_commit
     local exact_release=false
-    local parent_commit
+    local revisions
+    local revision
 
     if ! head_commit="$(git -C "$project_root" rev-parse --verify HEAD 2>/dev/null)"; then
         echo 'candidate packaging requires a Git worktree with a committed HEAD' >&2
         return 1
     fi
+    if ! shallow_state="$(
+        git -C "$project_root" rev-parse --is-shallow-repository 2>/dev/null
+    )" || [[ "$shallow_state" != false ]]; then
+        echo 'candidate packaging requires complete, non-shallow history' >&2
+        return 1
+    fi
+    akuo_require_complete_release_tags "$project_root" || return 1
 
     while IFS= read -r tag; do
         [[ -n "$tag" ]] || continue
-        tag_commit="$(git -C "$project_root" rev-parse "$tag^{commit}")"
+        if ! tag_commit="$(
+            git -C "$project_root" rev-parse --verify "$tag^{commit}" 2>/dev/null
+        )"; then
+            printf 'cannot inspect release tag %s\n' "$tag" >&2
+            return 1
+        fi
         akuo_read_revision_identity "$project_root" "$tag^{commit}" || return 1
         if [[ "$AKUO_REVISION_VERSION" == "$AKUO_CANDIDATE_VERSION" && \
             "$AKUO_REVISION_BUILD" == "$AKUO_CANDIDATE_BUILD" ]]; then
@@ -189,20 +287,24 @@ akuo_validate_candidate_history() {
                 return 1
             fi
         fi
-    done < <(git -C "$project_root" tag --list 'v*')
+    done <<<"$AKUO_RELEASE_TAGS"
 
     if [[ "$exact_release" == true ]]; then
         return 0
     fi
-    if ! parent_commit="$(git -C "$project_root" rev-parse --verify HEAD^ 2>/dev/null)"; then
-        return 0
-    fi
-    akuo_read_revision_identity "$project_root" "$parent_commit" || return 1
-    if ! akuo_build_is_greater "$AKUO_CANDIDATE_BUILD" "$AKUO_REVISION_BUILD"; then
-        printf '%s\n' \
-            'new source revision must advance the authoritative build identity' >&2
+    if ! revisions="$(git -C "$project_root" rev-list --all --reflog)"; then
+        echo 'cannot enumerate candidate source history' >&2
         return 1
     fi
+    while IFS= read -r revision; do
+        [[ -n "$revision" && "$revision" != "$head_commit" ]] || continue
+        akuo_read_revision_identity "$project_root" "$revision" || return 1
+        if ! akuo_build_is_greater "$AKUO_CANDIDATE_BUILD" "$AKUO_REVISION_BUILD"; then
+            printf 'build identity %s is already assigned to another source revision\n' \
+                "$AKUO_CANDIDATE_BUILD" >&2
+            return 1
+        fi
+    done <<<"$revisions"
 }
 
 akuo_assert_versionless_template() {
@@ -229,6 +331,18 @@ akuo_verify_candidate_plist() {
     )" || [[ "$plist_version" != "$AKUO_CANDIDATE_VERSION" || \
         "$plist_build" != "$AKUO_CANDIDATE_BUILD" ]]; then
         echo 'candidate plist identity does not match authoritative declaration' >&2
+        return 1
+    fi
+}
+
+akuo_verify_candidate_source_revision() {
+    local plist_path="$1"
+    local source_revision
+
+    if ! source_revision="$(
+        plutil -extract AkuoSourceRevision raw -o - "$plist_path" 2>/dev/null
+    )" || [[ "$source_revision" != "$AKUO_SOURCE_REVISION" ]]; then
+        echo 'candidate source revision does not match committed HEAD' >&2
         return 1
     fi
 }
