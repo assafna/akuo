@@ -80,6 +80,76 @@ final class InputSourceControllerTests: XCTestCase {
         XCTAssertEqual(backend.selectedIdentifiers, ["com.apple.keylayout.Hebrew"])
     }
 
+    func testExactUSSelectionDoesNotPreferInstalledABC() {
+        let backend = FakeInputSourceBackend(sources: Self.allSources)
+        let controller = InputSourceController(backend: backend)
+
+        XCTAssertTrue(controller.selectExact(identifier: "com.apple.keylayout.US"))
+        XCTAssertEqual(backend.selectedIdentifiers, ["com.apple.keylayout.US"])
+    }
+
+    func testExactABCSelectionUsesABC() {
+        let backend = FakeInputSourceBackend(sources: Self.allSources)
+        let controller = InputSourceController(backend: backend)
+
+        XCTAssertTrue(controller.selectExact(identifier: "com.apple.keylayout.ABC"))
+        XCTAssertEqual(backend.selectedIdentifiers, ["com.apple.keylayout.ABC"])
+    }
+
+    func testExactStandardHebrewSelectionUsesStandardHebrew() {
+        let backend = FakeInputSourceBackend(sources: Self.allSources)
+        let controller = InputSourceController(backend: backend)
+
+        XCTAssertTrue(controller.selectExact(identifier: "com.apple.keylayout.Hebrew"))
+        XCTAssertEqual(backend.selectedIdentifiers, ["com.apple.keylayout.Hebrew"])
+    }
+
+    func testExactSelectionRejectsUnsupportedIdentifierWithoutCallingBackend() {
+        let backend = FakeInputSourceBackend(sources: Self.allSources)
+        let controller = InputSourceController(backend: backend)
+
+        XCTAssertFalse(controller.selectExact(identifier: "com.apple.keylayout.Hebrew-QWERTY"))
+        XCTAssertTrue(backend.selectedIdentifiers.isEmpty)
+    }
+
+    func testExactSelectionRejectsUnavailableApprovedIdentifierWithoutCallingBackend() {
+        let backend = FakeInputSourceBackend(
+            sources: [
+                .init(identifier: "com.apple.keylayout.ABC"),
+                .init(identifier: "com.apple.keylayout.Hebrew"),
+            ]
+        )
+        let controller = InputSourceController(backend: backend)
+
+        XCTAssertFalse(controller.selectExact(identifier: "com.apple.keylayout.US"))
+        XCTAssertTrue(backend.selectedIdentifiers.isEmpty)
+    }
+
+    func testFailedExactSelectionDoesNotArmAkuoSelectionOrigin() {
+        let backend = FakeInputSourceBackend(
+            sources: Self.allSources,
+            currentIdentifier: "com.apple.keylayout.Hebrew",
+            selectionResult: false
+        )
+        let controller = InputSourceController(backend: backend)
+
+        XCTAssertFalse(controller.selectExact(identifier: "com.apple.keylayout.US"))
+        XCTAssertEqual(backend.selectedIdentifiers, ["com.apple.keylayout.US"])
+        XCTAssertFalse(controller.consumeAkuoSelectionNotification())
+    }
+
+    func testSuccessfulExactSelectionArmsMatchingAkuoSelectionOrigin() {
+        let backend = FakeInputSourceBackend(
+            sources: Self.allSources,
+            currentIdentifier: "com.apple.keylayout.Hebrew"
+        )
+        let controller = InputSourceController(backend: backend)
+
+        XCTAssertTrue(controller.selectExact(identifier: "com.apple.keylayout.US"))
+        XCTAssertTrue(controller.consumeAkuoSelectionNotification())
+        XCTAssertFalse(controller.consumeAkuoSelectionNotification())
+    }
+
     func testCurrentLanguageMapsOnlyApprovedSources() {
         let abc = InputSourceController(
             backend: FakeInputSourceBackend(

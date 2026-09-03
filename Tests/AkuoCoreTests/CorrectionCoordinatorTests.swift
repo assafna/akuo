@@ -49,7 +49,46 @@ final class CorrectionCoordinatorTests: XCTestCase {
                 .init(deleteCount: 5, replacement: "akuo", boundary: " "),
             ]
         )
-        XCTAssertEqual(selector.selected, [.hebrew, .english])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
+    }
+
+    func testLegacyBoundaryCallStillAppliesCorrectionWithoutExactSourceIdentifier() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 4, replacement: "שלום", boundary: " "),
+        ])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(counter.incrementCount, 1)
+
+        XCTAssertEqual(
+            coordinator.handleImmediateUndo(
+                context: context,
+                isContextStillEligible: { true }
+            ),
+            .handledWithInputSourceSelectionFailure(expectedLanguage: .english)
+        )
+        XCTAssertTrue(selector.exactIdentifiers.isEmpty)
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 4, replacement: "שלום", boundary: " "),
+        ])
     }
 
     func testReturnBoundaryKeyCodeIsPreservedForCorrectionAndImmediateUndo() {
@@ -140,7 +179,8 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(deleteCount: 4, replacement: "and", boundary: " "),
             .init(deleteCount: 4, replacement: "שמג", boundary: " "),
         ])
-        XCTAssertEqual(selector.selected, [.english, .hebrew])
+        XCTAssertEqual(selector.selected, [.english])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.Hebrew"])
     }
 
     func testPendingForcedCorrectionRequiresExactOriginalSuffixAtCaret() {
@@ -310,6 +350,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(token: "go", boundary: ""),
             context: context,
             priorInputLanguage: .english,
+            currentInputSourceIdentifier: "com.apple.keylayout.ABC",
             isContextStillEligible: { true }
         ), .handled)
         XCTAssertEqual(replacer.calls, [
@@ -323,7 +364,191 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(deleteCount: 2, replacement: "go", boundary: ""),
         ])
         XCTAssertEqual(replacer.boundaryKeyCodes, [nil, nil])
-        XCTAssertEqual(selector.selected, [.hebrew, .english])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
+    }
+
+    func testLegacyForcedCorrectionStillAppliesWithoutExactSourceIdentifier() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            .init(token: "go", boundary: ""),
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 2, replacement: "עם", boundary: ""),
+        ])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(counter.incrementCount, 1)
+    }
+
+    func testImmediateUndoRestoresExactUSSourceBeforeDeletingText() {
+        let events = RuntimeEvents()
+        let replacer = RecordingReplacer()
+        replacer.events = events
+        let selector = RecordingSelector(events: events)
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.US",
+            isContextStillEligible: { true }
+        ), .handled)
+        events.values.removeAll()
+
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .handled)
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.US"])
+        XCTAssertEqual(events.values, [.selectExact, .replace])
+    }
+
+    func testImmediateUndoExactSourceFailureDoesNotMutateText() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector(exactResults: [false])
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.US",
+            isContextStillEligible: { true }
+        ), .handled)
+
+        XCTAssertEqual(
+            coordinator.handleImmediateUndo(context: context),
+            .handledWithInputSourceSelectionFailure(expectedLanguage: .english)
+        )
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.US"])
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 4, replacement: "שלום", boundary: " "),
+        ])
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .notHandled)
+    }
+
+    @available(*, deprecated, message: "Exercises the deprecated compatibility initializer.")
+    func testImmediateUndoWithLegacyRecordReportsSelectionFailureWithoutMutatingText() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let undoController = UndoController()
+        undoController.register(UndoRecord(
+            original: "akuo",
+            corrected: "שלום",
+            boundary: " ",
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            createdAt: createdAt
+        ))
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt),
+            undoController: undoController
+        )
+
+        XCTAssertEqual(
+            coordinator.handleImmediateUndo(context: context),
+            .handledWithInputSourceSelectionFailure(expectedLanguage: .english)
+        )
+        XCTAssertTrue(selector.exactIdentifiers.isEmpty)
+        XCTAssertTrue(replacer.calls.isEmpty)
+    }
+
+    func testForcedToggleWithLegacySelectorReportsUnsupportedExactRestorationBeforeMutation() {
+        let replacer = RecordingReplacer()
+        let undoController = UndoController()
+        undoController.register(UndoRecord(
+            original: "akuo",
+            corrected: "שלום",
+            boundary: " ",
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            createdAt: createdAt
+        ))
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: LegacyLanguageOnlySelector(),
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt),
+            undoController: undoController
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .handledWithInputSourceSelectionFailure(expectedLanguage: .english))
+        XCTAssertTrue(replacer.calls.isEmpty)
+    }
+
+    func testLegacyForcedToggleStillAppliesWithoutCurrentExactSourceIdentifier() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            isContextStillEligible: { true }
+        ), .handled)
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 4, replacement: "שלום", boundary: " "),
+            .init(deleteCount: 5, replacement: "akuo", boundary: " "),
+        ])
+
+        XCTAssertEqual(
+            coordinator.handleImmediateUndo(context: context),
+            .handledWithInputSourceSelectionFailure(expectedLanguage: .hebrew)
+        )
+        XCTAssertEqual(replacer.calls.count, 2)
     }
 
     func testRepeatedForceGesturesToggleBoundarylessConversionWithoutRecounting() {
@@ -342,22 +567,26 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(token: "go", boundary: ""),
             context: context,
             priorInputLanguage: .english,
+            currentInputSourceIdentifier: "com.apple.keylayout.ABC",
             isContextStillEligible: { true }
         ), .handled)
         XCTAssertEqual(coordinator.handleForcedCorrection(
             context: context,
             priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
             isContextStillEligible: { true }
         ), .handled)
         XCTAssertEqual(coordinator.handleForcedCorrection(
             context: context,
             priorInputLanguage: .english,
+            currentInputSourceIdentifier: "com.apple.keylayout.ABC",
             isContextStillEligible: { true }
         ), .handled)
         XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .handled)
         XCTAssertEqual(coordinator.handleForcedCorrection(
             context: context,
             priorInputLanguage: .english,
+            currentInputSourceIdentifier: "com.apple.keylayout.ABC",
             isContextStillEligible: { true }
         ), .notHandled)
 
@@ -367,8 +596,81 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(deleteCount: 2, replacement: "עם", boundary: ""),
             .init(deleteCount: 2, replacement: "go", boundary: ""),
         ])
-        XCTAssertEqual(selector.selected, [.hebrew, .english, .hebrew, .english])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(selector.exactIdentifiers, [
+            "com.apple.keylayout.ABC",
+            "com.apple.keylayout.Hebrew",
+            "com.apple.keylayout.ABC",
+        ])
         XCTAssertEqual(counter.incrementCount, 1)
+    }
+
+    func testRepeatedForceToggleRecordsExactSourceBeforeEachToggle() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+            replacer: replacer,
+            selector: selector,
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            .init(token: "go", boundary: ""),
+            context: context,
+            priorInputLanguage: .english,
+            currentInputSourceIdentifier: "com.apple.keylayout.US",
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .handled)
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .english,
+            currentInputSourceIdentifier: "com.apple.keylayout.US",
+            isContextStillEligible: { true }
+        ), .handled)
+
+        XCTAssertEqual(selector.exactIdentifiers, [
+            "com.apple.keylayout.US",
+            "com.apple.keylayout.Hebrew",
+        ])
+    }
+
+    func testReverseToggleExactSourceFailureDoesNotMutateText() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector(exactResults: [false])
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: RecordingCounter(),
+            clock: FixedClock(now: createdAt)
+        )
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            isContextStillEligible: { true }
+        ), .handled)
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .handledWithInputSourceSelectionFailure(expectedLanguage: .english))
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 4, replacement: "שלום", boundary: " "),
+        ])
     }
 
     func testForceGestureTogglesAnAutomaticCorrection() {
@@ -392,6 +694,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.handleForcedCorrection(
             context: context,
             priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
             isContextStillEligible: { true }
         ), .handled)
 
@@ -399,7 +702,8 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(deleteCount: 4, replacement: "שלום", boundary: " "),
             .init(deleteCount: 5, replacement: "akuo", boundary: " "),
         ])
-        XCTAssertEqual(selector.selected, [.hebrew, .english])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
         XCTAssertEqual(counter.incrementCount, 1)
     }
 
@@ -425,6 +729,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.handleForcedCorrection(
             context: context,
             priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
             isContextStillEligible: { true }
         ), .notHandled)
         clock.now = createdAt
@@ -460,6 +765,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.handleForcedCorrection(
             context: context,
             priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
             isContextStillEligible: { true }
         ), .handled)
         XCTAssertEqual(replacer.calls, [
@@ -507,6 +813,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
             boundaryKeyCode: 49,
             context: context,
             priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
             createdAt: createdAt
         ))
         let coordinator = makeCoordinator(
@@ -589,7 +896,8 @@ final class CorrectionCoordinatorTests: XCTestCase {
             .init(deleteCount: 3, replacement: "עם", boundary: " "),
             .init(deleteCount: 3, replacement: "go", boundary: " "),
         ])
-        XCTAssertEqual(selector.selected, [.hebrew, .english])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
     }
 
     func testOrdinaryInputInvalidatesPendingForcedCorrection() {
@@ -922,12 +1230,13 @@ final class CorrectionCoordinatorTests: XCTestCase {
                 .init(deleteCount: 5, replacement: "akuo", boundary: " "),
             ]
         )
-        XCTAssertEqual(selector.selected, [.hebrew, .english])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
     }
 
-    func testUndoSelectionFailureKeepsVisibleRestorationWithoutRetry() {
+    func testUndoSelectionFailureKeepsVisibleCorrectionWithoutRetry() {
         let replacer = RecordingReplacer()
-        let selector = RecordingSelector(results: [true, false])
+        let selector = RecordingSelector(exactResults: [false])
         let counter = RecordingCounter()
         let coordinator = makeCoordinator(
             recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
@@ -949,13 +1258,13 @@ final class CorrectionCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(counter.incrementCount, 1)
-        XCTAssertEqual(selector.selected, [.hebrew, .english])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
         XCTAssertEqual(replacer.calls, [
             .init(deleteCount: 4, replacement: "שלום", boundary: " "),
-            .init(deleteCount: 5, replacement: "akuo", boundary: " "),
         ])
         XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .notHandled)
-        XCTAssertEqual(selector.selected, [.hebrew, .english])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
     }
 
     func testOrdinaryInputInvalidatesUndoAndPreservesCommandZ() {
@@ -980,7 +1289,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(replacer.calls, [.init(deleteCount: 4, replacement: "שלום", boundary: " ")])
     }
 
-    func testUndoReplacementFailurePreservesCommandZAndDoesNotRestoreSource() {
+    func testUndoReplacementFailureRestoresSourceBeforePreservingCommandZ() {
         let replacer = RecordingReplacer(results: [true, false])
         let selector = RecordingSelector()
         let coordinator = makeCoordinator(
@@ -999,12 +1308,13 @@ final class CorrectionCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .notHandled)
         XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
     }
 
     private func makeCoordinator(
         recognizer: StubRecognizer,
         replacer: RecordingReplacer,
-        selector: RecordingSelector,
+        selector: any InputSourceSelecting,
         counter: RecordingCounter,
         clock: any RuntimeClock,
         undoController: any UndoRecording = UndoController(),
@@ -1052,6 +1362,9 @@ private extension CorrectionCoordinator {
             boundaryKeyCode: boundaryKeyCode,
             context: context,
             priorInputLanguage: priorInputLanguage,
+            priorInputSourceIdentifier: priorInputLanguage == .english
+                ? "com.apple.keylayout.ABC"
+                : "com.apple.keylayout.Hebrew",
             isContextStillEligible: { true }
         )
     }
@@ -1124,11 +1437,18 @@ private final class RecordingPreviousTextValidator: PreviousTextValidating {
 
 private final class RecordingSelector: InputSourceSelecting {
     private var results: [Bool]
+    private var exactResults: [Bool]
     private(set) var selected: [Language] = []
+    private(set) var exactIdentifiers: [String] = []
     private let events: RuntimeEvents?
 
-    init(results: [Bool] = [], events: RuntimeEvents? = nil) {
+    init(
+        results: [Bool] = [],
+        exactResults: [Bool] = [],
+        events: RuntimeEvents? = nil
+    ) {
         self.results = results
+        self.exactResults = exactResults
         self.events = events
     }
 
@@ -1137,6 +1457,16 @@ private final class RecordingSelector: InputSourceSelecting {
         selected.append(language)
         return results.isEmpty ? true : results.removeFirst()
     }
+
+    func selectExact(identifier: String) -> Bool {
+        events?.values.append(.selectExact)
+        exactIdentifiers.append(identifier)
+        return exactResults.isEmpty ? true : exactResults.removeFirst()
+    }
+}
+
+private struct LegacyLanguageOnlySelector: InputSourceSelecting {
+    func select(_ language: Language) -> Bool { true }
 }
 
 private final class RecordingCounter: CorrectionCounting {
@@ -1168,6 +1498,7 @@ private final class MutableClock: RuntimeClock {
 private enum RuntimeEvent: Equatable {
     case replace
     case select
+    case selectExact
     case count
     case registerUndo
 }

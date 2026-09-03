@@ -104,13 +104,14 @@ public final class CorrectionCoordinator {
 
         let sourceSelectionSucceeded = inputSourceSelector.select(correction.target)
         counter.incrementCorrectionCount()
-        undoController.register(.init(
+        undoController.register(UndoRecord(
             original: correction.original,
             corrected: correction.replacement,
             boundary: completedWord.boundary,
             boundaryKeyCode: boundaryKeyCode,
             context: context,
             priorInputLanguage: priorInputLanguage,
+            compatibilityPriorInputSourceIdentifier: priorInputSourceIdentifier,
             createdAt: clock.now
         ))
         return sourceSelectionSucceeded
@@ -134,6 +135,11 @@ public final class CorrectionCoordinator {
             return .notHandled
         }
         undoController.invalidate()
+        guard restoreInputSource(for: record) else {
+            return .handledWithInputSourceSelectionFailure(
+                expectedLanguage: record.priorInputLanguage
+            )
+        }
         guard textReplacer.replacePreviousText(
             deleteCount: record.corrected.unicodeScalars.count
                 + record.boundary.unicodeScalars.count,
@@ -144,11 +150,7 @@ public final class CorrectionCoordinator {
             return .notHandled
         }
 
-        return inputSourceSelector.select(record.priorInputLanguage)
-            ? .handled
-            : .handledWithInputSourceSelectionFailure(
-                expectedLanguage: record.priorInputLanguage
-            )
+        return .handled
     }
 
     public func handleForcedCorrection(
@@ -179,13 +181,15 @@ public final class CorrectionCoordinator {
                 boundaryKeyCode: nil,
                 correction: correction,
                 context: context,
-                priorInputLanguage: priorInputLanguage
+                priorInputLanguage: priorInputLanguage,
+                priorInputSourceIdentifier: currentInputSourceIdentifier
             )
         }
 
         if let toggleResult = handleForcedToggle(
             context: context,
             currentInputLanguage: priorInputLanguage,
+            currentInputSourceIdentifier: currentInputSourceIdentifier,
             isContextStillEligible: isContextStillEligible
         ) {
             return toggleResult
@@ -217,13 +221,15 @@ public final class CorrectionCoordinator {
             boundaryKeyCode: pendingForcedCorrection.boundaryKeyCode,
             correction: pendingForcedCorrection.correction,
             context: context,
-            priorInputLanguage: pendingForcedCorrection.priorInputLanguage
+            priorInputLanguage: pendingForcedCorrection.priorInputLanguage,
+            priorInputSourceIdentifier: pendingForcedCorrection.priorInputSourceIdentifier
         )
     }
 
     private func handleForcedToggle(
         context: FocusContext,
         currentInputLanguage: Language?,
+        currentInputSourceIdentifier: String?,
         isContextStillEligible: () -> Bool
     ) -> CorrectionHandlingResult? {
         guard let record = undoController.eligibleRecord(
@@ -240,6 +246,11 @@ public final class CorrectionCoordinator {
             return .notHandled
         }
         undoController.invalidate()
+        guard restoreInputSource(for: record) else {
+            return .handledWithInputSourceSelectionFailure(
+                expectedLanguage: record.priorInputLanguage
+            )
+        }
         guard textReplacer.replacePreviousText(
             deleteCount: record.corrected.unicodeScalars.count
                 + record.boundary.unicodeScalars.count,
@@ -250,23 +261,17 @@ public final class CorrectionCoordinator {
             return .notHandled
         }
 
-        let sourceSelectionSucceeded = inputSourceSelector.select(
-            record.priorInputLanguage
-        )
-        undoController.register(.init(
+        undoController.register(UndoRecord(
             original: record.corrected,
             corrected: record.original,
             boundary: record.boundary,
             boundaryKeyCode: record.boundaryKeyCode,
             context: context,
             priorInputLanguage: currentInputLanguage,
+            compatibilityPriorInputSourceIdentifier: currentInputSourceIdentifier,
             createdAt: clock.now
         ))
-        return sourceSelectionSucceeded
-            ? .handled
-            : .handledWithInputSourceSelectionFailure(
-                expectedLanguage: record.priorInputLanguage
-            )
+        return .handled
     }
 
     private func applyForcedCorrection(
@@ -274,7 +279,8 @@ public final class CorrectionCoordinator {
         boundaryKeyCode: Int?,
         correction: Correction,
         context: FocusContext,
-        priorInputLanguage: Language
+        priorInputLanguage: Language,
+        priorInputSourceIdentifier: String?
     ) -> CorrectionHandlingResult {
         guard textReplacer.replacePreviousText(
             deleteCount: completedWord.token.unicodeScalars.count
@@ -288,13 +294,14 @@ public final class CorrectionCoordinator {
 
         let sourceSelectionSucceeded = inputSourceSelector.select(correction.target)
         counter.incrementCorrectionCount()
-        undoController.register(.init(
+        undoController.register(UndoRecord(
             original: correction.original,
             corrected: correction.replacement,
             boundary: completedWord.boundary,
             boundaryKeyCode: boundaryKeyCode,
             context: context,
             priorInputLanguage: priorInputLanguage,
+            compatibilityPriorInputSourceIdentifier: priorInputSourceIdentifier,
             createdAt: clock.now
         ))
         return sourceSelectionSucceeded
@@ -302,6 +309,13 @@ public final class CorrectionCoordinator {
             : .handledWithInputSourceSelectionFailure(
                 expectedLanguage: correction.target
             )
+    }
+
+    private func restoreInputSource(for record: UndoRecord) -> Bool {
+        guard let identifier = record.priorInputSourceIdentifier else {
+            return false
+        }
+        return inputSourceSelector.selectExact(identifier: identifier)
     }
 
     public func noteOrdinaryInput() {

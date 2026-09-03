@@ -7,6 +7,7 @@ public struct UndoRecord: Equatable, Sendable {
     public let boundaryKeyCode: Int?
     public let context: FocusContext
     public let priorInputLanguage: Language
+    public let priorInputSourceIdentifier: String?
     public let createdAt: Date
 
     public init(
@@ -16,6 +17,51 @@ public struct UndoRecord: Equatable, Sendable {
         boundaryKeyCode: Int?,
         context: FocusContext,
         priorInputLanguage: Language,
+        priorInputSourceIdentifier: String,
+        createdAt: Date
+    ) {
+        self.init(
+            original: original,
+            corrected: corrected,
+            boundary: boundary,
+            boundaryKeyCode: boundaryKeyCode,
+            context: context,
+            priorInputLanguage: priorInputLanguage,
+            compatibilityPriorInputSourceIdentifier: priorInputSourceIdentifier,
+            createdAt: createdAt
+        )
+    }
+
+    @available(*, deprecated, message: "Pass priorInputSourceIdentifier for exact undo restoration.")
+    public init(
+        original: String,
+        corrected: String,
+        boundary: String,
+        boundaryKeyCode: Int?,
+        context: FocusContext,
+        priorInputLanguage: Language,
+        createdAt: Date
+    ) {
+        self.init(
+            original: original,
+            corrected: corrected,
+            boundary: boundary,
+            boundaryKeyCode: boundaryKeyCode,
+            context: context,
+            priorInputLanguage: priorInputLanguage,
+            compatibilityPriorInputSourceIdentifier: nil,
+            createdAt: createdAt
+        )
+    }
+
+    init(
+        original: String,
+        corrected: String,
+        boundary: String,
+        boundaryKeyCode: Int?,
+        context: FocusContext,
+        priorInputLanguage: Language,
+        compatibilityPriorInputSourceIdentifier: String?,
         createdAt: Date
     ) {
         self.original = original
@@ -24,6 +70,7 @@ public struct UndoRecord: Equatable, Sendable {
         self.boundaryKeyCode = boundaryKeyCode
         self.context = context
         self.priorInputLanguage = priorInputLanguage
+        self.priorInputSourceIdentifier = compatibilityPriorInputSourceIdentifier
         self.createdAt = createdAt
     }
 }

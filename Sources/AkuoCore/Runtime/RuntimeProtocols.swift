@@ -54,6 +54,12 @@ public struct RejectingPreviousTextValidator: PreviousTextValidating {
 
 public protocol InputSourceSelecting {
     @discardableResult func select(_ language: Language) -> Bool
+    @discardableResult func selectExact(identifier: String) -> Bool
+}
+
+public extension InputSourceSelecting {
+    @discardableResult
+    func selectExact(identifier: String) -> Bool { false }
 }
 
 public protocol CorrectionCounting {
