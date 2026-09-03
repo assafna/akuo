@@ -64,31 +64,17 @@ public final class SetupWindowController {
     }
 
     private func presentWindow() {
-        let window: NSWindow
-        if let setupWindow {
-            window = setupWindow
-            if !window.isVisible {
-                window.contentViewController = makeContentViewController(
-                    self,
-                    makePresentationCompletion()
-                )
-                window.setContentSize(Self.setupContentSize)
-            }
-        } else {
-            window = makeWindow(completion: makePresentationCompletion())
-        }
+        let window = setupWindow ?? makeWindow()
         setupWindow = window
-        guard completedPresentationGeneration != presentationGeneration else {
-            window.close()
+        guard !window.isVisible else {
+            activate(window)
             return
         }
-        window.center()
-        window.orderFrontRegardless()
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        window.makeKey()
+        guard installPresentationContent(in: window) else { return }
+        activate(window)
     }
 
-    private func makeWindow(completion: SetupPresentationCompletion) -> NSWindow {
+    private func makeWindow() -> NSWindow {
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: Self.setupContentSize),
             styleMask: [.titled, .closable],
@@ -97,20 +83,41 @@ public final class SetupWindowController {
         )
         window.title = "Akuo Setup"
         window.isReleasedWhenClosed = false
-        window.contentViewController = makeContentViewController(self, completion)
         window.contentMinSize = Self.setupContentSize
         window.contentMaxSize = Self.setupContentSize
         window.setContentSize(Self.setupContentSize)
         return window
     }
 
-    private func makePresentationCompletion() -> SetupPresentationCompletion {
+    private func installPresentationContent(in window: NSWindow) -> Bool {
+        let presentation = makePresentationCompletion()
+        let contentViewController = makeContentViewController(self, presentation.completion)
+        guard presentationGeneration == presentation.generation,
+              completedPresentationGeneration != presentation.generation
+        else {
+            return false
+        }
+
+        window.contentViewController = contentViewController
+        window.setContentSize(Self.setupContentSize)
+        return true
+    }
+
+    private func activate(_ window: NSWindow) {
+        window.center()
+        window.orderFrontRegardless()
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        window.makeKey()
+    }
+
+    private func makePresentationCompletion() -> (generation: Int, completion: SetupPresentationCompletion) {
         presentationGeneration += 1
         let generation = presentationGeneration
         completedPresentationGeneration = nil
-        return SetupPresentationCompletion { [weak self] in
+        let completion = SetupPresentationCompletion { [weak self] in
             self?.completePresentation(generation: generation) ?? false
         }
+        return (generation, completion)
     }
 
     private func completePresentation(generation: Int) -> Bool {

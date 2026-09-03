@@ -177,6 +177,37 @@ final class SetupWindowControllerTests: XCTestCase {
         XCTAssertFalse(controller.setupWindow?.isVisible == true)
     }
 
+    func testNestedPresentationDuringInitialContentConstructionKeepsOneCurrentWindow() {
+        var contentFactoryCalls = 0
+        var nestedPresentedWindow: NSWindow?
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { controller, completion in
+                contentFactoryCalls += 1
+                if contentFactoryCalls == 1 {
+                    XCTAssertTrue(completion.complete())
+                    controller.presentFromMenu()
+                    nestedPresentedWindow = controller.setupWindow
+                }
+                return NSViewController()
+            }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+
+        let retainedWindow = try! XCTUnwrap(controller.setupWindow)
+        let nestedWindow = try! XCTUnwrap(nestedPresentedWindow)
+        let visibleSetupWindows = NSApplication.shared.windows.filter {
+            $0.title == "Akuo Setup" && $0.isVisible
+        }
+        XCTAssertEqual(contentFactoryCalls, 2)
+        XCTAssertTrue(retainedWindow === nestedWindow)
+        XCTAssertTrue(retainedWindow.isVisible)
+        XCTAssertEqual(visibleSetupWindows.count, 1)
+    }
+
     func testMenuPresentationEnforcesSetupContentSizeAfterAttachingCollapsingContent() {
         let controller = SetupWindowController(
             refreshState: {},
