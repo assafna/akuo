@@ -35,6 +35,8 @@ public protocol UndoRecording {
 }
 
 public final class UndoController: UndoRecording {
+    private static let eligibilityInterval: TimeInterval = 5
+
     private var record: UndoRecord?
 
     public init() {}
@@ -55,7 +57,8 @@ public final class UndoController: UndoRecording {
             invalidate()
             return nil
         }
-        guard now.timeIntervalSince(record.createdAt) <= 5 else {
+        let elapsed = now.timeIntervalSince(record.createdAt)
+        guard elapsed >= 0, elapsed <= Self.eligibilityInterval else {
             invalidate()
             return nil
         }
