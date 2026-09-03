@@ -40,7 +40,10 @@ All notable changes to Akuo are documented in this file.
   extraction, compare exact modern tags against divergent as well as ancestral
   history, parse independent verification identity from the captured Git object,
   and reject noncanonical declarations without plist fallback or tag-move
-  laundering across declaration-free history. Preserve v0.3.0 rebuildability
+  laundering across declaration-free history. Key pair reuse to the complete
+  Git tree so a two-parent pull-request merge may retain its identical feature
+  content identity while the artifact still records the exact merge SHA; reject
+  the same pair whenever source content differs. Preserve v0.3.0 rebuildability
   separately by authenticating its live tag and running the historical build
   script contained in that immutable source.
 - Require a focused text control to expose a writable Accessibility value and

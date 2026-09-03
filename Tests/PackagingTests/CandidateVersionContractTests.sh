@@ -1082,6 +1082,45 @@ test_rejects_divergent_identity_reuse() {
         akuo_build
 }
 
+# Production mutation caught: using the merge commit SHA, rather than its Git
+# tree, as the content identity and thereby making a normal no-ff PR merge
+# impossible when the merge tree is byte-for-byte the feature-head tree.
+test_allows_two_parent_merge_with_identical_tree() {
+    akuo_reset_fixture
+    local candidate_commit
+    local candidate_tree
+    local base_commit
+    local merge_commit
+    local merge_tree
+    local parent_count
+    local plist="$AKUO_FIXTURE_ROOT/dist/Akuo.app/Contents/Info.plist"
+    candidate_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)"
+    candidate_tree="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse "$candidate_commit^{tree}")"
+    base_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD^)"
+    git -C "$AKUO_FIXTURE_ROOT" branch feature-head "$candidate_commit"
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q -b integration "$base_commit"
+    git -C "$AKUO_FIXTURE_ROOT" merge -q --no-ff feature-head \
+        -m 'merge candidate without changing its tree'
+    merge_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)"
+    merge_tree="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse 'HEAD^{tree}')"
+    parent_count="$(
+        git -C "$AKUO_FIXTURE_ROOT" rev-list --parents -n 1 HEAD |
+            awk '{ print NF - 1 }'
+    )"
+    [[ "$merge_commit" != "$candidate_commit" ]]
+    [[ "$parent_count" -eq 2 ]]
+    [[ "$merge_tree" == "$candidate_tree" ]]
+
+    akuo_build >/dev/null
+    [[ "$(plutil -extract AkuoSourceRevision raw -o - "$plist")" == \
+        "$merge_commit" ]]
+    [[ "$(AKUO_SYSTEM_GIT="$AKUO_SYSTEM_GIT" \
+        AKUO_FIXTURE_ROOT_ENV="$AKUO_FIXTURE_ROOT" \
+        "$AKUO_FIXTURE_ROOT/dist/Akuo.app/Contents/MacOS/Akuo" \
+            --candidate-source-revision)" == "$merge_commit" ]]
+    akuo_verify >/dev/null
+}
+
 # Production mutation caught: checking only the first parent of a merge whose
 # second parent already used the candidate build identity.
 test_rejects_merge_parent_identity_reuse() {
@@ -1157,6 +1196,7 @@ case "${1:-all}" in
     malformed-remote-tags) test_rejects_malformed_remote_tags ;;
     shallow) test_rejects_shallow_history ;;
     divergent) test_rejects_divergent_identity_reuse ;;
+    merge-identical-tree) test_allows_two_parent_merge_with_identical_tree ;;
     merge-parent) test_rejects_merge_parent_identity_reuse ;;
     all)
         test_injects_authoritative_identity
@@ -1215,6 +1255,7 @@ case "${1:-all}" in
         test_rejects_malformed_remote_tags
         test_rejects_shallow_history
         test_rejects_divergent_identity_reuse
+        test_allows_two_parent_merge_with_identical_tree
         test_rejects_merge_parent_identity_reuse
         ;;
     *)

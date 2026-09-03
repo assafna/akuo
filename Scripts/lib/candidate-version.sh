@@ -133,6 +133,20 @@ akuo_read_revision_identity() {
     AKUO_REVISION_HAS_IDENTITY=true
 }
 
+akuo_revision_tree() {
+    local project_root="$1"
+    local revision="$2"
+    local tree
+
+    if ! tree="$(
+        git -C "$project_root" rev-parse --verify "$revision^{tree}" 2>/dev/null
+    )"; then
+        printf 'cannot inspect Git tree at revision %s\n' "$revision" >&2
+        return 1
+    fi
+    printf '%s\n' "$tree"
+}
+
 akuo_build_is_greater() {
     local candidate="$1"
     local previous="$2"
@@ -284,11 +298,14 @@ akuo_validate_candidate_history() {
     local project_root="$1"
     local shallow_state
     local head_commit
+    local head_tree
     local tag
     local tag_commit
+    local tag_tree
     local exact_release=false
     local revisions
     local revision
+    local revision_tree
     local relationship
     local ancestry_status
 
@@ -296,6 +313,7 @@ akuo_validate_candidate_history() {
         echo 'candidate packaging requires a Git worktree with a committed HEAD' >&2
         return 1
     fi
+    head_tree="$(akuo_revision_tree "$project_root" "$head_commit")" || return 1
     if ! shallow_state="$(
         git -C "$project_root" rev-parse --is-shallow-repository 2>/dev/null
     )" || [[ "$shallow_state" != false ]]; then
@@ -326,9 +344,13 @@ akuo_validate_candidate_history() {
             if [[ "$tag_commit" == "$head_commit" ]]; then
                 exact_release=true
             else
-                printf 'candidate identity %s (%s) was already released by %s\n' \
-                    "$AKUO_CANDIDATE_VERSION" "$AKUO_CANDIDATE_BUILD" "$tag" >&2
-                return 1
+                tag_tree="$(akuo_revision_tree "$project_root" "$tag_commit")" || \
+                    return 1
+                if [[ "$tag_tree" != "$head_tree" ]]; then
+                    printf 'candidate identity %s (%s) was already released by %s\n' \
+                        "$AKUO_CANDIDATE_VERSION" "$AKUO_CANDIDATE_BUILD" "$tag" >&2
+                    return 1
+                fi
             fi
         fi
     done <<<"$AKUO_RELEASE_TAGS"
@@ -346,6 +368,14 @@ akuo_validate_candidate_history() {
                 return 1
             fi
             continue
+        fi
+        if [[ "$AKUO_REVISION_VERSION" == "$AKUO_CANDIDATE_VERSION" && \
+            "$AKUO_REVISION_BUILD" == "$AKUO_CANDIDATE_BUILD" ]]; then
+            revision_tree="$(akuo_revision_tree "$project_root" "$revision")" || \
+                return 1
+            if [[ "$revision_tree" == "$head_tree" ]]; then
+                continue
+            fi
         fi
         relationship=visible
         if [[ "$exact_release" == true ]]; then

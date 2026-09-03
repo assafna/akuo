@@ -51,19 +51,24 @@ and every identity visible through local refs and reflogs. It also requires
 local `v*` tag objects to match the live origin result, then inspects their tagged
 source declarations. Before extraction, the build rejects tracked symlinks and
 gitlinks, then compiles an archived snapshot of the exact captured commit rather
-than caller-worktree or external target files. Rebuilding the exact clean
-source commit retains the same candidate identity. A rebase, squash,
-cherry-pick, merge, or other new candidate SHA requires a higher build number;
-if an older candidate is outside the local refs/reflogs, the operator must still
-advance it before build. The current candidate identity is parsed only from the
-archived strict, untyped Swift string literals; missing, attributed, typed,
-duplicate, computed, or malformed declarations fail closed and never use plist
-fallback. A modern
-exact release tag must have advanced beyond every visible modern revision that
-is not its descendant and may not share its version/build pair with another
-visible source revision. Creating or moving a tag onto a later same-pair commit
-does not bypass this rule. True later descendants do not block rebuilding that
-older modern tag; divergent history does. Declaration-free historical tags are
+than caller-worktree or external target files. Candidate reuse is keyed by the
+version/build pair and complete root Git tree, but the plist and runtime retain
+the exact packaged commit SHA as provenance. Two clean commits may share a pair
+only when their trees are identical. Therefore a normal two-parent pull-request
+merge may retain the approved feature-head pair when its resulting tree exactly
+matches that feature head, while recording the merge SHA in the artifact. A
+rebase, squash, cherry-pick, merge, or other operation that changes the tree
+requires a higher build number; if an older candidate is outside the local
+refs/reflogs, the operator must still advance it before build. The current
+candidate identity is parsed only from the archived strict, untyped Swift string
+literals; missing, attributed, typed, duplicate, computed, or malformed
+declarations fail closed and never use plist fallback. A modern exact release
+tag must have advanced beyond every visible modern revision that is not its
+descendant and may not share its version/build pair with another visible
+revision on a different tree. Creating or moving a tag onto a later same-pair
+commit with different content does not bypass this rule. True later descendants
+do not block rebuilding that older modern tag; divergent history does.
+Declaration-free historical tags are
 outside the modern pipeline and reserve their Swift marketing version; visible
 declaration-free history with the same version also prevents a moved tag from
 laundering that release onto a later strict source.
