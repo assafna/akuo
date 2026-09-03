@@ -6,6 +6,10 @@ All notable changes to Akuo are documented in this file.
 
 ### Added
 
+- Add an explicit local-install mode for a caller-selected, already signed
+  `Akuo.app` and its previously recorded executable SHA-256, rejecting changed
+  candidate bytes before staging and preserving that hash through installation
+  without rebuilding the bundle.
 - Add a certificate-aware local installer that rejects ad-hoc or code-hash-based
   identities and verifies update compatibility before replacing the installed
   application, allowing Accessibility permission to survive consistently signed

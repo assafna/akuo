@@ -37,6 +37,14 @@ akuo_assert_rejected() {
     fi
 }
 
+akuo_write_stub() {
+    local stub_path="$1"
+    shift
+
+    printf '%s\n' "$@" >"$stub_path"
+    chmod +x "$stub_path"
+}
+
 AKUO_ADHOC_APP="$AKUO_TEST_TMP/Akuo.app"
 akuo_make_fixture "$AKUO_ADHOC_APP"
 codesign --force --sign - "$AKUO_ADHOC_APP"
@@ -62,6 +70,300 @@ akuo_assert_rejected \
 akuo_assert_rejected \
     "does not accept the ad-hoc identity '-'" \
     env AKUO_CODE_SIGN_IDENTITY=- "$AKUO_TEST_ROOT/Scripts/install-local.sh" debug
+
+AKUO_CONTRACT_PROJECT="$AKUO_TEST_TMP/contract-project"
+AKUO_CONTRACT_BIN="$AKUO_TEST_TMP/contract-bin"
+AKUO_CONTRACT_ROOT="$AKUO_TEST_TMP/contract-root"
+AKUO_CONTRACT_CANDIDATE="$AKUO_TEST_TMP/AcceptedCandidate.app"
+AKUO_BUILD_MARKER="$AKUO_TEST_TMP/build-invoked"
+AKUO_VERIFY_LOG="$AKUO_TEST_TMP/verify.log"
+AKUO_STAGE_SHA_LOG="$AKUO_TEST_TMP/stage-sha.log"
+AKUO_APPLICATIONS_GUARD_LOG="$AKUO_TEST_TMP/real-applications-mutation"
+mkdir -p \
+    "$AKUO_CONTRACT_PROJECT/Scripts/lib" \
+    "$AKUO_CONTRACT_BIN" \
+    "$AKUO_CONTRACT_ROOT/Applications"
+cp "$AKUO_TEST_ROOT/Scripts/install-local.sh" "$AKUO_CONTRACT_PROJECT/Scripts/install-local.sh"
+cp "$AKUO_TEST_ROOT/Scripts/lib/install-safety.sh" "$AKUO_CONTRACT_PROJECT/Scripts/lib/install-safety.sh"
+akuo_make_fixture "$AKUO_CONTRACT_CANDIDATE"
+
+# Stub bodies are single-quoted so their variables expand when the generated
+# command runs, not while this test writes the command.
+# shellcheck disable=SC2016
+akuo_write_stub "$AKUO_CONTRACT_PROJECT/Scripts/build-app.sh" \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    ': >"${AKUO_BUILD_MARKER:?}"' \
+    'if [[ -z "${AKUO_BUILD_SOURCE_APP:-}" ]]; then' \
+    '    echo "FAIL: prebuilt-candidate mode invoked build-app.sh" >&2' \
+    '    exit 97' \
+    'fi' \
+    'project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"' \
+    'mkdir -p "$project_root/dist"' \
+    '/usr/bin/ditto "$AKUO_BUILD_SOURCE_APP" "$project_root/dist/Akuo.app"'
+# shellcheck disable=SC2016
+akuo_write_stub "$AKUO_CONTRACT_PROJECT/Scripts/verify-local-signing.sh" \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf "%s\n" "$1" >>"${AKUO_VERIFY_LOG:?}"' \
+    'if [[ "${AKUO_REJECT_STAGED_IDENTITY:-}" == true && "$1" == */.akuo-install.*/Akuo.app ]]; then' \
+    '    echo "refusing local install: staged fixture identity mismatch" >&2' \
+    '    exit 1' \
+    'fi' \
+    '[[ -d "$1" ]]'
+akuo_write_stub "$AKUO_CONTRACT_BIN/codesign" \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'if [[ " $* " == *" -d "* && " $* " == *" -r- "* ]]; then' \
+    '    echo '\''designated => identifier "app.akuo.Akuo"'\''' \
+    'fi'
+akuo_write_stub "$AKUO_CONTRACT_BIN/pgrep" \
+    '#!/usr/bin/env bash' \
+    'exit 1'
+# shellcheck disable=SC2016
+akuo_write_stub "$AKUO_CONTRACT_BIN/akuo-guarded-mutation" \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'for target in "$@"; do' \
+    '    case "$target" in' \
+    '        /Applications|/Applications/*)' \
+    '            printf "blocked %s targeting %s\n" "${0##*/}" "$target" >"${AKUO_APPLICATIONS_GUARD_LOG:?}"' \
+    '            echo "FAIL: mutating command targeted real /Applications" >&2' \
+    '            exit 98' \
+    '            ;;' \
+    '    esac' \
+    'done' \
+    'case "${0##*/}" in' \
+    '    cp|mkdir|mv|rm) exec "/bin/${0##*/}" "$@" ;;' \
+    '    mktemp) exec /usr/bin/mktemp "$@" ;;' \
+    '    *) echo "FAIL: unknown guarded mutation command ${0##*/}" >&2; exit 99 ;;' \
+    'esac'
+for AKUO_MUTATING_COMMAND in cp mkdir mktemp mv rm; do
+    ln -s akuo-guarded-mutation "$AKUO_CONTRACT_BIN/$AKUO_MUTATING_COMMAND"
+done
+# shellcheck disable=SC2016
+akuo_write_stub "$AKUO_CONTRACT_BIN/ditto" \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'for target in "$@"; do' \
+    '    case "$target" in' \
+    '        /Applications|/Applications/*)' \
+    '            printf "blocked ditto targeting %s\n" "$target" >"${AKUO_APPLICATIONS_GUARD_LOG:?}"' \
+    '            echo "FAIL: mutating command targeted real /Applications" >&2' \
+    '            exit 98' \
+    '            ;;' \
+    '    esac' \
+    'done' \
+    '/usr/bin/ditto "$1" "$2"' \
+    'if [[ "${AKUO_MUTATE_STAGED_EXECUTABLE:-}" == true ]]; then' \
+    '    cp /usr/bin/false "$2/Contents/MacOS/Akuo"' \
+    '    printf "\nmutated-stage-fixture\n" >>"$2/Contents/MacOS/Akuo"' \
+    'fi' \
+    '/usr/bin/shasum -a 256 "$2/Contents/MacOS/Akuo" | awk '\''{print $1}'\'' >>"${AKUO_STAGE_SHA_LOG:?}"'
+
+for AKUO_GUARD_PROBE in mv ditto; do
+    if env AKUO_APPLICATIONS_GUARD_LOG="$AKUO_APPLICATIONS_GUARD_LOG" \
+        "$AKUO_CONTRACT_BIN/$AKUO_GUARD_PROBE" \
+        "$AKUO_TEST_TMP/nonexistent-guard-source" \
+        /Applications/Akuo.app >/dev/null 2>&1; then
+        printf 'FAIL: %s guard allowed a real /Applications target\n' "$AKUO_GUARD_PROBE" >&2
+        exit 1
+    fi
+    if [[ ! -s "$AKUO_APPLICATIONS_GUARD_LOG" ]]; then
+        printf 'FAIL: %s guard did not record the blocked /Applications target\n' \
+            "$AKUO_GUARD_PROBE" >&2
+        exit 1
+    fi
+    rm -f "$AKUO_APPLICATIONS_GUARD_LOG"
+done
+
+AKUO_ACCEPTED_SHA="$(shasum -a 256 "$AKUO_CONTRACT_CANDIDATE/Contents/MacOS/Akuo" | awk '{print $1}')"
+AKUO_PREBUILT_OUTPUT=""
+if ! AKUO_PREBUILT_OUTPUT="$(
+    env \
+        PATH="$AKUO_CONTRACT_BIN:$PATH" \
+        AKUO_APPLICATIONS_GUARD_LOG="$AKUO_APPLICATIONS_GUARD_LOG" \
+        AKUO_BUILD_MARKER="$AKUO_BUILD_MARKER" \
+        AKUO_INSTALLER_TEST_ROOT="$AKUO_CONTRACT_ROOT" \
+        AKUO_STAGE_SHA_LOG="$AKUO_STAGE_SHA_LOG" \
+        AKUO_VERIFY_LOG="$AKUO_VERIFY_LOG" \
+        "$AKUO_CONTRACT_PROJECT/Scripts/install-local.sh" \
+        --candidate "$AKUO_CONTRACT_CANDIDATE" \
+        --sha256 "$AKUO_ACCEPTED_SHA" 2>&1
+)"; then
+    printf 'FAIL: prebuilt-candidate install was rejected:\n%s\n' "$AKUO_PREBUILT_OUTPUT" >&2
+    exit 1
+fi
+if [[ -e "$AKUO_BUILD_MARKER" ]]; then
+    echo "FAIL: prebuilt-candidate install invoked build-app.sh" >&2
+    exit 1
+fi
+if ! cmp -s \
+    "$AKUO_CONTRACT_CANDIDATE/Contents/MacOS/Akuo" \
+    "$AKUO_CONTRACT_ROOT/Applications/Akuo.app/Contents/MacOS/Akuo"; then
+    echo "FAIL: installed executable differs from the selected prebuilt candidate" >&2
+    exit 1
+fi
+if [[ "$(sed -n '1p' "$AKUO_VERIFY_LOG")" != "$AKUO_CONTRACT_CANDIDATE" ]]; then
+    echo "FAIL: installer did not verify the selected prebuilt candidate first" >&2
+    exit 1
+fi
+if [[ "$(sed -n '1p' "$AKUO_STAGE_SHA_LOG")" != "$AKUO_ACCEPTED_SHA" ]]; then
+    echo "FAIL: staged executable differs from the selected prebuilt candidate" >&2
+    exit 1
+fi
+if [[ "$(sed -n '2p' "$AKUO_VERIFY_LOG")" != */.akuo-install.*/Akuo.app ]]; then
+    echo "FAIL: installer did not verify the staged application" >&2
+    exit 1
+fi
+if [[ "$(sed -n '3p' "$AKUO_VERIFY_LOG")" != "$AKUO_CONTRACT_ROOT/Applications/Akuo.app" ]]; then
+    echo "FAIL: installer did not verify the installed application" >&2
+    exit 1
+fi
+if [[ "$AKUO_PREBUILT_OUTPUT" != *"Akuo executable SHA-256: $AKUO_ACCEPTED_SHA"* ]]; then
+    echo "FAIL: installer did not report the accepted candidate hash" >&2
+    exit 1
+fi
+
+AKUO_RECORDED_SHA="$AKUO_ACCEPTED_SHA"
+AKUO_RECORDED_HASH_EXISTING_APP="$AKUO_CONTRACT_ROOT/Applications/Akuo.app"
+rm -rf "$AKUO_RECORDED_HASH_EXISTING_APP"
+akuo_make_fixture "$AKUO_RECORDED_HASH_EXISTING_APP"
+printf '\nexisting-install-fixture\n' >>"$AKUO_RECORDED_HASH_EXISTING_APP/Contents/MacOS/Akuo"
+AKUO_RECORDED_HASH_EXISTING_SHA="$(
+    shasum -a 256 "$AKUO_RECORDED_HASH_EXISTING_APP/Contents/MacOS/Akuo" | awk '{print $1}'
+)"
+cp /usr/bin/false "$AKUO_CONTRACT_CANDIDATE/Contents/MacOS/Akuo"
+printf '\nsigned-different-candidate-fixture\n' >>"$AKUO_CONTRACT_CANDIDATE/Contents/MacOS/Akuo"
+AKUO_CHANGED_CANDIDATE_SHA="$(
+    shasum -a 256 "$AKUO_CONTRACT_CANDIDATE/Contents/MacOS/Akuo" | awk '{print $1}'
+)"
+if [[ "$AKUO_CHANGED_CANDIDATE_SHA" == "$AKUO_RECORDED_SHA" || \
+    "$AKUO_CHANGED_CANDIDATE_SHA" == "$AKUO_RECORDED_HASH_EXISTING_SHA" ]]; then
+    echo "FAIL: recorded-hash fixtures are not byte-distinct" >&2
+    exit 1
+fi
+rm -f "$AKUO_BUILD_MARKER" "$AKUO_VERIFY_LOG" "$AKUO_STAGE_SHA_LOG"
+akuo_assert_rejected \
+    "candidate executable does not match recorded SHA-256" \
+    env \
+        PATH="$AKUO_CONTRACT_BIN:$PATH" \
+        AKUO_APPLICATIONS_GUARD_LOG="$AKUO_APPLICATIONS_GUARD_LOG" \
+        AKUO_BUILD_MARKER="$AKUO_BUILD_MARKER" \
+        AKUO_INSTALLER_TEST_ROOT="$AKUO_CONTRACT_ROOT" \
+        AKUO_STAGE_SHA_LOG="$AKUO_STAGE_SHA_LOG" \
+        AKUO_VERIFY_LOG="$AKUO_VERIFY_LOG" \
+        "$AKUO_CONTRACT_PROJECT/Scripts/install-local.sh" \
+        --candidate "$AKUO_CONTRACT_CANDIDATE" \
+        --sha256 "$AKUO_RECORDED_SHA"
+if [[ "$(
+    shasum -a 256 "$AKUO_RECORDED_HASH_EXISTING_APP/Contents/MacOS/Akuo" | awk '{print $1}'
+)" != "$AKUO_RECORDED_HASH_EXISTING_SHA" ]]; then
+    echo "FAIL: recorded candidate hash mismatch replaced the existing application" >&2
+    exit 1
+fi
+if [[ "$(sed -n '1p' "$AKUO_VERIFY_LOG")" != "$AKUO_CONTRACT_CANDIDATE" || \
+    "$(wc -l <"$AKUO_VERIFY_LOG" | tr -d ' ')" != 1 || \
+    -e "$AKUO_STAGE_SHA_LOG" || -e "$AKUO_BUILD_MARKER" ]]; then
+    echo "FAIL: recorded candidate hash mismatch reached staging or later verification" >&2
+    exit 1
+fi
+
+akuo_assert_rejected \
+    "prebuilt candidate SHA-256 must be exactly 64 lowercase hexadecimal characters" \
+    "$AKUO_CONTRACT_PROJECT/Scripts/install-local.sh" \
+    --candidate "$AKUO_CONTRACT_CANDIDATE" \
+    --sha256 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+
+AKUO_BUILD_ROOT="$AKUO_TEST_TMP/build-mode-root"
+AKUO_BUILD_SOURCE_APP="$AKUO_TEST_TMP/BuiltCandidate.app"
+mkdir -p "$AKUO_BUILD_ROOT/Applications"
+akuo_make_fixture "$AKUO_BUILD_SOURCE_APP"
+cp /usr/bin/false "$AKUO_BUILD_SOURCE_APP/Contents/MacOS/Akuo"
+rm -f "$AKUO_BUILD_MARKER" "$AKUO_VERIFY_LOG" "$AKUO_STAGE_SHA_LOG"
+if ! env \
+    PATH="$AKUO_CONTRACT_BIN:$PATH" \
+    AKUO_APPLICATIONS_GUARD_LOG="$AKUO_APPLICATIONS_GUARD_LOG" \
+    AKUO_BUILD_MARKER="$AKUO_BUILD_MARKER" \
+    AKUO_BUILD_SOURCE_APP="$AKUO_BUILD_SOURCE_APP" \
+    AKUO_CODE_SIGN_IDENTITY='Apple Development: Contract Fixture (ABCDEFGHIJ)' \
+    AKUO_INSTALLER_TEST_ROOT="$AKUO_BUILD_ROOT" \
+    AKUO_STAGE_SHA_LOG="$AKUO_STAGE_SHA_LOG" \
+    AKUO_VERIFY_LOG="$AKUO_VERIFY_LOG" \
+    "$AKUO_CONTRACT_PROJECT/Scripts/install-local.sh" release >/dev/null; then
+    echo "FAIL: build-and-install mode no longer succeeds" >&2
+    exit 1
+fi
+if [[ ! -e "$AKUO_BUILD_MARKER" ]]; then
+    echo "FAIL: build-and-install mode did not invoke build-app.sh" >&2
+    exit 1
+fi
+if ! cmp -s \
+    "$AKUO_BUILD_SOURCE_APP/Contents/MacOS/Akuo" \
+    "$AKUO_BUILD_ROOT/Applications/Akuo.app/Contents/MacOS/Akuo"; then
+    echo "FAIL: build-and-install mode did not install its built candidate" >&2
+    exit 1
+fi
+
+AKUO_EXISTING_APP="$AKUO_CONTRACT_ROOT/Applications/Akuo.app"
+rm -rf "$AKUO_EXISTING_APP"
+akuo_make_fixture "$AKUO_EXISTING_APP"
+cp /usr/bin/false "$AKUO_EXISTING_APP/Contents/MacOS/Akuo"
+printf '\nexisting-hash-mismatch-fixture\n' >>"$AKUO_EXISTING_APP/Contents/MacOS/Akuo"
+AKUO_EXISTING_SHA="$(shasum -a 256 "$AKUO_EXISTING_APP/Contents/MacOS/Akuo" | awk '{print $1}')"
+AKUO_CURRENT_CANDIDATE_SHA="$(
+    shasum -a 256 "$AKUO_CONTRACT_CANDIDATE/Contents/MacOS/Akuo" | awk '{print $1}'
+)"
+rm -f "$AKUO_BUILD_MARKER" "$AKUO_VERIFY_LOG" "$AKUO_STAGE_SHA_LOG"
+akuo_assert_rejected \
+    "staged executable does not match the verified candidate" \
+    env \
+        PATH="$AKUO_CONTRACT_BIN:$PATH" \
+        AKUO_APPLICATIONS_GUARD_LOG="$AKUO_APPLICATIONS_GUARD_LOG" \
+        AKUO_BUILD_MARKER="$AKUO_BUILD_MARKER" \
+        AKUO_INSTALLER_TEST_ROOT="$AKUO_CONTRACT_ROOT" \
+        AKUO_MUTATE_STAGED_EXECUTABLE=true \
+        AKUO_STAGE_SHA_LOG="$AKUO_STAGE_SHA_LOG" \
+        AKUO_VERIFY_LOG="$AKUO_VERIFY_LOG" \
+        "$AKUO_CONTRACT_PROJECT/Scripts/install-local.sh" \
+        --candidate "$AKUO_CONTRACT_CANDIDATE" \
+        --sha256 "$AKUO_CURRENT_CANDIDATE_SHA"
+if [[ "$(shasum -a 256 "$AKUO_EXISTING_APP/Contents/MacOS/Akuo" | awk '{print $1}')" != "$AKUO_EXISTING_SHA" ]]; then
+    echo "FAIL: staged hash mismatch replaced the existing application" >&2
+    exit 1
+fi
+if [[ "$(sed -n '1p' "$AKUO_STAGE_SHA_LOG")" == "$AKUO_EXISTING_SHA" ]]; then
+    echo "FAIL: staged hash mismatch fixture is indistinguishable from the existing application" >&2
+    exit 1
+fi
+
+rm -f "$AKUO_VERIFY_LOG" "$AKUO_STAGE_SHA_LOG"
+akuo_assert_rejected \
+    "staged fixture identity mismatch" \
+    env \
+        PATH="$AKUO_CONTRACT_BIN:$PATH" \
+        AKUO_APPLICATIONS_GUARD_LOG="$AKUO_APPLICATIONS_GUARD_LOG" \
+        AKUO_BUILD_MARKER="$AKUO_BUILD_MARKER" \
+        AKUO_INSTALLER_TEST_ROOT="$AKUO_CONTRACT_ROOT" \
+        AKUO_REJECT_STAGED_IDENTITY=true \
+        AKUO_STAGE_SHA_LOG="$AKUO_STAGE_SHA_LOG" \
+        AKUO_VERIFY_LOG="$AKUO_VERIFY_LOG" \
+        "$AKUO_CONTRACT_PROJECT/Scripts/install-local.sh" \
+        --candidate "$AKUO_CONTRACT_CANDIDATE" \
+        --sha256 "$AKUO_CURRENT_CANDIDATE_SHA"
+if [[ "$(shasum -a 256 "$AKUO_EXISTING_APP/Contents/MacOS/Akuo" | awk '{print $1}')" != "$AKUO_EXISTING_SHA" ]]; then
+    echo "FAIL: staged identity mismatch replaced the existing application" >&2
+    exit 1
+fi
+if [[ "$(sed -n '1p' "$AKUO_STAGE_SHA_LOG")" == "$AKUO_EXISTING_SHA" ]]; then
+    echo "FAIL: staged identity mismatch fixture is indistinguishable from the existing application" >&2
+    exit 1
+fi
+if [[ -e "$AKUO_APPLICATIONS_GUARD_LOG" ]]; then
+    printf 'FAIL: contract test attempted a real /Applications mutation:\n%s\n' \
+        "$(<"$AKUO_APPLICATIONS_GUARD_LOG")" >&2
+    exit 1
+fi
 
 if [[ ! -f "$AKUO_TEST_ROOT/Scripts/lib/signing-policy.sh" ]]; then
     echo "FAIL: Scripts/lib/signing-policy.sh is missing" >&2
@@ -122,4 +424,4 @@ if akuo_require_mutually_compatible \
     exit 1
 fi
 
-printf 'PASS: unstable local signing identities are rejected\n'
+printf 'PASS: local signing and exact-candidate installation contracts\n'

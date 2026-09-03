@@ -41,7 +41,25 @@ macOS associates privacy permissions with an application's designated code requi
      Scripts/install-local.sh release
    ```
 
-   The build derives the certificate's Apple team ID and embeds Akuo's controlled designated requirement: Apple-issued signer, exact Akuo identifier, and exact team. The installer rejects any other policy and refuses an update unless the staged and installed signed applications satisfy each other's requirements.
+   This convenient mode builds a fresh candidate and immediately installs it. The build derives the certificate's Apple team ID and embeds Akuo's controlled designated requirement: Apple-issued signer, exact Akuo identifier, and exact team. The installer rejects any other policy and refuses an update unless the staged and installed signed applications satisfy each other's requirements.
+
+   When the candidate must be inspected or accepted before installation, build it once, run the signing and metadata checks against that bundle, and install that exact path without rebuilding:
+
+   ```bash
+   AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' \
+     Scripts/build-app.sh release
+   AKUO_CANDIDATE_PATH="$PWD/dist/Akuo.app"
+   Scripts/verify-local-signing.sh "$AKUO_CANDIDATE_PATH"
+   AKUO_CANDIDATE_SHA256="$(
+     shasum -a 256 "$AKUO_CANDIDATE_PATH/Contents/MacOS/Akuo" | awk '{print $1}'
+   )"
+   printf 'Record candidate SHA-256: %s\n' "$AKUO_CANDIDATE_SHA256"
+   Scripts/install-local.sh \
+     --candidate "$AKUO_CANDIDATE_PATH" \
+     --sha256 "$AKUO_CANDIDATE_SHA256"
+   ```
+
+   Record that SHA-256 with the acceptance evidence and reuse the recorded value; do not recalculate it immediately before installation. Prebuilt-candidate mode does not invoke `build-app.sh`. It rechecks the candidate's signature and bundle identity, independently hashes its executable, requires that hash to equal the caller-recorded value before staging, then carries the same hash through staging and installation. A candidate or staged signature, bundle, or hash mismatch is rejected before replacing the existing application.
 4. Open `/Applications/Akuo.app`. On the first migration from the old ad-hoc build, remove the obsolete Akuo entry from **System Settings → Privacy & Security → Accessibility**, add `/Applications/Akuo.app`, and enable it one final time. Later builds installed with the same signing team and compatible designated requirement retain that permission.
 5. In **System Settings → Keyboard → Text Input → Edit**, add **ABC** (preferred) or **U.S.**, and **Hebrew**. Do not choose Hebrew – QWERTY for version 1.
 6. Return to Akuo, recheck setup, complete onboarding, and turn Akuo on.
