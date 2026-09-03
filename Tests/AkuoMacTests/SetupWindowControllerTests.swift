@@ -265,6 +265,34 @@ final class SetupWindowControllerTests: XCTestCase {
         XCTAssertFalse(retainedWindow.contentViewController === outerContentController)
     }
 
+    func testStaleReturnedControllerIsNotLoadedAfterNestedPresentation() {
+        var contentFactoryCalls = 0
+        var staleLoadCalls = 0
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { controller, completion in
+                contentFactoryCalls += 1
+                if contentFactoryCalls == 1 {
+                    XCTAssertTrue(completion.complete())
+                    controller.presentFromMenu()
+                    return CompletingOnLoadViewController {
+                        staleLoadCalls += 1
+                        controller.close()
+                    }
+                }
+                return NSViewController()
+            }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+
+        XCTAssertEqual(contentFactoryCalls, 2)
+        XCTAssertEqual(staleLoadCalls, 0)
+        XCTAssertTrue(controller.setupWindow?.isVisible == true)
+    }
+
     func testCompletionDuringHostingOnAppearDoesNotShowCompletedWindow() {
         var completionResult: Bool?
         let controller = SetupWindowController(

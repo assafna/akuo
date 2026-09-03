@@ -97,6 +97,8 @@ public final class SetupWindowController {
 
     private func installPresentationContent(in window: NSWindow, presentation: Presentation) -> Bool {
         let contentViewController = makeContentViewController(self, presentation.completion)
+        guard isCurrent(presentation, for: window) else { return false }
+
         _ = contentViewController.view
         guard isCurrent(presentation, for: window) else { return false }
 
