@@ -44,13 +44,100 @@ final class KeyboardLayoutMapTests: XCTestCase {
         )
     }
 
+    func testCompleteShiftedHebrewOutputWithoutModifierEvidenceIsRejected() {
+        let cases: [(String, [ObservedKeyStroke])] = [
+            (
+                "קךךם",
+                [
+                    .init(text: "", keyCode: 4),
+                    .init(text: "ק", keyCode: 14),
+                    .init(text: "ך", keyCode: 37),
+                    .init(text: "ך", keyCode: 37),
+                    .init(text: "ם", keyCode: 31),
+                ]
+            ),
+            (
+                "לֹםםך",
+                [
+                    .init(text: "לֹ", keyCode: 8),
+                    .init(text: "ם", keyCode: 31),
+                    .init(text: "ם", keyCode: 31),
+                    .init(text: "ך", keyCode: 37),
+                ]
+            ),
+        ]
+
+        for (token, keyStrokes) in cases {
+            XCTAssertNil(
+                map.convert(token, sourceHint: .hebrew, keyStrokes: keyStrokes),
+                token
+            )
+        }
+    }
+
+    func testTranslatedPhysicalCandidateRejectsContradictoryCompositeModifierEvidence() {
+        XCTAssertNil(map.convert(
+            "לֹםםך",
+            sourceHint: .hebrew,
+            keyStrokes: [
+                .init(text: "לֹ", keyCode: 8, targetText: "c"),
+                .init(text: "ם", keyCode: 31, targetText: "o"),
+                .init(text: "ם", keyCode: 31, targetText: "o"),
+                .init(text: "ך", keyCode: 37, targetText: "l"),
+            ]
+        ))
+    }
+
+    func testCompleteShiftedHebrewTraceRecoversCapitalWithShiftOrCapsLock() {
+        let cases: [(String, [ObservedKeyStroke], String)] = [
+            (
+                "קךךם",
+                [
+                    .init(text: "", keyCode: 4, modifiers: [.shift]),
+                    .init(text: "ק", keyCode: 14),
+                    .init(text: "ך", keyCode: 37),
+                    .init(text: "ך", keyCode: 37),
+                    .init(text: "ם", keyCode: 31),
+                ],
+                "Hello"
+            ),
+            (
+                "לֹםםך",
+                [
+                    .init(text: "לֹ", keyCode: 8, modifiers: [.shift]),
+                    .init(text: "ם", keyCode: 31),
+                    .init(text: "ם", keyCode: 31),
+                    .init(text: "ך", keyCode: 37),
+                ],
+                "Cool"
+            ),
+            (
+                "קךךם",
+                [
+                    .init(text: "", keyCode: 4, modifiers: [.capsLock]),
+                    .init(text: "ק", keyCode: 14),
+                    .init(text: "ך", keyCode: 37),
+                    .init(text: "ך", keyCode: 37),
+                    .init(text: "ם", keyCode: 31),
+                ],
+                "Hello"
+            ),
+        ]
+
+        for (token, keyStrokes, candidate) in cases {
+            let conversion = map.convert(token, sourceHint: .hebrew, keyStrokes: keyStrokes)
+            XCTAssertEqual(conversion?.candidate, candidate, token)
+            XCTAssertTrue(conversion?.physicalEvidence?.recoveredShift == true, token)
+        }
+    }
+
     func testCompletePhysicalTracePreservesApostropheAndRecoversSilentCapital() {
         XCTAssertEqual(
             map.convert(
                 "ק,רק",
                 sourceHint: .hebrew,
                 keyStrokes: [
-                    .init(text: "", keyCode: 13),
+                    .init(text: "", keyCode: 13, modifiers: [.shift]),
                     .init(text: "ק", keyCode: 14),
                     .init(text: ",", keyCode: 39),
                     .init(text: "ר", keyCode: 15),

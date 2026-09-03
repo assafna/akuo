@@ -81,7 +81,7 @@ final class SystemNativeEventDecoder: NativeEventDecoding {
         flags: CGEventFlags,
         marker: Int64
     ) -> DecodedKeyboardEvent {
-        if flags.contains(.maskShift),
+        if flags.contains(.maskShift) || flags.contains(.maskAlphaShift),
            KeyboardLayoutMap.isAlphabeticKeyCode(Int(keyCode)) {
             return .text("", keyCode: keyCode, marker: marker)
         }
