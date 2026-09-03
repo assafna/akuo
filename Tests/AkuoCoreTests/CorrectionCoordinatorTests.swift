@@ -1122,6 +1122,44 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(counter.incrementCount, 0)
     }
 
+    func testCorrectionRevalidatesContextAfterPreviousTextValidationBeforeReplacement() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        var contextIsEligible = true
+        var eligibilityChecks = 0
+        let validator = RecordingPreviousTextValidator(
+            result: true,
+            onValidation: { contextIsEligible = false }
+        )
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt),
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: {
+                eligibilityChecks += 1
+                return contextIsEligible
+            }
+        ), .notHandled)
+        XCTAssertEqual(eligibilityChecks, 2)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "akuo", context: context),
+        ])
+        XCTAssertTrue(replacer.calls.isEmpty)
+        XCTAssertTrue(selector.selected.isEmpty)
+        XCTAssertEqual(counter.incrementCount, 0)
+    }
+
     func testAutomaticCorrectionRequiresExactVisibleTokenSuffixBeforeReplacement() {
         let replacer = RecordingReplacer()
         let selector = RecordingSelector()
@@ -1420,10 +1458,12 @@ private struct PreviousTextValidationCall: Equatable {
 
 private final class RecordingPreviousTextValidator: PreviousTextValidating {
     private let result: Bool
+    private let onValidation: (() -> Void)?
     private(set) var calls: [PreviousTextValidationCall] = []
 
-    init(result: Bool) {
+    init(result: Bool, onValidation: (() -> Void)? = nil) {
         self.result = result
+        self.onValidation = onValidation
     }
 
     func hasExactTextImmediatelyBeforeCaret(
@@ -1431,6 +1471,7 @@ private final class RecordingPreviousTextValidator: PreviousTextValidating {
         context: FocusContext
     ) -> Bool {
         calls.append(.init(expectedText: expectedText, context: context))
+        onValidation?()
         return result
     }
 }

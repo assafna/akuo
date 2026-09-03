@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import XCTest
 import AkuoCore
 @testable import AkuoMac
@@ -398,6 +399,73 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+    }
+
+    func testExactSourceChangeDuringPreviousTextValidationPreservesOriginalBoundary() {
+        let decoder = FakeNativeEventDecoder()
+        let permission = FakePermissionChecker(isGranted: true)
+        let secureInput = FakeSecureInputChecker(isSecureInputEnabled: false)
+        let context = FocusContext(
+            processIdentifier: 42,
+            elementIdentifier: "field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        let focus = FakeFocusContextProvider(context: context)
+        let inputSources = FakeInputSourceState(readiness: .init(
+            englishAvailable: true,
+            hebrewAvailable: true
+        ), currentLanguage: .english)
+        let replacer = MonitorRecordingTextReplacer()
+        let validator = MonitorPreviousTextValidator {
+            inputSources.stableCurrentSource = .init(
+                identifier: "com.apple.keylayout.US",
+                language: .english
+            )
+        }
+        let scorer = WordScorer(recognizer: MonitorRecognizer())
+        let coordinator = CorrectionCoordinator(
+            policy: CorrectionPolicy(
+                layoutMap: KeyboardLayoutMap(),
+                originalScorer: scorer,
+                candidateScorer: scorer,
+                excluder: TokenExcluder()
+            ),
+            textReplacer: replacer,
+            inputSourceSelector: MonitorInputSourceSelector(),
+            counter: MonitorCorrectionCounter(),
+            clock: MonitorRuntimeClock(),
+            undoController: UndoController(),
+            previousTextValidator: validator
+        )
+        let monitor = KeyboardEventMonitor(
+            decoder: decoder,
+            coordinator: coordinator,
+            permission: permission,
+            secureInput: secureInput,
+            focusContextProvider: focus,
+            inputSources: inputSources,
+            tapManager: FakeNativeEventTapManager(),
+            isAkuoEnabled: { true }
+        )
+        decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(monitor.process(fakeNativeEvent))
+
+        let abcEnglish = InputSourceSnapshot(
+            identifier: "com.apple.keylayout.ABC",
+            language: .english
+        )
+        inputSources.scriptedSources = [
+            abcEnglish,
+            abcEnglish,
+        ]
+        decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertTrue(monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "akuo", context: context),
+        ])
+        XCTAssertEqual(replacer.callCount, 0)
     }
 
     func testStableSourceChangeBetweenEventsStartsANewToken() {
@@ -1036,6 +1104,61 @@ private struct MonitorFixture {
     let inputSources: FakeInputSourceState
     let tapManager: FakeNativeEventTapManager
     let delegate: FakeMonitorDelegate
+}
+
+private struct MonitorPreviousTextValidationCall: Equatable {
+    let expectedText: String
+    let context: FocusContext
+}
+
+private final class MonitorPreviousTextValidator: PreviousTextValidating {
+    private let onValidation: () -> Void
+    private(set) var calls: [MonitorPreviousTextValidationCall] = []
+
+    init(onValidation: @escaping () -> Void) {
+        self.onValidation = onValidation
+    }
+
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool {
+        calls.append(.init(expectedText: expectedText, context: context))
+        onValidation()
+        return true
+    }
+}
+
+private final class MonitorRecordingTextReplacer: TextReplacing {
+    private(set) var callCount = 0
+
+    func replacePreviousText(
+        deleteCount: Int,
+        replacement: String,
+        boundary: String,
+        boundaryKeyCode: Int?
+    ) -> Bool {
+        callCount += 1
+        return true
+    }
+}
+
+private struct MonitorRecognizer: WordRecognizing {
+    func recognitionStatus(for word: String, as language: Language) -> RecognitionStatus {
+        language == .hebrew && word == "שלום" ? .recognized : .unknown
+    }
+}
+
+private struct MonitorInputSourceSelector: InputSourceSelecting {
+    func select(_ language: Language) -> Bool { true }
+}
+
+private struct MonitorCorrectionCounter: CorrectionCounting {
+    func incrementCorrectionCount() {}
+}
+
+private struct MonitorRuntimeClock: RuntimeClock {
+    var now: Date { Date(timeIntervalSince1970: 0) }
 }
 
 private final class FakeNativeEventDecoder: NativeEventDecoding {
