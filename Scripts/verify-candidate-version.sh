@@ -27,6 +27,7 @@ plutil -lint "$AKUO_CANDIDATE_PLIST"
 akuo_verify_candidate_plist "$AKUO_CANDIDATE_PLIST"
 akuo_verify_candidate_source_revision "$AKUO_CANDIDATE_PLIST"
 akuo_verify_runtime_identity "$AKUO_CANDIDATE_EXECUTABLE"
+akuo_verify_runtime_source_revision "$AKUO_CANDIDATE_EXECUTABLE"
 
 printf 'Candidate identity: %s (%s)\n' \
     "$AKUO_CANDIDATE_VERSION" "$AKUO_CANDIDATE_BUILD"

@@ -22,25 +22,20 @@ Akuo is menu-bar-only and does not appear in the Dock. It works through the same
 The project uses Swift Package Manager and the command-line tools included with Xcode.
 
 ```bash
-git fetch --tags --force origin
-AKUO_RELEASE_TAGS_EVIDENCE_PATH="$(mktemp "${TMPDIR:-/tmp}/akuo-tags.XXXXXX")"
-git ls-remote --tags --refs origin 'refs/tags/v*' \
-  >"$AKUO_RELEASE_TAGS_EVIDENCE_PATH"
-AKUO_RELEASE_TAGS_EVIDENCE="$AKUO_RELEASE_TAGS_EVIDENCE_PATH" \
-  Scripts/verify.sh
+Scripts/verify.sh
 ```
 
-This fail-fast verification entry point first checks its own orchestration contract, then runs the candidate-version and local-signing packaging contracts, the Swift test suite, a release build through `Scripts/build-app.sh`, and an independent identity check of the finished bundle, in that order. A distributable build requires a clean committed worktree, complete non-shallow local history, and the explicit nonempty tag inventory captured from `origin` above. The scripts reject absent, malformed, or locally mismatched evidence; they never fetch or alter Git state themselves. The packaging script accepts exactly `debug` or `release`, creates `dist/Akuo.app`, validates its property list, signs and verifies the bundle, and prints the SHA-256 digest and designated requirement of its final executable. With no additional signing configuration it uses an ad-hoc signature suitable for CI and source verification, but not for an installed copy that should retain Accessibility permission across updates.
+This fail-fast verification entry point first checks its own orchestration contract, then runs the candidate-version and local-signing packaging contracts, the Swift test suite, a release build through `Scripts/build-app.sh`, and an independent identity check of the finished bundle, in that order. A distributable build requires a clean committed worktree, complete non-shallow local history, and network access for a live read-only release-tag query against the configured `origin`. The scripts reject failed, empty, malformed, missing, or locally mismatched tag results; they never fetch or alter Git refs themselves. The packaging script accepts exactly `debug` or `release`, creates `dist/Akuo.app`, validates its property list, signs and verifies the bundle, and prints the SHA-256 digest and designated requirement of its final executable. With no additional signing configuration it uses an ad-hoc signature suitable for CI and source verification, but not for an installed copy that should retain Accessibility permission across updates.
 
-`Sources/AkuoCore/AkuoCoreVersion.swift` is the single committed authority for the candidate marketing version and build number. `Configuration/Akuo-Info.plist` deliberately contains neither bundle-version key; packaging reads strict string literals from the Swift declaration and injects both values plus the exact clean `HEAD` SHA into the copied candidate plist. Verification compares that declaration and source SHA with the packaged plist and the built executable's runtime identity. It compares local `v*` tag objects with the explicit origin inventory, then inspects each tagged commit, including the legacy tagged plist when needed, so an Unreleased candidate cannot reuse a released version/build pair.
+`Sources/AkuoCore/AkuoCoreVersion.swift` is the single committed authority for the candidate marketing version and build number. `Configuration/Akuo-Info.plist` deliberately contains neither bundle-version key. Packaging archives the captured `HEAD` object into a temporary source tree, injects that SHA into a runtime constant in the snapshot, and compiles only the snapshot, so ignored files and transient caller-worktree edits cannot enter the executable. It injects the version, build, and same source SHA into the copied candidate plist. Verification compares the authoritative declaration with the packaged plist and compares both the plist and executable runtime source revision with `HEAD`. It compares local `v*` tag objects with the live origin result, then inspects each tagged commit, including the legacy tagged plist when needed, so an Unreleased candidate cannot reuse a released version/build pair.
 
-A rebuild of the exact same clean Git commit with the same identity is the same candidate. For an Unreleased build, `Scripts/build-app.sh` requires the build number to be greater than every identity it can inspect across all local refs and reflogs; every merge parent is therefore covered. A rebase, squash, or cherry-pick that creates a new candidate SHA must advance the build number, including when the old candidate commit is no longer present in a fresh clone. An exact clean commit carrying its own complete-provenance `v*` release tag remains rebuildable. To read a built candidate's identity without copying values into documentation or commands, preserve the same evidence variable and run:
+A rebuild of the exact same clean Git commit with the same identity is the same candidate. For an Unreleased build, `Scripts/build-app.sh` requires the build number to be greater than every identity it can inspect across all local refs and reflogs; every merge parent is therefore covered. A rebase, squash, or cherry-pick that creates a new candidate SHA must advance the build number, including when the old candidate commit is no longer present in a fresh clone. An exact clean commit carrying its own live-origin `v*` release tag remains rebuildable only when no other locally reachable revision used the same pair. To read a built candidate's identity without copying values into documentation or commands, run:
 
 ```bash
-AKUO_RELEASE_TAGS_EVIDENCE="$AKUO_RELEASE_TAGS_EVIDENCE_PATH" \
-  Scripts/verify-candidate-version.sh dist/Akuo.app
+Scripts/verify-candidate-version.sh dist/Akuo.app
 plutil -extract CFBundleShortVersionString raw -o - dist/Akuo.app/Contents/Info.plist
 plutil -extract CFBundleVersion raw -o - dist/Akuo.app/Contents/Info.plist
+plutil -extract AkuoSourceRevision raw -o - dist/Akuo.app/Contents/Info.plist
 ```
 
 ## Stable local installation and Accessibility permission
@@ -52,8 +47,7 @@ macOS associates privacy permissions with an application's designated code requi
 3. Quit Akuo, then build and install with that identity:
 
    ```bash
-   AKUO_RELEASE_TAGS_EVIDENCE="$AKUO_RELEASE_TAGS_EVIDENCE_PATH" \
-     AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' \
+   AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' \
      Scripts/install-local.sh release
    ```
 
@@ -62,8 +56,7 @@ macOS associates privacy permissions with an application's designated code requi
    When the candidate must be inspected or accepted before installation, build it once, run the signing and metadata checks against that bundle, and install that exact path without rebuilding:
 
    ```bash
-   AKUO_RELEASE_TAGS_EVIDENCE="$AKUO_RELEASE_TAGS_EVIDENCE_PATH" \
-     AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' \
+   AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' \
      Scripts/build-app.sh release
    AKUO_CANDIDATE_PATH="$PWD/dist/Akuo.app"
    Scripts/verify-local-signing.sh "$AKUO_CANDIDATE_PATH"

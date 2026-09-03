@@ -15,6 +15,10 @@ struct AkuoApp: App {
             print(AkuoMacVersion.packagingIdentity)
             exit(EXIT_SUCCESS)
         }
+        if Array(CommandLine.arguments.dropFirst()) == ["--candidate-source-revision"] {
+            print(AkuoMacVersion.sourceRevision)
+            exit(EXIT_SUCCESS)
+        }
 
         let sharedModel = AppModel.live()
         _model = StateObject(wrappedValue: sharedModel)

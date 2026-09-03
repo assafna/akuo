@@ -31,30 +31,30 @@ version or build literal from an issue, checklist, or previous candidate. From t
 repository commit used to build it, record the output of:
 
 ```bash
-git fetch --tags --force origin
-AKUO_RELEASE_TAGS_EVIDENCE_PATH="$(mktemp "${TMPDIR:-/tmp}/akuo-tags.XXXXXX")"
-git ls-remote --tags --refs origin 'refs/tags/v*' \
-  >"$AKUO_RELEASE_TAGS_EVIDENCE_PATH"
-export AKUO_RELEASE_TAGS_EVIDENCE="$AKUO_RELEASE_TAGS_EVIDENCE_PATH"
 AKUO_CANDIDATE_PATH=/Applications/Akuo.app
 Scripts/verify-candidate-version.sh "$AKUO_CANDIDATE_PATH"
 plutil -extract CFBundleShortVersionString raw -o - \
   "$AKUO_CANDIDATE_PATH/Contents/Info.plist"
 plutil -extract CFBundleVersion raw -o - \
   "$AKUO_CANDIDATE_PATH/Contents/Info.plist"
+plutil -extract AkuoSourceRevision raw -o - \
+  "$AKUO_CANDIDATE_PATH/Contents/Info.plist"
 git rev-parse HEAD
 shasum -a 256 "$AKUO_CANDIDATE_PATH/Contents/MacOS/Akuo"
 ```
 
-The verifier requires a clean committed checkout with non-shallow history. It
-compares the authoritative source declaration and exact `HEAD` SHA with the
-packaged plist, the runtime identity reported by that executable, and every
-identity visible through local refs and reflogs. It also requires local `v*` tag
-objects to match the explicit inventory captured from `origin`, then inspects
-their tagged source/plist contents. Rebuilding the exact clean source commit
-retains the same candidate identity. A rebase, squash, cherry-pick, merge, or
-other new candidate SHA requires a higher build number; if an older candidate is
-outside the local refs/reflogs, the operator must still advance it before build.
+The verifier requires a clean committed checkout with non-shallow history and
+network access for a live read-only `origin` tag query. It compares the
+authoritative source declaration and exact `HEAD` SHA with the packaged plist,
+the runtime identity and compiled source revision reported by that executable,
+and every identity visible through local refs and reflogs. It also requires
+local `v*` tag objects to match the live origin result, then inspects their tagged
+source/plist contents. The build compiles an archived snapshot of the exact
+captured commit rather than caller-worktree files. Rebuilding the exact clean
+source commit retains the same candidate identity. A rebase, squash,
+cherry-pick, merge, or other new candidate SHA requires a higher build number;
+if an older candidate is outside the local refs/reflogs, the operator must still
+advance it before build.
 
 Run this local inspection command and record whether each required language is
 advertised by either its base identifier or its locale-specific identifier:

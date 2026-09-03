@@ -10,6 +10,8 @@ AKUO_ORIGIN_ROOT="$AKUO_TEST_TMP/origin.git"
 AKUO_TAG_EVIDENCE="$AKUO_TEST_TMP/release-tags.evidence"
 AKUO_FAKE_BIN="$AKUO_TEST_TMP/fake-bin"
 AKUO_BUILD_BIN="$AKUO_TEST_TMP/build-bin"
+AKUO_BUILD_INPUT_LOG="$AKUO_TEST_TMP/build-input.log"
+AKUO_BUILD_CWD_LOG="$AKUO_TEST_TMP/build-cwd.log"
 AKUO_SYSTEM_GIT="$(command -v git)"
 
 akuo_write_file() {
@@ -69,7 +71,8 @@ akuo_refresh_tag_evidence() {
 
 akuo_reset_fixture() {
     rm -rf -- \
-        "$AKUO_FIXTURE_ROOT" "$AKUO_ORIGIN_ROOT" "$AKUO_FAKE_BIN" "$AKUO_BUILD_BIN"
+        "$AKUO_FIXTURE_ROOT" "$AKUO_ORIGIN_ROOT" "$AKUO_FAKE_BIN" "$AKUO_BUILD_BIN" \
+        "$AKUO_BUILD_INPUT_LOG" "$AKUO_BUILD_CWD_LOG"
     mkdir -p \
         "$AKUO_FIXTURE_ROOT/Scripts/lib" \
         "$AKUO_FIXTURE_ROOT/Sources/AkuoMac" \
@@ -97,6 +100,10 @@ akuo_reset_fixture() {
         '    public static let current = AkuoCoreVersion.current' \
         '    public static let build = AkuoCoreVersion.build' \
         '}'
+    akuo_write_file "$AKUO_FIXTURE_ROOT/Sources/AkuoCore/AkuoSourceRevision.swift" \
+        'public enum AkuoSourceRevision {' \
+        '    public static let current = ""' \
+        '}'
     akuo_write_template
 
     # Stub bodies are single-quoted so their variables expand when each generated
@@ -105,6 +112,21 @@ akuo_reset_fixture() {
     akuo_write_file "$AKUO_FAKE_BIN/swift" \
         '#!/usr/bin/env bash' \
         'set -euo pipefail' \
+        'if [[ " $* " != *" --show-bin-path "* ]]; then' \
+        '    printf "%s\n" "$PWD" >"${AKUO_BUILD_CWD_LOG:?}"' \
+        '    if [[ "${AKUO_MUTATE_THEN_RESTORE:-}" == true ]]; then' \
+        '        source_path="${AKUO_FIXTURE_ROOT_ENV:?}/Sources/AkuoCore/AkuoCoreVersion.swift"' \
+        '        source_contents="$(cat "$source_path")"' \
+        '        printf "\n// transient build mutation\n" >>"$source_path"' \
+        '    fi' \
+        '    {' \
+        '        if [[ -f Sources/AkuoCore/Ignored.swift ]]; then printf "ignored-input\n"; fi' \
+        '        cat Sources/AkuoCore/AkuoCoreVersion.swift' \
+        '    } >"${AKUO_BUILD_INPUT_LOG:?}"' \
+        '    if [[ "${AKUO_MUTATE_THEN_RESTORE:-}" == true ]]; then' \
+        '        printf "%s\n" "$source_contents" >"$source_path"' \
+        '    fi' \
+        'fi' \
         'if [[ "${AKUO_MUTATE_DURING_BUILD:-}" == true && " $* " != *" --show-bin-path "* ]]; then' \
         '    printf "mutated during build\n" >>"${AKUO_FIXTURE_ROOT_ENV:?}/README.md"' \
         'fi' \
@@ -112,6 +134,18 @@ akuo_reset_fixture() {
         '    printf "%s\n" "${AKUO_BUILD_BIN:?}"' \
         'fi'
     chmod +x "$AKUO_FAKE_BIN/swift"
+    # shellcheck disable=SC2016
+    akuo_write_file "$AKUO_FAKE_BIN/git" \
+        '#!/usr/bin/env bash' \
+        'set -euo pipefail' \
+        'if [[ "${AKUO_FAIL_REMOTE_TAG_QUERY:-}" == true && " $* " == *" ls-remote --tags --refs "* ]]; then exit 72; fi' \
+        'if [[ "${AKUO_MALFORMED_REMOTE_TAGS:-}" == true && " $* " == *" ls-remote --tags --refs "* ]]; then' \
+        '    printf "malformed remote tags\n"' \
+        '    exit 0' \
+        'fi' \
+        'if [[ "${AKUO_FAIL_LOCAL_TAG_ENUMERATION:-}" == true && " $* " == *" tag --list "* ]]; then exit 71; fi' \
+        'exec "${AKUO_SYSTEM_GIT:?}" "$@"'
+    chmod +x "$AKUO_FAKE_BIN/git"
     akuo_write_file "$AKUO_FAKE_BIN/codesign" \
         '#!/usr/bin/env bash' \
         'exit 0'
@@ -122,6 +156,14 @@ akuo_reset_fixture() {
         'set -euo pipefail' \
         'if [[ "${1:-}" == --candidate-identity ]]; then' \
         '    printf "%b\n" "${AKUO_RUNTIME_IDENTITY:-0.4.0\\t4}"' \
+        '    exit 0' \
+        'fi' \
+        'if [[ "${1:-}" == --candidate-source-revision ]]; then' \
+        '    if [[ -n "${AKUO_RUNTIME_SOURCE_REVISION:-}" ]]; then' \
+        '        printf "%s\n" "$AKUO_RUNTIME_SOURCE_REVISION"' \
+        '    else' \
+        '        "${AKUO_SYSTEM_GIT:?}" -C "${AKUO_FIXTURE_ROOT_ENV:?}" rev-parse HEAD' \
+        '    fi' \
         '    exit 0' \
         'fi' \
         'exit 64'
@@ -151,9 +193,12 @@ akuo_reset_fixture() {
 akuo_build() {
     env \
         PATH="$AKUO_FAKE_BIN:$PATH" \
+        AKUO_SYSTEM_GIT="$AKUO_SYSTEM_GIT" \
         AKUO_BUILD_BIN="$AKUO_BUILD_BIN" \
+        AKUO_BUILD_INPUT_LOG="$AKUO_BUILD_INPUT_LOG" \
+        AKUO_BUILD_CWD_LOG="$AKUO_BUILD_CWD_LOG" \
         AKUO_FIXTURE_ROOT_ENV="$AKUO_FIXTURE_ROOT" \
-        AKUO_RELEASE_TAGS_EVIDENCE="$AKUO_TAG_EVIDENCE" \
+        AKUO_RELEASE_TAGS_EVIDENCE="${AKUO_RELEASE_TAGS_EVIDENCE:-}" \
         AKUO_RUNTIME_IDENTITY="${AKUO_RUNTIME_IDENTITY:-0.4.0	4}" \
         "$AKUO_FIXTURE_ROOT/Scripts/build-app.sh" release
 }
@@ -161,7 +206,9 @@ akuo_build() {
 akuo_verify() {
     env \
         PATH="$AKUO_FAKE_BIN:$PATH" \
-        AKUO_RELEASE_TAGS_EVIDENCE="$AKUO_TAG_EVIDENCE" \
+        AKUO_SYSTEM_GIT="$AKUO_SYSTEM_GIT" \
+        AKUO_FIXTURE_ROOT_ENV="$AKUO_FIXTURE_ROOT" \
+        AKUO_RELEASE_TAGS_EVIDENCE="${AKUO_RELEASE_TAGS_EVIDENCE:-}" \
         AKUO_RUNTIME_IDENTITY="${AKUO_RUNTIME_IDENTITY:-0.4.0	4}" \
         AKUO_SOURCE_REVISION="${AKUO_SOURCE_REVISION:-}" \
         "$AKUO_FIXTURE_ROOT/Scripts/verify-candidate-version.sh" \
@@ -199,6 +246,11 @@ test_injects_authoritative_identity() {
     [[ "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" == 0.4.0 ]]
     [[ "$(plutil -extract CFBundleVersion raw -o - "$plist")" == 4 ]]
     [[ "$(plutil -extract AkuoSourceRevision raw -o - "$plist")" == \
+        "$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)" ]]
+    [[ "$(AKUO_SYSTEM_GIT="$AKUO_SYSTEM_GIT" \
+        AKUO_FIXTURE_ROOT_ENV="$AKUO_FIXTURE_ROOT" \
+        "$AKUO_FIXTURE_ROOT/dist/Akuo.app/Contents/MacOS/Akuo" \
+            --candidate-source-revision)" == \
         "$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)" ]]
     akuo_verify >/dev/null
 }
@@ -325,6 +377,16 @@ test_verifier_rejects_source_revision_drift() {
         akuo_verify
 }
 
+# Production mutation caught: accepting a runtime compiled without the exact
+# snapshotted source revision even though its plist label matches HEAD.
+test_verifier_rejects_runtime_source_revision_drift() {
+    akuo_reset_fixture
+    akuo_build >/dev/null
+    AKUO_RUNTIME_SOURCE_REVISION=0000000000000000000000000000000000000000 \
+        akuo_assert_rejected 'runtime source revision does not match committed HEAD' \
+        akuo_verify
+}
+
 # Production mutation caught: trusting a v-tag name instead of inspecting the
 # tagged source/plist identity and rejecting its released pair on a later commit.
 test_rejects_released_pair_reuse() {
@@ -334,7 +396,6 @@ test_rejects_released_pair_reuse() {
     akuo_commit 'legacy tagged source identity'
     git -C "$AKUO_FIXTURE_ROOT" tag -a v9.9.9 -m 'fixture release'
     git -C "$AKUO_FIXTURE_ROOT" push -q origin v9.9.9
-    akuo_refresh_tag_evidence
     akuo_write_identity_source \
         'public static let current = "0.4.0"' \
         'public static let build = "4"'
@@ -348,13 +409,22 @@ test_rejects_released_pair_reuse() {
 # because its pair appears in the tag being built.
 test_allows_exact_tagged_release() {
     akuo_reset_fixture
-    akuo_write_file "$AKUO_FIXTURE_ROOT/README.md" 'tagged release source'
-    akuo_commit 'unrelated source revision'
     git -C "$AKUO_FIXTURE_ROOT" tag -a v0.4.0 -m 'fixture release'
     git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.4.0
-    akuo_refresh_tag_evidence
     akuo_build >/dev/null
     akuo_verify >/dev/null
+}
+
+# Production mutation caught: treating a tag on a later source commit as
+# permission to reuse the identity already assigned to its parent candidate.
+test_rejects_exact_tag_laundering() {
+    akuo_reset_fixture
+    akuo_write_file "$AKUO_FIXTURE_ROOT/README.md" 'later tagged source'
+    akuo_commit 'later source with reused identity'
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.4.0 -m 'fixture release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.4.0
+    akuo_assert_rejected 'candidate identity 0.4.0 (4) is assigned to another source revision' \
+        akuo_build
 }
 
 # Production mutation caught: treating a new source commit with an unchanged
@@ -394,6 +464,18 @@ test_rejects_dirty_untracked_source() {
     akuo_assert_rejected 'candidate source worktree must be clean' akuo_build
 }
 
+# Production mutation caught: allowing an ignored Swift file in the caller
+# worktree to enter compilation under the clean committed HEAD identity.
+test_build_ignores_ignored_swift_input() {
+    akuo_reset_fixture
+    printf 'Sources/AkuoCore/Ignored.swift\n' >>"$AKUO_FIXTURE_ROOT/.git/info/exclude"
+    akuo_write_file "$AKUO_FIXTURE_ROOT/Sources/AkuoCore/Ignored.swift" \
+        'public let ignoredCandidateBehavior = true'
+    akuo_build >/dev/null
+    [[ "$(cat "$AKUO_BUILD_CWD_LOG")" != "$AKUO_FIXTURE_ROOT" ]]
+    [[ "$(cat "$AKUO_BUILD_INPUT_LOG")" != *ignored-input* ]]
+}
+
 # Production mutation caught: independently verifying a previously built bundle
 # against a dirty checkout rather than the exact committed source revision.
 test_verifier_rejects_dirty_source() {
@@ -412,13 +494,22 @@ test_rejects_source_change_during_build() {
         akuo_assert_rejected 'candidate source changed during packaging' akuo_build
 }
 
+# Production mutation caught: compiling transient caller-worktree bytes that are
+# restored before the post-build clean check can observe them.
+test_build_uses_snapshot_during_transient_mutation() {
+    akuo_reset_fixture
+    AKUO_MUTATE_THEN_RESTORE=true akuo_build >/dev/null
+    [[ "$(cat "$AKUO_BUILD_CWD_LOG")" != "$AKUO_FIXTURE_ROOT" ]]
+    [[ "$(cat "$AKUO_BUILD_INPUT_LOG")" != *'transient build mutation'* ]]
+    [[ -z "$(git -C "$AKUO_FIXTURE_ROOT" status --porcelain=v1 --untracked-files=all)" ]]
+}
+
 # Production mutation caught: allowing dirty source merely because HEAD is an
 # exact release-tag commit.
 test_rejects_dirty_exact_tagged_release() {
     akuo_reset_fixture
     git -C "$AKUO_FIXTURE_ROOT" tag -a v0.4.0 -m 'fixture release'
     git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.4.0
-    akuo_refresh_tag_evidence
     printf '\n// dirty tagged source\n' >>\
         "$AKUO_FIXTURE_ROOT/Sources/AkuoCore/AkuoCoreVersion.swift"
     akuo_assert_rejected 'candidate source worktree must be clean' akuo_build
@@ -432,35 +523,48 @@ test_rejects_incomplete_local_tags() {
     akuo_assert_rejected 'local release tags do not match origin' akuo_build
 }
 
-# Production mutation caught: accepting a checkout that has neither release tags
-# nor explicit remote provenance proving the tag set is complete.
+# Production mutation caught: treating a successful but empty live origin query
+# as sufficient released-tag provenance.
 test_rejects_no_tag_provenance() {
     akuo_reset_fixture
-    AKUO_TAG_EVIDENCE="$AKUO_TEST_TMP/missing-release-tags.evidence" \
-        akuo_assert_rejected 'cannot prove complete released-tag provenance' akuo_build
+    git -C "$AKUO_FIXTURE_ROOT" tag -d v0.3.0 >/dev/null
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin :refs/tags/v0.3.0
+    akuo_assert_rejected 'origin has no release tags' akuo_build
+}
+
+# Production mutation caught: trusting a stale caller-created inventory that
+# matches stale local tags after origin has gained another release tag.
+test_rejects_stale_matching_tag_evidence() {
+    akuo_reset_fixture
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.4.0 -m 'remote-only fixture release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.4.0
+    git -C "$AKUO_FIXTURE_ROOT" tag -d v0.4.0 >/dev/null
+    AKUO_RELEASE_TAGS_EVIDENCE="$AKUO_TAG_EVIDENCE" \
+        akuo_assert_rejected 'local release tags do not match origin' akuo_build
+}
+
+# Production mutation caught: accepting caller evidence when the live read-only
+# origin tag query cannot establish current provenance.
+test_rejects_remote_tag_query_failure() {
+    akuo_reset_fixture
+    AKUO_FAIL_REMOTE_TAG_QUERY=true \
+        akuo_assert_rejected 'cannot query release tags from origin' akuo_build
 }
 
 # Production mutation caught: losing a tag-enumeration failure through process
 # substitution and continuing with an empty release set.
 test_rejects_failed_local_tag_enumeration() {
     akuo_reset_fixture
-    # shellcheck disable=SC2016
-    akuo_write_file "$AKUO_FAKE_BIN/git" \
-        '#!/usr/bin/env bash' \
-        'set -euo pipefail' \
-        'if [[ " $* " == *" tag --list "* ]]; then exit 71; fi' \
-        'exec "${AKUO_SYSTEM_GIT:?}" "$@"'
-    chmod +x "$AKUO_FAKE_BIN/git"
-    AKUO_SYSTEM_GIT="$AKUO_SYSTEM_GIT" \
+    AKUO_FAIL_LOCAL_TAG_ENUMERATION=true \
         akuo_assert_rejected 'cannot enumerate local release tags' akuo_build
 }
 
-# Production mutation caught: accepting local tags when the explicit complete
-# inventory evidence is malformed and cannot prove provenance.
-test_rejects_malformed_tag_evidence() {
+# Production mutation caught: accepting malformed ref output from the live
+# origin query as complete released-tag provenance.
+test_rejects_malformed_remote_tags() {
     akuo_reset_fixture
-    akuo_write_file "$AKUO_TAG_EVIDENCE" 'not-a-valid-tag-inventory'
-    akuo_assert_rejected 'cannot prove complete released-tag provenance' akuo_build
+    AKUO_MALFORMED_REMOTE_TAGS=true \
+        akuo_assert_rejected 'malformed origin response' akuo_build
 }
 
 # Production mutation caught: treating a depth-one checkout with unavailable
@@ -529,19 +633,25 @@ case "${1:-all}" in
     runtime-drift) test_rejects_runtime_drift ;;
     plist-drift) test_verifier_rejects_candidate_plist_drift ;;
     source-revision-drift) test_verifier_rejects_source_revision_drift ;;
+    runtime-source-revision-drift) test_verifier_rejects_runtime_source_revision_drift ;;
     released-reuse) test_rejects_released_pair_reuse ;;
     exact-tag) test_allows_exact_tagged_release ;;
+    exact-tag-laundering) test_rejects_exact_tag_laundering ;;
     new-source-reuse) test_rejects_new_source_with_same_build ;;
     same-commit) test_allows_same_commit_rebuild ;;
     dirty-tracked) test_rejects_dirty_tracked_source ;;
     dirty-untracked) test_rejects_dirty_untracked_source ;;
+    ignored-input) test_build_ignores_ignored_swift_input ;;
     dirty-verifier) test_verifier_rejects_dirty_source ;;
     dirty-during-build) test_rejects_source_change_during_build ;;
+    transient-mutation) test_build_uses_snapshot_during_transient_mutation ;;
     dirty-tag) test_rejects_dirty_exact_tagged_release ;;
     incomplete-tags) test_rejects_incomplete_local_tags ;;
     no-tags) test_rejects_no_tag_provenance ;;
+    stale-evidence) test_rejects_stale_matching_tag_evidence ;;
+    remote-query-failure) test_rejects_remote_tag_query_failure ;;
     failed-local-enumeration) test_rejects_failed_local_tag_enumeration ;;
-    malformed-tag-evidence) test_rejects_malformed_tag_evidence ;;
+    malformed-remote-tags) test_rejects_malformed_remote_tags ;;
     shallow) test_rejects_shallow_history ;;
     divergent) test_rejects_divergent_identity_reuse ;;
     merge-parent) test_rejects_merge_parent_identity_reuse ;;
@@ -559,19 +669,25 @@ case "${1:-all}" in
         test_rejects_runtime_drift
         test_verifier_rejects_candidate_plist_drift
         test_verifier_rejects_source_revision_drift
+        test_verifier_rejects_runtime_source_revision_drift
         test_rejects_released_pair_reuse
         test_allows_exact_tagged_release
+        test_rejects_exact_tag_laundering
         test_rejects_new_source_with_same_build
         test_allows_same_commit_rebuild
         test_rejects_dirty_tracked_source
         test_rejects_dirty_untracked_source
+        test_build_ignores_ignored_swift_input
         test_verifier_rejects_dirty_source
         test_rejects_source_change_during_build
+        test_build_uses_snapshot_during_transient_mutation
         test_rejects_dirty_exact_tagged_release
         test_rejects_incomplete_local_tags
         test_rejects_no_tag_provenance
+        test_rejects_stale_matching_tag_evidence
+        test_rejects_remote_tag_query_failure
         test_rejects_failed_local_tag_enumeration
-        test_rejects_malformed_tag_evidence
+        test_rejects_malformed_remote_tags
         test_rejects_shallow_history
         test_rejects_divergent_identity_reuse
         test_rejects_merge_parent_identity_reuse

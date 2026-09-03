@@ -8,5 +8,6 @@ final class AkuoMacVersionTests: XCTestCase {
     func testMacCandidateIdentityBridgesCoreIdentity() {
         XCTAssertEqual(AkuoMacVersion.current, AkuoCoreVersion.current)
         XCTAssertEqual(AkuoMacVersion.build, AkuoCoreVersion.build)
+        XCTAssertEqual(AkuoMacVersion.sourceRevision, AkuoSourceRevision.current)
     }
 }

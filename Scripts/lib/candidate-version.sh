@@ -202,24 +202,29 @@ akuo_assert_source_unchanged() {
 
 akuo_require_complete_release_tags() {
     local project_root="$1"
-    local evidence_path="${AKUO_RELEASE_TAGS_EVIDENCE:-}"
     local local_tags
     local local_inventory=""
-    local evidence_inventory
+    local origin_response
+    local origin_inventory
     local tag
     local tag_object
 
-    if [[ -z "$evidence_path" || ! -f "$evidence_path" || ! -r "$evidence_path" || \
-        ! -s "$evidence_path" ]]; then
-        echo 'cannot prove complete released-tag provenance: set AKUO_RELEASE_TAGS_EVIDENCE' >&2
+    if ! origin_response="$(
+        git -C "$project_root" ls-remote --tags --refs origin 'refs/tags/v*'
+    )"; then
+        echo 'cannot query release tags from origin' >&2
         return 1
     fi
-    if ! evidence_inventory="$(awk '
+    if [[ -z "$origin_response" ]]; then
+        echo 'origin has no release tags' >&2
+        return 1
+    fi
+    if ! origin_inventory="$(printf '%s\n' "$origin_response" | awk '
         $0 !~ /^[0-9a-f]{40}[[:space:]]+refs\/tags\/v[^[:space:]]+$/ { invalid = 1 }
         { print $1 "\t" $2 }
         END { if (NR == 0 || invalid) exit 1 }
-    ' "$evidence_path")"; then
-        echo 'cannot prove complete released-tag provenance: malformed evidence' >&2
+    ')"; then
+        echo 'cannot prove complete released-tag provenance: malformed origin response' >&2
         return 1
     fi
     if ! local_tags="$(git -C "$project_root" tag --list 'v*')"; then
@@ -238,9 +243,9 @@ akuo_require_complete_release_tags() {
     done <<<"$local_tags"
 
     local_inventory="$(printf '%s' "$local_inventory" | LC_ALL=C sort)"
-    evidence_inventory="$(printf '%s\n' "$evidence_inventory" | LC_ALL=C sort)"
-    if [[ "$local_inventory" != "$evidence_inventory" ]]; then
-        echo 'local release tags do not match origin evidence' >&2
+    origin_inventory="$(printf '%s\n' "$origin_inventory" | LC_ALL=C sort)"
+    if [[ "$local_inventory" != "$origin_inventory" ]]; then
+        echo 'local release tags do not match origin' >&2
         return 1
     fi
     AKUO_RELEASE_TAGS="$local_tags"
@@ -289,9 +294,6 @@ akuo_validate_candidate_history() {
         fi
     done <<<"$AKUO_RELEASE_TAGS"
 
-    if [[ "$exact_release" == true ]]; then
-        return 0
-    fi
     if ! revisions="$(git -C "$project_root" rev-list --all --reflog)"; then
         echo 'cannot enumerate candidate source history' >&2
         return 1
@@ -299,7 +301,15 @@ akuo_validate_candidate_history() {
     while IFS= read -r revision; do
         [[ -n "$revision" && "$revision" != "$head_commit" ]] || continue
         akuo_read_revision_identity "$project_root" "$revision" || return 1
-        if ! akuo_build_is_greater "$AKUO_CANDIDATE_BUILD" "$AKUO_REVISION_BUILD"; then
+        if [[ "$exact_release" == true && \
+            "$AKUO_REVISION_VERSION" == "$AKUO_CANDIDATE_VERSION" && \
+            "$AKUO_REVISION_BUILD" == "$AKUO_CANDIDATE_BUILD" ]]; then
+            printf 'candidate identity %s (%s) is assigned to another source revision\n' \
+                "$AKUO_CANDIDATE_VERSION" "$AKUO_CANDIDATE_BUILD" >&2
+            return 1
+        fi
+        if [[ "$exact_release" != true ]] && \
+            ! akuo_build_is_greater "$AKUO_CANDIDATE_BUILD" "$AKUO_REVISION_BUILD"; then
             printf 'build identity %s is already assigned to another source revision\n' \
                 "$AKUO_CANDIDATE_BUILD" >&2
             return 1
@@ -356,6 +366,17 @@ akuo_verify_runtime_identity() {
     if ! runtime_identity="$("$executable_path" --candidate-identity)" || \
         [[ "$runtime_identity" != "$expected_identity" ]]; then
         echo 'runtime candidate identity does not match authoritative declaration' >&2
+        return 1
+    fi
+}
+
+akuo_verify_runtime_source_revision() {
+    local executable_path="$1"
+    local runtime_source_revision
+
+    if ! runtime_source_revision="$("$executable_path" --candidate-source-revision)" || \
+        [[ "$runtime_source_revision" != "$AKUO_SOURCE_REVISION" ]]; then
+        echo 'runtime source revision does not match committed HEAD' >&2
         return 1
     fi
 }
