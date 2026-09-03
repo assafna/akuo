@@ -93,6 +93,9 @@ public final class CorrectionCoordinator {
         ) else {
             return .notHandled
         }
+        guard isContextStillEligible() else {
+            return .notHandled
+        }
         guard textReplacer.replacePreviousText(
             deleteCount: completedWord.token.unicodeScalars.count,
             replacement: correction.replacement,

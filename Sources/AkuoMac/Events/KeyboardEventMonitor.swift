@@ -644,6 +644,7 @@ public final class KeyboardEventMonitor {
                     priorInputSourceIdentifier: sourceAfterDecoding.identifier,
                     isContextStillEligible: {
                         self.isContextStillEligible(context)
+                            && self.inputSources.currentSource == sourceAfterDecoding
                     }
                 )
                 if case let .handledWithInputSourceSelectionFailure(expectedLanguage) = result {
