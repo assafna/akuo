@@ -128,10 +128,20 @@ final class SetupWindowControllerTests: XCTestCase {
         controller.presentFromMenu()
         let setupWindow = try! XCTUnwrap(controller.setupWindow)
         let firstCompletion = try! XCTUnwrap(completions.first)
+        var closeCount = 0
+        let closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: setupWindow,
+            queue: .main
+        ) { _ in
+            closeCount += 1
+        }
+        defer { NotificationCenter.default.removeObserver(closeObserver) }
 
         XCTAssertTrue(firstCompletion.complete())
         XCTAssertFalse(firstCompletion.complete())
         XCTAssertFalse(setupWindow.isVisible)
+        XCTAssertEqual(closeCount, 1)
 
         controller.presentFromMenu()
         let secondCompletion = try! XCTUnwrap(completions.last)
@@ -146,6 +156,25 @@ final class SetupWindowControllerTests: XCTestCase {
         XCTAssertTrue(secondCompletion.complete())
         XCTAssertFalse(secondCompletion.complete())
         XCTAssertFalse(setupWindow.isVisible)
+        XCTAssertEqual(closeCount, 2)
+    }
+
+    func testCompletionDuringContentConstructionDoesNotPresentTheWindow() {
+        var completionResult: Bool?
+        let controller = SetupWindowController(
+            refreshState: {},
+            onboardingCompleted: { false },
+            makeContentViewController: { _, completion in
+                completionResult = completion.complete()
+                return NSViewController()
+            }
+        )
+        defer { controller.close() }
+
+        controller.presentFromMenu()
+
+        XCTAssertEqual(completionResult, true)
+        XCTAssertFalse(controller.setupWindow?.isVisible == true)
     }
 
     func testMenuPresentationEnforcesSetupContentSizeAfterAttachingCollapsingContent() {

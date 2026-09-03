@@ -78,6 +78,10 @@ public final class SetupWindowController {
             window = makeWindow(completion: makePresentationCompletion())
         }
         setupWindow = window
+        guard completedPresentationGeneration != presentationGeneration else {
+            window.close()
+            return
+        }
         window.center()
         window.orderFrontRegardless()
         NSApplication.shared.activate(ignoringOtherApps: true)
