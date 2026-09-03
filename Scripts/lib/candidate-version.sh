@@ -79,6 +79,7 @@ akuo_read_revision_identity() {
     local build_count
     local build
     local plist_version
+    local is_legacy=false
 
     revision_tmp="$(mktemp -d "${TMPDIR:-/tmp}/akuo-version-revision.XXXXXX")"
     source_path="$revision_tmp/AkuoCoreVersion.swift"
@@ -114,6 +115,7 @@ akuo_read_revision_identity() {
             return 1
         }
     else
+        is_legacy=true
         if ! git -C "$project_root" show \
             "$revision:Configuration/Akuo-Info.plist" >"$plist_path"; then
             rm -rf -- "$revision_tmp"
@@ -146,6 +148,7 @@ akuo_read_revision_identity() {
     fi
     AKUO_REVISION_VERSION="$version"
     AKUO_REVISION_BUILD="$build"
+    AKUO_REVISION_IS_LEGACY="$is_legacy"
 }
 
 akuo_build_is_greater() {
@@ -258,7 +261,9 @@ akuo_validate_candidate_history() {
     local tag
     local tag_commit
     local exact_release=false
+    local exact_release_legacy=false
     local revisions
+    local ancestors=""
     local revision
 
     if ! head_commit="$(git -C "$project_root" rev-parse --verify HEAD 2>/dev/null)"; then
@@ -286,6 +291,7 @@ akuo_validate_candidate_history() {
             "$AKUO_REVISION_BUILD" == "$AKUO_CANDIDATE_BUILD" ]]; then
             if [[ "$tag_commit" == "$head_commit" ]]; then
                 exact_release=true
+                exact_release_legacy="$AKUO_REVISION_IS_LEGACY"
             else
                 printf 'candidate identity %s (%s) was already released by %s\n' \
                     "$AKUO_CANDIDATE_VERSION" "$AKUO_CANDIDATE_BUILD" "$tag" >&2
@@ -294,8 +300,19 @@ akuo_validate_candidate_history() {
         fi
     done <<<"$AKUO_RELEASE_TAGS"
 
+    # Legacy releases kept the build in the plist. Their merge parents can
+    # legitimately carry the same pair, as v0.3.0 does. The live tag inventory
+    # above remains authoritative and still rejects that pair on another tag.
+    if [[ "$exact_release" == true && "$exact_release_legacy" == true ]]; then
+        return 0
+    fi
     if ! revisions="$(git -C "$project_root" rev-list --all --reflog)"; then
         echo 'cannot enumerate candidate source history' >&2
+        return 1
+    fi
+    if [[ "$exact_release" == true ]] && \
+        ! ancestors="$(git -C "$project_root" rev-list "$head_commit^@")"; then
+        echo 'cannot enumerate tagged release ancestry' >&2
         return 1
     fi
     while IFS= read -r revision; do
@@ -306,6 +323,13 @@ akuo_validate_candidate_history() {
             "$AKUO_REVISION_BUILD" == "$AKUO_CANDIDATE_BUILD" ]]; then
             printf 'candidate identity %s (%s) is assigned to another source revision\n' \
                 "$AKUO_CANDIDATE_VERSION" "$AKUO_CANDIDATE_BUILD" >&2
+            return 1
+        fi
+        if [[ "$exact_release" == true && \
+            $'\n'"$ancestors"$'\n' == *$'\n'"$revision"$'\n'* ]] && \
+            ! akuo_build_is_greater "$AKUO_CANDIDATE_BUILD" "$AKUO_REVISION_BUILD"; then
+            printf 'build identity %s is already assigned to another source revision\n' \
+                "$AKUO_CANDIDATE_BUILD" >&2
             return 1
         fi
         if [[ "$exact_release" != true ]] && \

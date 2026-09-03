@@ -12,6 +12,7 @@ AKUO_FAKE_BIN="$AKUO_TEST_TMP/fake-bin"
 AKUO_BUILD_BIN="$AKUO_TEST_TMP/build-bin"
 AKUO_BUILD_INPUT_LOG="$AKUO_TEST_TMP/build-input.log"
 AKUO_BUILD_CWD_LOG="$AKUO_TEST_TMP/build-cwd.log"
+AKUO_RUNTIME_TEMPLATE="$AKUO_TEST_TMP/Akuo-runtime-template"
 AKUO_SYSTEM_GIT="$(command -v git)"
 
 akuo_write_file() {
@@ -122,7 +123,15 @@ akuo_reset_fixture() {
         '    {' \
         '        if [[ -f Sources/AkuoCore/Ignored.swift ]]; then printf "ignored-input\n"; fi' \
         '        cat Sources/AkuoCore/AkuoCoreVersion.swift' \
+        '        cat Sources/AkuoCore/AkuoSourceRevision.swift' \
         '    } >"${AKUO_BUILD_INPUT_LOG:?}"' \
+        '    compiled_source_revision="$(sed -E -n '\''s/^[[:space:]]*public[[:space:]]+static[[:space:]]+let[[:space:]]+current[[:space:]]*=[[:space:]]*"([0-9a-f]{40})"[[:space:]]*$/\1/p'\'' Sources/AkuoCore/AkuoSourceRevision.swift)"' \
+        '    if [[ ! "$compiled_source_revision" =~ ^[0-9a-f]{40}$ ]]; then' \
+        '        echo "fake compiler rejected runtime source revision" >&2' \
+        '        exit 1' \
+        '    fi' \
+        '    sed "s/__AKUO_COMPILED_SOURCE_REVISION__/$compiled_source_revision/" "${AKUO_RUNTIME_TEMPLATE:?}" >"${AKUO_BUILD_BIN:?}/Akuo"' \
+        '    chmod +x "${AKUO_BUILD_BIN:?}/Akuo"' \
         '    if [[ "${AKUO_MUTATE_THEN_RESTORE:-}" == true ]]; then' \
         '        printf "%s\n" "$source_contents" >"$source_path"' \
         '    fi' \
@@ -151,9 +160,10 @@ akuo_reset_fixture() {
         'exit 0'
     chmod +x "$AKUO_FAKE_BIN/codesign"
     # shellcheck disable=SC2016
-    akuo_write_file "$AKUO_BUILD_BIN/Akuo" \
+    akuo_write_file "$AKUO_RUNTIME_TEMPLATE" \
         '#!/usr/bin/env bash' \
         'set -euo pipefail' \
+        'compiled_source_revision="__AKUO_COMPILED_SOURCE_REVISION__"' \
         'if [[ "${1:-}" == --candidate-identity ]]; then' \
         '    printf "%b\n" "${AKUO_RUNTIME_IDENTITY:-0.4.0\\t4}"' \
         '    exit 0' \
@@ -162,12 +172,11 @@ akuo_reset_fixture() {
         '    if [[ -n "${AKUO_RUNTIME_SOURCE_REVISION:-}" ]]; then' \
         '        printf "%s\n" "$AKUO_RUNTIME_SOURCE_REVISION"' \
         '    else' \
-        '        "${AKUO_SYSTEM_GIT:?}" -C "${AKUO_FIXTURE_ROOT_ENV:?}" rev-parse HEAD' \
+        '        printf "%s\n" "$compiled_source_revision"' \
         '    fi' \
         '    exit 0' \
         'fi' \
         'exit 64'
-    chmod +x "$AKUO_BUILD_BIN/Akuo"
 
     git -C "$AKUO_FIXTURE_ROOT" init -q
     git -C "$AKUO_FIXTURE_ROOT" config user.name 'Akuo Version Contract'
@@ -197,6 +206,7 @@ akuo_build() {
         AKUO_BUILD_BIN="$AKUO_BUILD_BIN" \
         AKUO_BUILD_INPUT_LOG="$AKUO_BUILD_INPUT_LOG" \
         AKUO_BUILD_CWD_LOG="$AKUO_BUILD_CWD_LOG" \
+        AKUO_RUNTIME_TEMPLATE="$AKUO_RUNTIME_TEMPLATE" \
         AKUO_FIXTURE_ROOT_ENV="$AKUO_FIXTURE_ROOT" \
         AKUO_RELEASE_TAGS_EVIDENCE="${AKUO_RELEASE_TAGS_EVIDENCE:-}" \
         AKUO_RUNTIME_IDENTITY="${AKUO_RUNTIME_IDENTITY:-0.4.0	4}" \
@@ -213,6 +223,19 @@ akuo_verify() {
         AKUO_SOURCE_REVISION="${AKUO_SOURCE_REVISION:-}" \
         "$AKUO_FIXTURE_ROOT/Scripts/verify-candidate-version.sh" \
         "$AKUO_FIXTURE_ROOT/dist/Akuo.app"
+}
+
+akuo_validate_history_at_head() {
+    (
+        PATH="$AKUO_FAKE_BIN:$PATH"
+        export PATH AKUO_SYSTEM_GIT
+        # shellcheck disable=SC1091
+        source "$AKUO_FIXTURE_ROOT/Scripts/lib/candidate-version.sh"
+        akuo_read_revision_identity "$AKUO_FIXTURE_ROOT" HEAD
+        AKUO_CANDIDATE_VERSION="$AKUO_REVISION_VERSION"
+        AKUO_CANDIDATE_BUILD="$AKUO_REVISION_BUILD"
+        akuo_validate_candidate_history "$AKUO_FIXTURE_ROOT"
+    )
 }
 
 akuo_assert_rejected() {
@@ -415,6 +438,47 @@ test_allows_exact_tagged_release() {
     akuo_verify >/dev/null
 }
 
+# Production mutation caught: comparing an exact modern release against later
+# descendants and thereby making an already-published tag impossible to rebuild.
+test_allows_modern_exact_tag_rebuild_after_later_build() {
+    akuo_reset_fixture
+    local tagged_commit
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.4.0 -m 'fixture release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.4.0
+    tagged_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)"
+    akuo_write_identity_source \
+        'public static let current = "0.4.0"' \
+        'public static let build = "6"'
+    akuo_commit 'later descendant build 6'
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q --detach "$tagged_commit"
+    akuo_build >/dev/null
+    akuo_verify >/dev/null
+}
+
+# Production mutation caught: applying modern same-pair uniqueness to a legacy
+# merge-tagged release whose feature parent necessarily carries the release
+# plist identity, making the real v0.3.0 topology impossible to rebuild.
+test_allows_legacy_merge_tagged_release() {
+    akuo_reset_fixture
+    local released_commit
+    released_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse 'v0.3.0^{commit}')"
+    git -C "$AKUO_FIXTURE_ROOT" tag -d v0.3.0 >/dev/null
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin :refs/tags/v0.3.0
+
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q -b legacy-release-feature "$released_commit"
+    akuo_write_file "$AKUO_FIXTURE_ROOT/feature.txt" 'legacy release feature'
+    akuo_commit 'legacy release feature carrying 0.3.0 build 3'
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q -b legacy-release-main "$released_commit"
+    akuo_write_file "$AKUO_FIXTURE_ROOT/integration.txt" 'legacy integration change'
+    akuo_commit 'legacy release integration'
+    git -C "$AKUO_FIXTURE_ROOT" merge -q --no-ff legacy-release-feature \
+        -m 'legacy v0.3.0 release merge'
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.3.0 -m 'fixture legacy merge release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.3.0
+
+    akuo_validate_history_at_head
+}
+
 # Production mutation caught: treating a tag on a later source commit as
 # permission to reuse the identity already assigned to its parent candidate.
 test_rejects_exact_tag_laundering() {
@@ -425,6 +489,60 @@ test_rejects_exact_tag_laundering() {
     git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.4.0
     akuo_assert_rejected 'candidate identity 0.4.0 (4) is assigned to another source revision' \
         akuo_build
+}
+
+# Production mutation caught: letting an exact tag disable build advancement
+# when a new marketing version reuses a lower build than its ancestor.
+test_rejects_cross_version_lower_build_exact_tag() {
+    akuo_reset_fixture
+    akuo_write_identity_source \
+        'public static let current = "0.4.0"' \
+        'public static let build = "6"'
+    akuo_commit 'advance prior candidate to build 6'
+    akuo_write_identity_source \
+        'public static let current = "0.5.0"' \
+        'public static let build = "3"'
+    akuo_commit 'reuse lower build under new version'
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.5.0 -m 'invalid lower-build release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.5.0
+    AKUO_RUNTIME_IDENTITY=$'0.5.0\t3' \
+        akuo_assert_rejected 'build identity 3 is already assigned to another source revision' \
+        akuo_build
+}
+
+# Production mutation caught: treating equality as build advancement merely
+# because an exact tag changes the marketing version.
+test_rejects_cross_version_equal_build_exact_tag() {
+    akuo_reset_fixture
+    akuo_write_identity_source \
+        'public static let current = "0.4.0"' \
+        'public static let build = "6"'
+    akuo_commit 'advance prior candidate to build 6'
+    akuo_write_identity_source \
+        'public static let current = "0.5.0"' \
+        'public static let build = "6"'
+    akuo_commit 'reuse equal build under new version'
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.5.0 -m 'invalid equal-build release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.5.0
+    AKUO_RUNTIME_IDENTITY=$'0.5.0\t6' \
+        akuo_assert_rejected 'build identity 6 is already assigned to another source revision' \
+        akuo_build
+}
+
+# Production mutation caught: allowing the legacy exact-tag exception to hide
+# the same released pair on a different live-origin release tag.
+test_rejects_legacy_pair_reuse_across_release_tags() {
+    akuo_reset_fixture
+    local released_commit
+    released_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse 'v0.3.0^{commit}')"
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q -b duplicate-legacy-release "$released_commit"
+    akuo_write_file "$AKUO_FIXTURE_ROOT/duplicate-release.txt" 'different release source'
+    akuo_commit 'different legacy source with released pair'
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.3.0-copy -m 'duplicate fixture release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.3.0-copy
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q --detach "$released_commit"
+    akuo_assert_rejected 'candidate identity 0.3.0 (3) was already released by v0.3.0-copy' \
+        akuo_validate_history_at_head
 }
 
 # Production mutation caught: treating a new source commit with an unchanged
@@ -502,6 +620,29 @@ test_build_uses_snapshot_during_transient_mutation() {
     [[ "$(cat "$AKUO_BUILD_CWD_LOG")" != "$AKUO_FIXTURE_ROOT" ]]
     [[ "$(cat "$AKUO_BUILD_INPUT_LOG")" != *'transient build mutation'* ]]
     [[ -z "$(git -C "$AKUO_FIXTURE_ROOT" status --porcelain=v1 --untracked-files=all)" ]]
+}
+
+# Test-harness mutation caught: making the fake runtime discover repository HEAD
+# dynamically instead of retaining the source revision consumed at fake compile
+# time, which would hide a removed or corrupted snapshot injection.
+test_fake_runtime_retains_compiled_source_revision() {
+    akuo_reset_fixture
+    local built_revision
+    local runtime_revision
+    built_revision="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)"
+    akuo_build >/dev/null
+    akuo_write_file "$AKUO_FIXTURE_ROOT/post-build.txt" 'new source after packaging'
+    akuo_commit 'advance source after packaging'
+    runtime_revision="$(
+        AKUO_SYSTEM_GIT="$AKUO_SYSTEM_GIT" \
+            AKUO_FIXTURE_ROOT_ENV="$AKUO_FIXTURE_ROOT" \
+            "$AKUO_FIXTURE_ROOT/dist/Akuo.app/Contents/MacOS/Akuo" \
+            --candidate-source-revision
+    )"
+    if [[ "$runtime_revision" != "$built_revision" ]]; then
+        printf 'FAIL: fake runtime did not retain compiled source revision\n' >&2
+        return 1
+    fi
 }
 
 # Production mutation caught: allowing dirty source merely because HEAD is an
@@ -636,7 +777,12 @@ case "${1:-all}" in
     runtime-source-revision-drift) test_verifier_rejects_runtime_source_revision_drift ;;
     released-reuse) test_rejects_released_pair_reuse ;;
     exact-tag) test_allows_exact_tagged_release ;;
+    modern-tag-later-build) test_allows_modern_exact_tag_rebuild_after_later_build ;;
+    legacy-merge-tag) test_allows_legacy_merge_tagged_release ;;
     exact-tag-laundering) test_rejects_exact_tag_laundering ;;
+    cross-version-lower-tag) test_rejects_cross_version_lower_build_exact_tag ;;
+    cross-version-equal-tag) test_rejects_cross_version_equal_build_exact_tag ;;
+    legacy-tag-pair-reuse) test_rejects_legacy_pair_reuse_across_release_tags ;;
     new-source-reuse) test_rejects_new_source_with_same_build ;;
     same-commit) test_allows_same_commit_rebuild ;;
     dirty-tracked) test_rejects_dirty_tracked_source ;;
@@ -645,6 +791,7 @@ case "${1:-all}" in
     dirty-verifier) test_verifier_rejects_dirty_source ;;
     dirty-during-build) test_rejects_source_change_during_build ;;
     transient-mutation) test_build_uses_snapshot_during_transient_mutation ;;
+    compiled-source-revision) test_fake_runtime_retains_compiled_source_revision ;;
     dirty-tag) test_rejects_dirty_exact_tagged_release ;;
     incomplete-tags) test_rejects_incomplete_local_tags ;;
     no-tags) test_rejects_no_tag_provenance ;;
@@ -672,7 +819,12 @@ case "${1:-all}" in
         test_verifier_rejects_runtime_source_revision_drift
         test_rejects_released_pair_reuse
         test_allows_exact_tagged_release
+        test_allows_modern_exact_tag_rebuild_after_later_build
+        test_allows_legacy_merge_tagged_release
         test_rejects_exact_tag_laundering
+        test_rejects_cross_version_lower_build_exact_tag
+        test_rejects_cross_version_equal_build_exact_tag
+        test_rejects_legacy_pair_reuse_across_release_tags
         test_rejects_new_source_with_same_build
         test_allows_same_commit_rebuild
         test_rejects_dirty_tracked_source
@@ -681,6 +833,7 @@ case "${1:-all}" in
         test_verifier_rejects_dirty_source
         test_rejects_source_change_during_build
         test_build_uses_snapshot_during_transient_mutation
+        test_fake_runtime_retains_compiled_source_revision
         test_rejects_dirty_exact_tagged_release
         test_rejects_incomplete_local_tags
         test_rejects_no_tag_provenance

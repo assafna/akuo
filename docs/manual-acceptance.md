@@ -54,7 +54,11 @@ captured commit rather than caller-worktree files. Rebuilding the exact clean
 source commit retains the same candidate identity. A rebase, squash,
 cherry-pick, merge, or other new candidate SHA requires a higher build number;
 if an older candidate is outside the local refs/reflogs, the operator must still
-advance it before build.
+advance it before build. A modern exact release tag must have advanced beyond
+every ancestor and may not share its version/build pair with another visible
+source revision, while later descendants do not block rebuilding that older
+tag. A legacy exact tag whose build came from its plist may retain same-pair
+merge ancestry, but no other live-origin release tag may reuse its pair.
 
 Run this local inspection command and record whether each required language is
 advertised by either its base identifier or its locale-specific identifier:
