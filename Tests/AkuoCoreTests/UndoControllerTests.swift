@@ -19,6 +19,17 @@ final class UndoControllerTests: XCTestCase {
         XCTAssertEqual(controller.eligibleRecord(context: context, now: createdAt.addingTimeInterval(5)), record)
     }
 
+    func testRejectsAndInvalidatesRecordWhenElapsedIsNegative() {
+        let controller = UndoController()
+        controller.register(makeRecord())
+
+        XCTAssertNil(controller.eligibleRecord(
+            context: context,
+            now: createdAt.addingTimeInterval(-0.001)
+        ))
+        XCTAssertNil(controller.eligibleRecord(context: context, now: createdAt))
+    }
+
     func testRejectsRecordAfterFiveSecondEligibilityLimit() {
         let controller = UndoController()
         controller.register(makeRecord())
