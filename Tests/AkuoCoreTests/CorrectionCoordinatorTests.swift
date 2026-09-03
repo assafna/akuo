@@ -697,12 +697,14 @@ final class CorrectionCoordinatorTests: XCTestCase {
         let replacer = RecordingReplacer()
         let selector = RecordingSelector()
         let counter = RecordingCounter()
+        let validator = RecordingPreviousTextValidator(result: true)
         let coordinator = makeCoordinator(
             recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
             replacer: replacer,
             selector: selector,
             counter: counter,
-            clock: FixedClock(now: createdAt)
+            clock: FixedClock(now: createdAt),
+            previousTextValidator: validator
         )
 
         XCTAssertEqual(coordinator.handleBoundary(
@@ -712,6 +714,36 @@ final class CorrectionCoordinatorTests: XCTestCase {
             priorInputLanguage: .english,
             isContextStillEligible: { false }
         ), .notHandled)
+        XCTAssertTrue(validator.calls.isEmpty)
+        XCTAssertTrue(replacer.calls.isEmpty)
+        XCTAssertTrue(selector.selected.isEmpty)
+        XCTAssertEqual(counter.incrementCount, 0)
+    }
+
+    func testAutomaticCorrectionRequiresExactVisibleTokenSuffixBeforeReplacement() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let validator = RecordingPreviousTextValidator(result: false)
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["hello"], hebrew: ["שלום"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt),
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "akuo", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            isContextStillEligible: { true }
+        ), .notHandled)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "akuo", context: context),
+        ])
         XCTAssertTrue(replacer.calls.isEmpty)
         XCTAssertTrue(selector.selected.isEmpty)
         XCTAssertEqual(counter.incrementCount, 0)

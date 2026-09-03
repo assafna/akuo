@@ -133,7 +133,8 @@ final class LiveExclusionPipelineTests: XCTestCase {
             inputSourceSelector: inputSources,
             counter: counter,
             clock: LiveExclusionClock(),
-            undoController: UndoController()
+            undoController: UndoController(),
+            previousTextValidator: LiveExclusionPreviousTextValidator()
         )
         let decoder = LiveExclusionEventDecoder()
         let nativeEvent = CGEvent(
@@ -160,6 +161,15 @@ final class LiveExclusionPipelineTests: XCTestCase {
             inputSources: inputSources,
             counter: counter
         )
+    }
+}
+
+private struct LiveExclusionPreviousTextValidator: PreviousTextValidating {
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool {
+        true
     }
 }
 

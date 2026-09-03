@@ -35,7 +35,8 @@ final class LiveUndoIntegrationTests: XCTestCase {
             inputSourceSelector: inputSources,
             counter: preferences,
             clock: LiveUndoClock(),
-            undoController: UndoController()
+            undoController: UndoController(),
+            previousTextValidator: LiveUndoPreviousTextValidator()
         )
         let decoder = LiveUndoEventDecoder()
         let focus = LiveUndoFocusProvider()
@@ -110,6 +111,15 @@ private final class LiveUndoTextReplacer: TextReplacing {
             boundary: boundary
         ))
         return true
+    }
+}
+
+private struct LiveUndoPreviousTextValidator: PreviousTextValidating {
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool {
+        true
     }
 }
 

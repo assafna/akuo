@@ -87,6 +87,12 @@ public final class CorrectionCoordinator {
         guard isContextStillEligible() else {
             return .notHandled
         }
+        guard previousTextValidator.hasExactTextImmediatelyBeforeCaret(
+            completedWord.token,
+            context: context
+        ) else {
+            return .notHandled
+        }
         guard textReplacer.replacePreviousText(
             deleteCount: completedWord.token.unicodeScalars.count,
             replacement: correction.replacement,

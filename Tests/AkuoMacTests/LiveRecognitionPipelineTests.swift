@@ -642,7 +642,7 @@ final class LiveRecognitionPipelineTests: XCTestCase {
     func testProductionRecognitionCompositionCorrectsLeadingMappedPunctuation() {
         let fixture = makeFixture(language: .hebrew)
 
-        XCTAssertTrue(fixture.process("/", keyCode: 12) === fixture.nativeEvent)
+        XCTAssertEqual(fixture.passThroughStroke("/", keyCode: 12), "/")
         XCTAssertEqual(fixture.passThrough("וןבל"), "וןבל")
         XCTAssertNil(fixture.process(" "))
 
@@ -915,7 +915,10 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             inputSourceSelector: inputSources,
             counter: counter,
             clock: LiveRecognitionClock(),
-            undoController: undo
+            undoController: undo,
+            previousTextValidator: LiveRecognitionPreviousTextValidator(
+                document: document
+            )
         )
         let decoder = LiveRecognitionEventDecoder()
         let nativeEvent = CGEvent(
@@ -961,7 +964,10 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             inputSourceSelector: inputSources,
             counter: LiveRecognitionCounter(),
             clock: LiveRecognitionClock(),
-            undoController: LiveRecognitionUndoRecorder()
+            undoController: LiveRecognitionUndoRecorder(),
+            previousTextValidator: LiveRecognitionPreviousTextValidator(
+                document: document
+            )
         )
         let monitor = KeyboardEventMonitor(
             decoder: SystemNativeEventDecoder(retranslator: retranslator),
@@ -1035,6 +1041,17 @@ private final class LiveRecognitionDocument {
         }
         text.append(contentsOf: replacement)
         text.append(contentsOf: boundary)
+    }
+}
+
+private struct LiveRecognitionPreviousTextValidator: PreviousTextValidating {
+    let document: LiveRecognitionDocument
+
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool {
+        document.text.hasSuffix(expectedText)
     }
 }
 
