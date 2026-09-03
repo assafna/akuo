@@ -493,14 +493,14 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             fallback: .init(english: ["we're"], hebrew: ["ק,רק"])
         )
 
-        for (text, keyCode) in [
-            ("", CGKeyCode(13)),
-            ("ק", CGKeyCode(14)),
-            (",", CGKeyCode(39)),
-            ("ר", CGKeyCode(15)),
-            ("ק", CGKeyCode(14)),
+        for (text, keyCode, flags) in [
+            ("", CGKeyCode(13), CGEventFlags.maskShift),
+            ("ק", CGKeyCode(14), CGEventFlags()),
+            (",", CGKeyCode(39), CGEventFlags()),
+            ("ר", CGKeyCode(15), CGEventFlags()),
+            ("ק", CGKeyCode(14), CGEventFlags()),
         ] {
-            XCTAssertEqual(fixture.passThroughStroke(text, keyCode: keyCode), text)
+            XCTAssertEqual(fixture.passThroughStroke(text, keyCode: keyCode, flags: flags), text)
         }
 
         XCTAssertNil(fixture.process(" "))
@@ -515,28 +515,28 @@ final class LiveRecognitionPipelineTests: XCTestCase {
     }
 
     func testCompletePhysicalTraceCorrectsCapitalizedJoinedEnglishWords() {
-        let cases: [([(String, CGKeyCode)], String, String, Int)] = [
+        let cases: [([(String, CGKeyCode, CGEventFlags)], String, String, Int)] = [
             ([
-                ("„", 2), ("ם", 31), ("מ", 45), (",", 39), ("א", 17),
+                ("„", 2, .maskShift), ("ם", 31, []), ("מ", 45, []), (",", 39, []), ("א", 17, []),
             ], "„םמ,א", "Don't", 5),
             ([
-                ("שׁ", 0), ("ן", 34), ("מ", 45), (",", 39), ("א", 17),
+                ("שׁ", 0, .maskShift), ("ן", 34, []), ("מ", 45, []), (",", 39, []), ("א", 17, []),
             ], "שׁןמ,א", "Ain't", 6),
             ([
-                ("לֹ", 8), ("ש", 0), ("מ", 45), (",", 39), ("א", 17),
+                ("לֹ", 8, .maskShift), ("ש", 0, []), ("מ", 45, []), (",", 39, []), ("א", 17, []),
             ], "לֹשמ,א", "Can't", 6),
             ([
-                ("לֹ", 40), ("ש", 0), ("א", 17), ("ק", 14), (",", 39), ("ד", 1),
+                ("לֹ", 40, .maskShift), ("ש", 0, []), ("א", 17, []), ("ק", 14, []), (",", 39, []), ("ד", 1, []),
             ], "לֹשאק,ד", "Kate's", 7),
             ([
-                ("וֹ", 32), ("מ", 45), ("ב", 8), ("ך", 37), ("ק", 14), (",", 39), ("ד", 1),
+                ("וֹ", 32, .maskShift), ("מ", 45, []), ("ב", 8, []), ("ך", 37, []), ("ק", 14, []), (",", 39, []), ("ד", 1, []),
             ], "וֹמבךק,ד", "Uncle's", 8),
             ([
-                ("", 46), ("ב", 8), ("„", 2), ("ם", 31), ("מ", 45),
-                ("ש", 0), ("ך", 37), ("ג", 2), (",", 39), ("ד", 1),
+                ("", 46, .maskShift), ("ב", 8, []), ("„", 2, .maskShift), ("ם", 31, []), ("מ", 45, []),
+                ("ש", 0, []), ("ך", 37, []), ("ג", 2, []), (",", 39, []), ("ד", 1, []),
             ], "ב„םמשךג,ד", "McDonald's", 9),
             ([
-                ("„", 2), ("", 31), ("", 45), (",", 39), ("", 17),
+                ("„", 2, .maskShift), ("", 31, .maskShift), ("", 45, .maskShift), (",", 39, []), ("", 17, .maskShift),
             ], "„,", "DON'T", 2),
         ]
 
@@ -546,9 +546,9 @@ final class LiveRecognitionPipelineTests: XCTestCase {
                 fallback: .init(english: [candidate.lowercased()], hebrew: [])
             )
 
-            for (text, keyCode) in keyStrokes {
+            for (text, keyCode, flags) in keyStrokes {
                 XCTAssertEqual(
-                    fixture.passThroughStroke(text, keyCode: keyCode),
+                    fixture.passThroughStroke(text, keyCode: keyCode, flags: flags),
                     text,
                     candidate
                 )
@@ -571,15 +571,15 @@ final class LiveRecognitionPipelineTests: XCTestCase {
     }
 
     func testCompletePhysicalTraceStillRejectsMalformedApostrophePlacement() {
-        let cases: [([(String, CGKeyCode)], String, String)] = [
+        let cases: [([(String, CGKeyCode, CGEventFlags)], String, String)] = [
             ([
-                (",", 39), ("„", 2), ("ם", 31), ("מ", 45), (",", 39), ("א", 17),
+                (",", 39, []), ("„", 2, .maskShift), ("ם", 31, []), ("מ", 45, []), (",", 39, []), ("א", 17, []),
             ], ",„םמ,א", "'Don't"),
             ([
-                ("„", 2), ("ם", 31), ("מ", 45), (",", 39), (",", 39), ("א", 17),
+                ("„", 2, .maskShift), ("ם", 31, []), ("מ", 45, []), (",", 39, []), (",", 39, []), ("א", 17, []),
             ], "„םמ,,א", "Don''t"),
             ([
-                ("„", 2), ("ם", 31), ("מ", 45), ("א", 17), (",", 39),
+                ("„", 2, .maskShift), ("ם", 31, []), ("מ", 45, []), ("א", 17, []), (",", 39, []),
             ], "„םמא,", "Dont'"),
         ]
 
@@ -589,9 +589,9 @@ final class LiveRecognitionPipelineTests: XCTestCase {
                 fallback: .init(english: [candidate.lowercased()], hebrew: [])
             )
 
-            for (text, keyCode) in keyStrokes {
+            for (text, keyCode, flags) in keyStrokes {
                 XCTAssertEqual(
-                    fixture.passThroughStroke(text, keyCode: keyCode),
+                    fixture.passThroughStroke(text, keyCode: keyCode, flags: flags),
                     text,
                     candidate
                 )
@@ -714,7 +714,45 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             fallback: .init(english: ["hello"], hebrew: [])
         )
 
+        XCTAssertEqual(fixture.passThroughStroke("", keyCode: 4, flags: [.maskShift]), "")
+        XCTAssertEqual(fixture.passThroughStroke("ק", keyCode: 14), "ק")
+        XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
+        XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
+        XCTAssertEqual(fixture.passThroughStroke("ם", keyCode: 31), "ם")
+        XCTAssertNil(fixture.process(" "))
+
+        XCTAssertEqual(fixture.document.text, "Hello ")
+        XCTAssertEqual(fixture.replacer.calls, [
+            .init(deleteCount: 4, replacement: "Hello", boundary: " "),
+        ])
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .english)
+    }
+
+    func testSilentHebrewKeyWithoutModifierDoesNotCorrect() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["hello"], hebrew: [])
+        )
+
         XCTAssertEqual(fixture.passThroughStroke("", keyCode: 4), "")
+        XCTAssertEqual(fixture.passThroughStroke("ק", keyCode: 14), "ק")
+        XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
+        XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
+        XCTAssertEqual(fixture.passThroughStroke("ם", keyCode: 31), "ם")
+        XCTAssertTrue(fixture.process(" ") === fixture.nativeEvent)
+
+        XCTAssertEqual(fixture.document.text, "קךךם")
+        XCTAssertTrue(fixture.replacer.calls.isEmpty)
+        XCTAssertEqual(fixture.inputSources.currentLanguage, .hebrew)
+    }
+
+    func testSilentCapsLockedHebrewKeyRestoresLeadingEnglishCapital() {
+        let fixture = makeFixture(
+            language: .hebrew,
+            fallback: .init(english: ["hello"], hebrew: [])
+        )
+
+        XCTAssertEqual(fixture.passThroughStroke("", keyCode: 4, flags: [.maskAlphaShift]), "")
         XCTAssertEqual(fixture.passThroughStroke("ק", keyCode: 14), "ק")
         XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
         XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
@@ -734,7 +772,7 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             fallback: .init(english: ["cool"], hebrew: [])
         )
 
-        XCTAssertEqual(fixture.passThroughStroke("לֹ", keyCode: 8), "לֹ")
+        XCTAssertEqual(fixture.passThroughStroke("לֹ", keyCode: 8, flags: [.maskShift]), "לֹ")
         XCTAssertEqual(fixture.passThroughStroke("ם", keyCode: 31), "ם")
         XCTAssertEqual(fixture.passThroughStroke("ם", keyCode: 31), "ם")
         XCTAssertEqual(fixture.passThroughStroke("ך", keyCode: 37), "ך")
@@ -775,7 +813,7 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             )
 
             XCTAssertEqual(
-                fixture.passThroughStroke(shiftedOutput, keyCode: keyCode),
+                fixture.passThroughStroke(shiftedOutput, keyCode: keyCode, flags: [.maskShift]),
                 shiftedOutput,
                 candidate
             )
@@ -793,12 +831,12 @@ final class LiveRecognitionPipelineTests: XCTestCase {
     func testSilentShiftedInitialOutranksRecognizedVisibleHebrewSuffix() {
         let cases: [([ObservedKeyStroke], String, String)] = [
             ([
-                .init(text: "", keyCode: 16),
+                .init(text: "", keyCode: 16, modifiers: [.shift]),
                 .init(text: "ק", keyCode: 14),
                 .init(text: "ד", keyCode: 1),
             ], "קד", "Yes"),
             ([
-                .init(text: "", keyCode: 45),
+                .init(text: "", keyCode: 45, modifiers: [.shift]),
                 .init(text: "ם", keyCode: 31),
             ], "ם", "No"),
         ]
@@ -816,7 +854,8 @@ final class LiveRecognitionPipelineTests: XCTestCase {
                 XCTAssertEqual(
                     fixture.passThroughStroke(
                         keyStroke.text,
-                        keyCode: CGKeyCode(keyStroke.keyCode)
+                        keyCode: CGKeyCode(keyStroke.keyCode),
+                        flags: keyStroke.modifiers.contains(.shift) ? [.maskShift] : []
                     ),
                     keyStroke.text,
                     candidate
@@ -849,7 +888,7 @@ final class LiveRecognitionPipelineTests: XCTestCase {
 
             for keyCode in keyCodes {
                 XCTAssertEqual(
-                    fixture.passThroughStroke("", keyCode: keyCode),
+                    fixture.passThroughStroke("", keyCode: keyCode, flags: [.maskShift]),
                     "",
                     candidate
                 )
@@ -864,14 +903,14 @@ final class LiveRecognitionPipelineTests: XCTestCase {
     }
 
     func testStandaloneEnglishLetterWordsAreRecoveredWithAndWithoutShift() {
-        let cases: [(String, CGKeyCode, String)] = [
-            ("ש", 0, "a"),
-            ("שׁ", 0, "A"),
-            ("ן", 34, "i"),
-            ("", 34, "I"),
+        let cases: [(String, CGKeyCode, CGEventFlags, String)] = [
+            ("ש", 0, [], "a"),
+            ("שׁ", 0, [.maskShift], "A"),
+            ("ן", 34, [], "i"),
+            ("", 34, [.maskShift], "I"),
         ]
 
-        for (shiftedOutput, keyCode, candidate) in cases {
+        for (shiftedOutput, keyCode, flags, candidate) in cases {
             let fixture = makeFixture(
                 language: .hebrew,
                 fallback: .init(
@@ -881,7 +920,7 @@ final class LiveRecognitionPipelineTests: XCTestCase {
             )
 
             XCTAssertEqual(
-                fixture.passThroughStroke(shiftedOutput, keyCode: keyCode),
+                fixture.passThroughStroke(shiftedOutput, keyCode: keyCode, flags: flags),
                 shiftedOutput,
                 candidate
             )

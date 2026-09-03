@@ -42,6 +42,22 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
         }
     }
 
+    func testInstalledABCLayoutTranslatesShiftAndCapsLockLettersAsUppercase() {
+        let translator = AppleKeyboardLayoutTextTranslator()
+
+        for (keyCode, expected) in [(4, "H"), (8, "C")] {
+            XCTAssertEqual(
+                translator.characters(
+                    keyCode: keyCode,
+                    modifiers: [.shift, .capsLock],
+                    inputSourceIdentifier: "com.apple.keylayout.ABC"
+                ),
+                expected,
+                "ABC key code \(keyCode)"
+            )
+        }
+    }
+
     func testInstalledAppleLayoutsTranslateEveryPrintablePunctuationKey() {
         let translator = AppleKeyboardLayoutTextTranslator()
         let rows: [(

@@ -126,6 +126,11 @@ public struct KeyboardLayoutMap: Sendable {
         guard let source = source ?? sourceHint else { return nil }
         let target: Language = source == .english ? .hebrew : .english
 
+        if source == .hebrew,
+           Self.hasInconsistentShiftEvidence(for: token, keyStrokes: keyStrokes) {
+            return nil
+        }
+
         if let physicalConversion = Self.translatedPhysicalCandidate(
             for: token,
             source: source,
@@ -226,12 +231,34 @@ public struct KeyboardLayoutMap: Sendable {
             guard let lowercase = englishLetterByKeyCode[keyStroke.keyCode] else {
                 return nil
             }
-            let wasShifted = keyStroke.text.isEmpty
+            let shiftedOutput = keyStroke.text.isEmpty
                 || shiftedHebrewOutputs.contains(keyStroke.text)
+            let wasShifted = shiftedOutput && Self.hasExclusiveShiftOrCapsLock(keyStroke)
             recoveredShift = recoveredShift || wasShifted
             candidate.append(wasShifted ? uppercaseASCII(lowercase) : lowercase)
         }
         return (candidate, recoveredShift)
+    }
+
+    private static func hasInconsistentShiftEvidence(
+        for token: String,
+        keyStrokes: [ObservedKeyStroke]
+    ) -> Bool {
+        guard !keyStrokes.isEmpty,
+              keyStrokes.map(\.text).joined() == token else {
+            return false
+        }
+
+        return keyStrokes.contains { keyStroke in
+            let shiftedOutput = keyStroke.text.isEmpty
+                || shiftedHebrewOutputs.contains(keyStroke.text)
+            return shiftedOutput && !hasExclusiveShiftOrCapsLock(keyStroke)
+        }
+    }
+
+    private static func hasExclusiveShiftOrCapsLock(_ keyStroke: ObservedKeyStroke) -> Bool {
+        keyStroke.modifiers.contains(.shift)
+            != keyStroke.modifiers.contains(.capsLock)
     }
 
     private static func isEnglishLetter(_ character: Character) -> Bool {

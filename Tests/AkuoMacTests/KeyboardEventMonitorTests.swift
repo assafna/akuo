@@ -152,6 +152,17 @@ final class KeyboardEventMonitorTests: XCTestCase {
         }
     }
 
+    func testProductionDecoderClassifiesSilentCapsLockedAlphabeticKey() {
+        XCTAssertEqual(
+            SystemNativeEventDecoder.decodeEmptyUnicodeKey(
+                keyCode: 4,
+                flags: [.maskAlphaShift],
+                marker: 0
+            ),
+            .text("", keyCode: 4, marker: 0)
+        )
+    }
+
     func testProductionDecoderRejectsOtherEmptyUnicodeKeys() {
         for (keyCode, flags) in [
             (CGKeyCode(4), CGEventFlags()),
