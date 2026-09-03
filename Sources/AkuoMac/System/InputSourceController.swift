@@ -69,7 +69,7 @@ private struct CarbonInputSourceBackend: InputSourceBackend {
 
 final class InputSourceSelectionOriginTracker {
     private struct PendingSelection {
-        let language: Language
+        let identifier: String
         let expiresAt: TimeInterval
     }
 
@@ -87,18 +87,18 @@ final class InputSourceSelectionOriginTracker {
         self.now = now
     }
 
-    func recordSuccessfulSelection(to language: Language) {
+    func recordSuccessfulSelection(identifier: String) {
         pendingSelection = .init(
-            language: language,
+            identifier: identifier,
             expiresAt: now() + validityInterval
         )
     }
 
-    func consumeIfMatching(_ currentLanguage: Language?) -> Bool {
+    func consumeIfMatching(currentIdentifier: String?) -> Bool {
         guard let pendingSelection else { return false }
         self.pendingSelection = nil
         return now() <= pendingSelection.expiresAt
-            && currentLanguage == pendingSelection.language
+            && currentIdentifier == pendingSelection.identifier
     }
 }
 
@@ -166,11 +166,11 @@ public struct InputSourceController: InputSourceSelecting {
     public func select(_ language: Language) -> Bool {
         guard let identifier = preferredSource(for: language)?.identifier else { return false }
         guard backend.select(identifier: identifier) else { return false }
-        selectionOriginTracker.recordSuccessfulSelection(to: language)
+        selectionOriginTracker.recordSuccessfulSelection(identifier: identifier)
         return true
     }
 
     func consumeAkuoSelectionNotification() -> Bool {
-        selectionOriginTracker.consumeIfMatching(currentLanguage)
+        selectionOriginTracker.consumeIfMatching(currentIdentifier: currentSource?.identifier)
     }
 }

@@ -166,6 +166,39 @@ final class InputSourceControllerTests: XCTestCase {
         XCTAssertFalse(controller.consumeAkuoSelectionNotification())
     }
 
+    func testABCSelectionOriginRejectsAndClearsUSNotification() {
+        let backend = FakeInputSourceBackend(
+            sources: Self.allSources,
+            currentIdentifier: "com.apple.keylayout.Hebrew"
+        )
+        let controller = InputSourceController(backend: backend)
+        XCTAssertTrue(controller.select(.english))
+
+        backend.currentIdentifier = "com.apple.keylayout.US"
+        XCTAssertFalse(controller.consumeAkuoSelectionNotification())
+
+        backend.currentIdentifier = "com.apple.keylayout.ABC"
+        XCTAssertFalse(controller.consumeAkuoSelectionNotification())
+    }
+
+    func testUSSelectionOriginRejectsAndClearsABCNotification() {
+        let backend = FakeInputSourceBackend(
+            sources: [
+                .init(identifier: "com.apple.keylayout.US"),
+                .init(identifier: "com.apple.keylayout.Hebrew"),
+            ],
+            currentIdentifier: "com.apple.keylayout.Hebrew"
+        )
+        let controller = InputSourceController(backend: backend)
+        XCTAssertTrue(controller.select(.english))
+
+        backend.currentIdentifier = "com.apple.keylayout.ABC"
+        XCTAssertFalse(controller.consumeAkuoSelectionNotification())
+
+        backend.currentIdentifier = "com.apple.keylayout.US"
+        XCTAssertFalse(controller.consumeAkuoSelectionNotification())
+    }
+
     func testMismatchedCurrentLanguageRejectsAndClearsAkuoSelectionOrigin() {
         let backend = FakeInputSourceBackend(
             sources: Self.allSources,
