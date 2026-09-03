@@ -44,6 +44,9 @@ All notable changes to Akuo are documented in this file.
 
 ### Fixed
 
+- Validate the exact visible suffix before every destructive immediate undo,
+  unfinished force correction, and force toggle, then revalidate focus before
+  any text or input-source mutation so mismatches fail open without side effects.
 - Revalidate the exact completed token and boundary immediately before a
   delayed force conversion using a bounded Accessibility range query. Caret
   movement, host text substitution, unavailable range evidence, or a changed

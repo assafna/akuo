@@ -216,6 +216,49 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertTrue(replacer.calls.isEmpty)
     }
 
+    // Production mutation caught: omitting the focus recheck after delayed-force suffix validation.
+    func testPendingForcedCorrectionRevalidatesFocusAfterMatchingSuffixBeforeMutation() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        var contextIsEligible = true
+        let validator = RecordingPreviousTextValidator(
+            result: true,
+            onValidation: { contextIsEligible = false }
+        )
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["and"], hebrew: ["שמג"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt),
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleBoundary(
+            .init(token: "שמג", boundary: " "),
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .hebrew,
+            priorInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .notHandled)
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { contextIsEligible }
+        ), .notHandled)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "שמג ", context: context),
+        ])
+        XCTAssertTrue(replacer.calls.isEmpty)
+        XCTAssertTrue(selector.selected.isEmpty)
+        XCTAssertTrue(selector.exactIdentifiers.isEmpty)
+        XCTAssertEqual(counter.incrementCount, 0)
+    }
+
     func testReturnSubmissionCannotApplyPendingCorrectionInReusedFocusElement() {
         let replacer = RecordingReplacer()
         let validator = RecordingPreviousTextValidator(result: true)
@@ -366,6 +409,94 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(replacer.boundaryKeyCodes, [nil, nil])
         XCTAssertEqual(selector.selected, [.hebrew])
         XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
+    }
+
+    // Production mutation caught: omitting exact visible-suffix validation before an unfinished force.
+    func testUnfinishedForcedCorrectionRejectsMismatchedVisibleSuffixWithoutRuntimeOperations() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let undoController = UndoController()
+        undoController.register(.init(
+            original: "akuo",
+            corrected: "שלום",
+            boundary: " ",
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            createdAt: createdAt
+        ))
+        let validator = RecordingPreviousTextValidator(result: false)
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt),
+            undoController: undoController,
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            .init(token: "go", boundary: ""),
+            context: context,
+            priorInputLanguage: .english,
+            currentInputSourceIdentifier: "com.apple.keylayout.ABC",
+            isContextStillEligible: { true }
+        ), .notHandled)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "go", context: context),
+        ])
+        XCTAssertTrue(replacer.calls.isEmpty)
+        XCTAssertTrue(selector.selected.isEmpty)
+        XCTAssertTrue(selector.exactIdentifiers.isEmpty)
+        XCTAssertEqual(counter.incrementCount, 0)
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .notHandled)
+    }
+
+    // Production mutation caught: skipping the post-validation focus check on a matching unfinished force.
+    func testUnfinishedForcedCorrectionValidatesMatchingSuffixAndFocusBeforeMutation() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        var textWasValidated = false
+        var eligibilityChecks = 0
+        let validator = RecordingPreviousTextValidator(
+            result: true,
+            onValidation: { textWasValidated = true }
+        )
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: ["go"], hebrew: ["עם"]),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt),
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            .init(token: "go", boundary: ""),
+            context: context,
+            priorInputLanguage: .english,
+            currentInputSourceIdentifier: "com.apple.keylayout.ABC",
+            isContextStillEligible: {
+                eligibilityChecks += 1
+                if eligibilityChecks == 2 {
+                    XCTAssertTrue(textWasValidated)
+                }
+                return true
+            }
+        ), .handled)
+        XCTAssertEqual(eligibilityChecks, 2)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "go", context: context),
+        ])
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 2, replacement: "עם", boundary: ""),
+        ])
+        XCTAssertEqual(selector.selected, [.hebrew])
+        XCTAssertEqual(counter.incrementCount, 1)
     }
 
     func testLegacyForcedCorrectionStillAppliesWithoutExactSourceIdentifier() {
@@ -705,6 +836,104 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(selector.selected, [.hebrew])
         XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
         XCTAssertEqual(counter.incrementCount, 1)
+    }
+
+    // Production mutation caught: restoring a source or deleting text when a force-toggle suffix mismatches.
+    func testForceToggleRejectsMismatchedVisibleSuffixWithoutRuntimeOperations() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let undoController = UndoController()
+        undoController.register(.init(
+            original: "akuo",
+            corrected: "שלום",
+            boundary: " ",
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            createdAt: createdAt
+        ))
+        let validator = RecordingPreviousTextValidator(result: false)
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: [], hebrew: []),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt),
+            undoController: undoController,
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: { true }
+        ), .notHandled)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "שלום ", context: context),
+        ])
+        XCTAssertTrue(replacer.calls.isEmpty)
+        XCTAssertTrue(selector.selected.isEmpty)
+        XCTAssertTrue(selector.exactIdentifiers.isEmpty)
+        XCTAssertEqual(counter.incrementCount, 0)
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .notHandled)
+    }
+
+    // Production mutation caught: restoring a source before suffix validation or its focus recheck on toggle.
+    func testForceToggleValidatesMatchingSuffixAndFocusBeforeMutation() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let undoController = UndoController()
+        undoController.register(.init(
+            original: "akuo",
+            corrected: "שלום",
+            boundary: " ",
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            createdAt: createdAt
+        ))
+        var textWasValidated = false
+        var eligibilityChecks = 0
+        let validator = RecordingPreviousTextValidator(
+            result: true,
+            onValidation: { textWasValidated = true }
+        )
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: [], hebrew: []),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt),
+            undoController: undoController,
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleForcedCorrection(
+            context: context,
+            priorInputLanguage: .hebrew,
+            currentInputSourceIdentifier: "com.apple.keylayout.Hebrew",
+            isContextStillEligible: {
+                eligibilityChecks += 1
+                if eligibilityChecks == 2 {
+                    XCTAssertTrue(textWasValidated)
+                }
+                return true
+            }
+        ), .handled)
+        XCTAssertEqual(eligibilityChecks, 2)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "שלום ", context: context),
+        ])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 5, replacement: "akuo", boundary: " "),
+        ])
+        XCTAssertEqual(counter.incrementCount, 0)
     }
 
     func testForceGestureRejectsAndInvalidatesAnAutomaticCorrectionWhenElapsedIsNegative() {
@@ -1214,6 +1443,100 @@ final class CorrectionCoordinatorTests: XCTestCase {
             [.init(deleteCount: 4, replacement: "שלום", boundary: " ")]
         )
         XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .notHandled)
+    }
+
+    // Production mutation caught: restoring a source or deleting text when the immediate-undo suffix mismatches.
+    func testImmediateUndoRejectsMismatchedVisibleSuffixWithoutRuntimeOperations() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let undoController = UndoController()
+        undoController.register(.init(
+            original: "akuo",
+            corrected: "שלום",
+            boundary: " ",
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            createdAt: createdAt
+        ))
+        let validator = RecordingPreviousTextValidator(result: false)
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: [], hebrew: []),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt),
+            undoController: undoController,
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleImmediateUndo(
+            context: context,
+            isContextStillEligible: { true }
+        ), .notHandled)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "שלום ", context: context),
+        ])
+        XCTAssertTrue(replacer.calls.isEmpty)
+        XCTAssertTrue(selector.selected.isEmpty)
+        XCTAssertTrue(selector.exactIdentifiers.isEmpty)
+        XCTAssertEqual(counter.incrementCount, 0)
+        XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .notHandled)
+    }
+
+    // Production mutation caught: restoring a source before suffix validation or its focus recheck on undo.
+    func testImmediateUndoValidatesMatchingSuffixAndFocusBeforeMutation() {
+        let replacer = RecordingReplacer()
+        let selector = RecordingSelector()
+        let counter = RecordingCounter()
+        let undoController = UndoController()
+        undoController.register(.init(
+            original: "akuo",
+            corrected: "שלום",
+            boundary: " ",
+            boundaryKeyCode: 49,
+            context: context,
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            createdAt: createdAt
+        ))
+        var textWasValidated = false
+        var eligibilityChecks = 0
+        let validator = RecordingPreviousTextValidator(
+            result: true,
+            onValidation: { textWasValidated = true }
+        )
+        let coordinator = makeCoordinator(
+            recognizer: StubRecognizer(english: [], hebrew: []),
+            replacer: replacer,
+            selector: selector,
+            counter: counter,
+            clock: FixedClock(now: createdAt),
+            undoController: undoController,
+            previousTextValidator: validator
+        )
+
+        XCTAssertEqual(coordinator.handleImmediateUndo(
+            context: context,
+            isContextStillEligible: {
+                eligibilityChecks += 1
+                if eligibilityChecks == 2 {
+                    XCTAssertTrue(textWasValidated)
+                }
+                return true
+            }
+        ), .handled)
+        XCTAssertEqual(eligibilityChecks, 2)
+        XCTAssertEqual(validator.calls, [
+            .init(expectedText: "שלום ", context: context),
+        ])
+        XCTAssertEqual(selector.exactIdentifiers, ["com.apple.keylayout.ABC"])
+        XCTAssertEqual(replacer.calls, [
+            .init(deleteCount: 5, replacement: "akuo", boundary: " "),
+        ])
+        XCTAssertEqual(counter.incrementCount, 0)
     }
 
     func testFailedCorrectionInvalidatesPriorUndoRecord() {
