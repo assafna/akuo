@@ -66,6 +66,21 @@ enum AccessibilityAttributeDecoder {
         return value as? String
     }
 
+    static func range(from value: CFTypeRef?) -> NSRange? {
+        guard let value, CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+        let axValue = unsafeBitCast(value, to: AXValue.self)
+        guard AXValueGetType(axValue) == .cfRange else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(axValue, .cfRange, &range),
+              range.location >= 0,
+              range.length >= 0 else {
+            return nil
+        }
+        return NSRange(location: range.location, length: range.length)
+    }
+
     static func optionalString(
         result: AXError,
         value: CFTypeRef?
@@ -101,6 +116,28 @@ enum AccessibilityAttributeDecoder {
     }
 }
 
+enum AccessibilityTextMatcher {
+    static func precedingRange(
+        selectedRange: NSRange,
+        expectedText: String
+    ) -> NSRange? {
+        guard !expectedText.isEmpty,
+              selectedRange.location != NSNotFound,
+              selectedRange.length == 0 else {
+            return nil
+        }
+
+        let expectedLength = (expectedText as NSString).length
+        guard selectedRange.location >= expectedLength else {
+            return nil
+        }
+        return NSRange(
+            location: selectedRange.location - expectedLength,
+            length: expectedLength
+        )
+    }
+}
+
 struct AccessibilityFocusElement: Equatable {
     let identifier: String
     let role: String?
@@ -111,6 +148,11 @@ struct AccessibilityFocusElement: Equatable {
 
 protocol AccessibilityFocusProviding {
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement?
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> Bool
 }
 
 struct AccessibilityAttributeRead {
@@ -120,6 +162,11 @@ struct AccessibilityAttributeRead {
 
 protocol AccessibilityAttributeReading {
     func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead
+    func parameterizedAttribute(
+        _ attribute: String,
+        parameter: CFTypeRef,
+        of element: AXUIElement
+    ) -> AccessibilityAttributeRead
     func isAttributeSettable(_ attribute: String, of element: AXUIElement) -> Bool?
 }
 
@@ -127,6 +174,21 @@ private struct SystemAccessibilityAttributeReader: AccessibilityAttributeReading
     func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead {
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        return .init(result: result, value: value)
+    }
+
+    func parameterizedAttribute(
+        _ attribute: String,
+        parameter: CFTypeRef,
+        of element: AXUIElement
+    ) -> AccessibilityAttributeRead {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyParameterizedAttributeValue(
+            element,
+            attribute as CFString,
+            parameter,
+            &value
+        )
         return .init(result: result, value: value)
     }
 
@@ -203,6 +265,59 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
             isValueSettable: isValueSettable
         )
     }
+
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> Bool {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+        guard initialFocus.result == .success,
+              let element = AccessibilityAttributeDecoder.element(from: initialFocus.value),
+              identityTracker.identifier(for: element) == elementIdentifier else {
+            return false
+        }
+
+        let selectedRange = reader.attribute(kAXSelectedTextRangeAttribute, of: element)
+        guard selectedRange.result == .success,
+              let caretRange = AccessibilityAttributeDecoder.range(
+                  from: selectedRange.value
+              ),
+              let precedingRange = AccessibilityTextMatcher.precedingRange(
+                  selectedRange: caretRange,
+                  expectedText: expectedText
+              ) else {
+            return false
+        }
+        var requestedRange = CFRange(
+            location: precedingRange.location,
+            length: precedingRange.length
+        )
+        guard let requestedRangeValue = AXValueCreate(.cfRange, &requestedRange) else {
+            return false
+        }
+        let previousText = reader.parameterizedAttribute(
+            kAXStringForRangeParameterizedAttribute,
+            parameter: requestedRangeValue,
+            of: element
+        )
+        let finalSelectedRange = reader.attribute(kAXSelectedTextRangeAttribute, of: element)
+        let finalFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+        guard previousText.result == .success,
+              AccessibilityAttributeDecoder.string(from: previousText.value)
+                  == expectedText,
+              finalSelectedRange.result == .success,
+              AccessibilityAttributeDecoder.range(from: finalSelectedRange.value)
+                  == caretRange,
+              finalFocus.result == .success,
+              let confirmedElement = AccessibilityAttributeDecoder.element(from: finalFocus.value),
+              CFEqual(element, confirmedElement) else {
+            return false
+        }
+
+        return true
+    }
 }
 
 public struct FocusContextProvider {
@@ -264,4 +379,26 @@ public struct FocusContextProvider {
                 && element.isValueSettable == true
         )
     }
+
+    public func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool {
+        guard context.elementIdentifier != nil,
+              !context.isSecureField,
+              context.isEditableTextInput,
+              let elementIdentifier = context.elementIdentifier,
+              frontmostProcessProvider.processIdentifier == context.processIdentifier,
+              accessibilityProvider.hasExactTextImmediatelyBeforeCaret(
+                  expectedText,
+                  processIdentifier: context.processIdentifier,
+                  elementIdentifier: elementIdentifier
+              ),
+              frontmostProcessProvider.processIdentifier == context.processIdentifier else {
+            return false
+        }
+        return true
+    }
 }
+
+extension FocusContextProvider: PreviousTextValidating {}

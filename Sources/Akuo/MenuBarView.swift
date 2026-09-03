@@ -30,6 +30,17 @@ struct MenuBarView: View {
             ))
             .toggleStyle(.switch)
 
+            Picker("Force conversion", selection: Binding(
+                get: { model.forceConversionGesture },
+                set: model.setForceConversionGesture
+            )) {
+                Text("Double-tap Shift")
+                    .tag(ForceConversionGesture.doubleShift)
+                Text("Press both Shift keys")
+                    .tag(ForceConversionGesture.bothShifts)
+            }
+            .pickerStyle(.menu)
+
             Toggle("Launch at Login", isOn: Binding(
                 get: { model.launchAtLoginEnabled },
                 set: model.setLaunchAtLogin

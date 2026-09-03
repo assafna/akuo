@@ -28,6 +28,7 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertFalse(preferences.onboardingCompleted)
         XCTAssertEqual(preferences.correctionCount, 0)
         XCTAssertFalse(preferences.launchAtLogin)
+        XCTAssertEqual(preferences.forceConversionGesture, .doubleShift)
     }
 
     func testPersistsEveryAllowlistedPreference() {
@@ -35,6 +36,7 @@ final class AppPreferencesTests: XCTestCase {
         preferences?.isEnabled = true
         preferences?.onboardingCompleted = true
         preferences?.launchAtLogin = true
+        preferences?.forceConversionGesture = .bothShifts
         preferences?.incrementCorrectionCount()
         preferences?.incrementCorrectionCount()
         preferences = nil
@@ -43,14 +45,16 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertTrue(restored.isEnabled)
         XCTAssertTrue(restored.onboardingCompleted)
         XCTAssertTrue(restored.launchAtLogin)
+        XCTAssertEqual(restored.forceConversionGesture, .bothShifts)
         XCTAssertEqual(restored.correctionCount, 2)
     }
 
-    func testWritesOnlyFourAllowlistedKeysAndNoWordData() {
+    func testWritesOnlyFiveAllowlistedKeysAndNoWordData() {
         let preferences = AppPreferences(defaults: defaults)
         preferences.isEnabled = true
         preferences.onboardingCompleted = true
         preferences.launchAtLogin = true
+        preferences.forceConversionGesture = .bothShifts
         preferences.incrementCorrectionCount()
 
         XCTAssertEqual(
@@ -60,7 +64,17 @@ final class AppPreferencesTests: XCTestCase {
                 PreferenceKey.onboardingCompleted,
                 PreferenceKey.correctionCount,
                 PreferenceKey.launchAtLogin,
+                PreferenceKey.forceConversionGesture,
             ])
+        )
+    }
+
+    func testInvalidStoredForceGestureFallsBackToDoubleShift() {
+        defaults.set("unsupported", forKey: PreferenceKey.forceConversionGesture)
+
+        XCTAssertEqual(
+            AppPreferences(defaults: defaults).forceConversionGesture,
+            .doubleShift
         )
     }
 

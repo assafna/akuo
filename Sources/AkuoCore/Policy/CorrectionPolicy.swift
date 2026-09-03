@@ -103,4 +103,35 @@ public struct CorrectionPolicy {
             target: conversion.target
         ))
     }
+
+    public func forcedDecision(
+        for token: String,
+        sourceHint: Language? = nil,
+        keyStrokes: [ObservedKeyStroke] = []
+    ) -> CorrectionDecision {
+        let conversion = layoutMap.convert(
+            token,
+            sourceHint: sourceHint,
+            keyStrokes: keyStrokes
+        )
+        guard !excluder.shouldExclude(token, conversion: conversion) else {
+            return .keep(.excluded)
+        }
+        guard let conversion else { return .keep(.noConversion) }
+        let hasTargetWordShape = OrthographicWordShape.recognitionToken(
+            for: conversion.candidate,
+            language: conversion.target
+        ) != nil
+        let hasCompleteAlphabeticPhysicalEvidence =
+            conversion.physicalEvidence?.hasAlphabeticKey == true
+        guard hasTargetWordShape || hasCompleteAlphabeticPhysicalEvidence else {
+            return .keep(.excluded)
+        }
+
+        return .correct(.init(
+            original: conversion.original,
+            replacement: conversion.candidate,
+            target: conversion.target
+        ))
+    }
 }

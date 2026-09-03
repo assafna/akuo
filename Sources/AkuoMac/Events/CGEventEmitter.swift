@@ -74,15 +74,24 @@ public final class CGEventEmitter: TextReplacing {
         deleteCount: Int,
         replacement: String,
         boundary: String,
-        boundaryKeyCode: Int
+        boundaryKeyCode: Int?
     ) -> Bool {
         guard deleteCount >= 0,
-              let nativeBoundaryKeyCode = CGKeyCode(exactly: boundaryKeyCode) else {
+              boundary.isEmpty == (boundaryKeyCode == nil) else {
             return false
+        }
+        let nativeBoundaryKeyCode: CGKeyCode?
+        if let boundaryKeyCode {
+            guard let keyCode = CGKeyCode(exactly: boundaryKeyCode) else {
+                return false
+            }
+            nativeBoundaryKeyCode = keyCode
+        } else {
+            nativeBoundaryKeyCode = nil
         }
 
         var events: [CGEvent] = []
-        events.reserveCapacity((deleteCount * 2) + 3)
+        events.reserveCapacity((deleteCount * 2) + 2 + (boundaryKeyCode == nil ? 0 : 1))
 
         for _ in 0..<deleteCount {
             guard let keyDown = prepareKeyEvent(keyDown: true),
@@ -94,16 +103,20 @@ public final class CGEventEmitter: TextReplacing {
         }
 
         guard let unicodeDown = prepareUnicodeEvent(replacement, keyDown: true),
-              let unicodeUp = prepareUnicodeEvent(replacement, keyDown: false),
-              let boundaryEvent = prepare(posting.makeBoundaryEvent(
-                  boundary,
-                  keyCode: nativeBoundaryKeyCode
-              )) else {
+              let unicodeUp = prepareUnicodeEvent(replacement, keyDown: false) else {
             return false
         }
         events.append(unicodeDown)
         events.append(unicodeUp)
-        events.append(boundaryEvent)
+        if let nativeBoundaryKeyCode {
+            guard let boundaryEvent = prepare(posting.makeBoundaryEvent(
+                      boundary,
+                      keyCode: nativeBoundaryKeyCode
+                  )) else {
+                return false
+            }
+            events.append(boundaryEvent)
+        }
 
         for event in events {
             posting.post(event)

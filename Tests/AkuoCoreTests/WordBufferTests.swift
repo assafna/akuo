@@ -44,10 +44,42 @@ final class WordBufferTests: XCTestCase {
                 .completed(.init(
                     token: remainingToken,
                     boundary: " ",
-                    keyStrokes: []
+                    keyStrokes: [],
+                    physicalTraceIntegrity: .invalidated
                 ))
             )
         }
+    }
+
+    func testDeleteMarksUnfinishedPhysicalTraceInvalidated() {
+        var buffer = WordBuffer()
+        for (text, keyCode) in [("a", 0), ("k", 40), ("u", 32), ("o", 31)] {
+            _ = buffer.consume(.observedKeyStroke(.init(text: text, keyCode: keyCode)))
+        }
+
+        _ = buffer.consume(.deleteBackward)
+
+        XCTAssertEqual(buffer.unfinishedWord?.token, "aku")
+        XCTAssertEqual(buffer.unfinishedWord?.physicalTraceIntegrity, .invalidated)
+    }
+
+    func testDeleteBeforeNewInputDoesNotInvalidateFreshPhysicalTrace() {
+        var buffer = WordBuffer()
+        _ = buffer.consume(.deleteBackward)
+        _ = buffer.consume(.observedKeyStroke(.init(text: "a", keyCode: 0)))
+
+        XCTAssertEqual(buffer.unfinishedWord?.physicalTraceIntegrity, .complete)
+    }
+
+    func testDeletingTrackedWordToEmptyStartsFreshPhysicalTrace() {
+        var buffer = WordBuffer()
+        _ = buffer.consume(.observedKeyStroke(.init(text: "a", keyCode: 0)))
+        _ = buffer.consume(.deleteBackward)
+        _ = buffer.consume(.observedKeyStroke(.init(text: "g", keyCode: 5)))
+        _ = buffer.consume(.observedKeyStroke(.init(text: "o", keyCode: 31)))
+
+        XCTAssertEqual(buffer.unfinishedWord?.token, "go")
+        XCTAssertEqual(buffer.unfinishedWord?.physicalTraceIntegrity, .complete)
     }
 
     func testBoundaryWithEmptyBufferPassesThrough() {
@@ -74,7 +106,8 @@ final class WordBufferTests: XCTestCase {
             .completed(.init(
                 token: "",
                 boundary: " ",
-                keyStrokes: keyStrokes
+                keyStrokes: keyStrokes,
+                physicalTraceIntegrity: .complete
             ))
         )
     }

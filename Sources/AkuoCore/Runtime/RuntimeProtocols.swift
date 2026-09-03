@@ -30,8 +30,26 @@ public protocol TextReplacing {
         deleteCount: Int,
         replacement: String,
         boundary: String,
-        boundaryKeyCode: Int
+        boundaryKeyCode: Int?
     ) -> Bool
+}
+
+public protocol PreviousTextValidating {
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool
+}
+
+public struct RejectingPreviousTextValidator: PreviousTextValidating {
+    public init() {}
+
+    public func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        context: FocusContext
+    ) -> Bool {
+        false
+    }
 }
 
 public protocol InputSourceSelecting {

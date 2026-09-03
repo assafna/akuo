@@ -29,6 +29,28 @@ final class CGEventEmitterTests: XCTestCase {
         })
     }
 
+    func testBoundarylessReplacementDoesNotPostAFakeBoundaryKey() {
+        let posting = FakeNativeEventPosting()
+        let emitter = CGEventEmitter(posting: posting)
+
+        XCTAssertTrue(emitter.replacePreviousText(
+            deleteCount: 2,
+            replacement: "עם",
+            boundary: "",
+            boundaryKeyCode: nil
+        ))
+
+        XCTAssertEqual(posting.requests, [
+            .key(keyCode: 51, keyDown: true),
+            .key(keyCode: 51, keyDown: false),
+            .key(keyCode: 51, keyDown: true),
+            .key(keyCode: 51, keyDown: false),
+            .unicode(text: "עם", keyDown: true),
+            .unicode(text: "עם", keyDown: false),
+        ])
+        XCTAssertEqual(posting.posted.count, 6)
+    }
+
     func testConstructionFailurePostsNothing() {
         for failingRequestIndex in 0..<7 {
             let posting = FakeNativeEventPosting(

@@ -38,19 +38,28 @@ public struct ObservedKeyStroke: Equatable, Sendable {
     }
 }
 
+public enum PhysicalTraceIntegrity: Equatable, Sendable {
+    case complete
+    case unavailable
+    case invalidated
+}
+
 public struct CompletedWord: Equatable, Sendable {
     public let token: String
     public let boundary: String
     public let keyStrokes: [ObservedKeyStroke]
+    public let physicalTraceIntegrity: PhysicalTraceIntegrity
 
     public init(
         token: String,
         boundary: String,
-        keyStrokes: [ObservedKeyStroke] = []
+        keyStrokes: [ObservedKeyStroke] = [],
+        physicalTraceIntegrity: PhysicalTraceIntegrity = .unavailable
     ) {
         self.token = token
         self.boundary = boundary
         self.keyStrokes = keyStrokes
+        self.physicalTraceIntegrity = physicalTraceIntegrity
     }
 }
 
@@ -64,6 +73,19 @@ public enum BufferResult: Equatable, Sendable {
 public struct WordBuffer: Sendable {
     public private(set) var currentToken = ""
     private var currentKeyStrokes: [ObservedKeyStroke] = []
+    private var physicalTraceIntegrity: PhysicalTraceIntegrity = .complete
+
+    public var unfinishedWord: CompletedWord? {
+        guard !currentToken.isEmpty || !currentKeyStrokes.isEmpty else {
+            return nil
+        }
+        return CompletedWord(
+            token: currentToken,
+            boundary: "",
+            keyStrokes: currentKeyStrokes,
+            physicalTraceIntegrity: physicalTraceIntegrity
+        )
+    }
 
     public init() {}
 
@@ -71,6 +93,9 @@ public struct WordBuffer: Sendable {
         switch input {
         case let .text(text):
             currentToken.append(contentsOf: text)
+            if physicalTraceIntegrity == .complete {
+                physicalTraceIntegrity = .unavailable
+            }
             return .accumulating
 
         case let .observedKeyStroke(keyStroke):
@@ -79,27 +104,35 @@ public struct WordBuffer: Sendable {
             return .accumulating
 
         case .deleteBackward:
+            guard !currentToken.isEmpty || !currentKeyStrokes.isEmpty else {
+                physicalTraceIntegrity = .complete
+                return .accumulating
+            }
             if !currentToken.isEmpty {
                 currentToken.removeLast()
             }
             // A deletion can merge or split Unicode grapheme clusters, so the
             // physical trace is no longer guaranteed to align with the visible
-            // token. Fail closed for capitalization recovery after editing.
+            // token. Fail closed for physical-layout recovery after editing.
             currentKeyStrokes.removeAll(keepingCapacity: true)
+            physicalTraceIntegrity = currentToken.isEmpty ? .complete : .invalidated
             return .accumulating
 
         case let .boundary(boundary):
             guard !currentToken.isEmpty || !currentKeyStrokes.isEmpty else {
                 currentKeyStrokes.removeAll(keepingCapacity: true)
+                physicalTraceIntegrity = .complete
                 return .passThrough
             }
             let completed = CompletedWord(
                 token: currentToken,
                 boundary: boundary,
-                keyStrokes: currentKeyStrokes
+                keyStrokes: currentKeyStrokes,
+                physicalTraceIntegrity: physicalTraceIntegrity
             )
             currentToken.removeAll(keepingCapacity: true)
             currentKeyStrokes.removeAll(keepingCapacity: true)
+            physicalTraceIntegrity = .complete
             return .completed(completed)
 
         case .navigation, .shortcut, .reset:
@@ -111,5 +144,6 @@ public struct WordBuffer: Sendable {
     public mutating func reset() {
         currentToken.removeAll(keepingCapacity: true)
         currentKeyStrokes.removeAll(keepingCapacity: true)
+        physicalTraceIntegrity = .complete
     }
 }
