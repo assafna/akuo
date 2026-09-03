@@ -67,6 +67,7 @@ akuo_read_candidate_identity() {
 
     AKUO_CANDIDATE_VERSION="$version"
     AKUO_CANDIDATE_BUILD="$build"
+    AKUO_CANDIDATE_IS_LEGACY=false
 }
 
 akuo_read_revision_identity() {
@@ -151,6 +152,34 @@ akuo_read_revision_identity() {
     AKUO_REVISION_IS_LEGACY="$is_legacy"
 }
 
+akuo_read_packaging_identity() {
+    local project_root="$1"
+    local revision="$2"
+    local source_path="$3"
+    local build_count
+
+    build_count="$(akuo_version_declaration_count "$source_path" build)"
+    if [[ "$build_count" -ne 0 ]]; then
+        akuo_read_candidate_identity "$source_path"
+        return
+    fi
+
+    if ! akuo_read_revision_identity "$project_root" "$revision"; then
+        printf 'missing authoritative build declaration in %s; legacy fallback requires valid plist identity\n' \
+            "$source_path" >&2
+        return 1
+    fi
+    if [[ "$AKUO_REVISION_IS_LEGACY" != true ]]; then
+        printf 'cannot establish legacy candidate identity at Git revision %s\n' \
+            "$revision" >&2
+        return 1
+    fi
+
+    AKUO_CANDIDATE_VERSION="$AKUO_REVISION_VERSION"
+    AKUO_CANDIDATE_BUILD="$AKUO_REVISION_BUILD"
+    AKUO_CANDIDATE_IS_LEGACY=true
+}
+
 akuo_build_is_greater() {
     local candidate="$1"
     local previous="$2"
@@ -201,6 +230,50 @@ akuo_assert_source_unchanged() {
         echo 'candidate source changed during packaging' >&2
         return 1
     fi
+}
+
+akuo_assert_safe_archive_entries() {
+    local project_root="$1"
+    local revision="$2"
+    local tree_entries
+    local entry
+    local metadata
+    local mode
+    local entry_path
+
+    if ! tree_entries="$(
+        git -C "$project_root" ls-tree -r --full-tree "$revision"
+    )"; then
+        echo 'cannot inspect candidate archive entry modes' >&2
+        return 1
+    fi
+    while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+        metadata="${entry%%$'\t'*}"
+        entry_path="${entry#*$'\t'}"
+        if [[ "$metadata" == "$entry" ]]; then
+            echo 'cannot parse candidate archive entry' >&2
+            return 1
+        fi
+        mode="${metadata%% *}"
+        case "$mode" in
+            100644|100755)
+                ;;
+            120000)
+                printf 'candidate archive contains tracked symlink: %s\n' "$entry_path" >&2
+                return 1
+                ;;
+            160000)
+                printf 'candidate archive contains tracked gitlink: %s\n' "$entry_path" >&2
+                return 1
+                ;;
+            *)
+                printf 'candidate archive contains unsupported tracked mode %s: %s\n' \
+                    "$mode" "$entry_path" >&2
+                return 1
+                ;;
+        esac
+    done <<<"$tree_entries"
 }
 
 akuo_require_complete_release_tags() {
@@ -262,9 +335,12 @@ akuo_validate_candidate_history() {
     local tag_commit
     local exact_release=false
     local exact_release_legacy=false
+    local expected_legacy_tag="v${AKUO_CANDIDATE_VERSION}"
+    local has_expected_legacy_tag=false
     local revisions
-    local ancestors=""
     local revision
+    local relationship
+    local ancestry_status
 
     if ! head_commit="$(git -C "$project_root" rev-parse --verify HEAD 2>/dev/null)"; then
         echo 'candidate packaging requires a Git worktree with a committed HEAD' >&2
@@ -287,6 +363,11 @@ akuo_validate_candidate_history() {
             return 1
         fi
         akuo_read_revision_identity "$project_root" "$tag^{commit}" || return 1
+        if [[ "${AKUO_CANDIDATE_IS_LEGACY:-false}" == true && \
+            "$tag" == "$expected_legacy_tag" && "$tag_commit" == "$head_commit" && \
+            "$AKUO_REVISION_IS_LEGACY" == true ]]; then
+            has_expected_legacy_tag=true
+        fi
         if [[ "$AKUO_REVISION_VERSION" == "$AKUO_CANDIDATE_VERSION" && \
             "$AKUO_REVISION_BUILD" == "$AKUO_CANDIDATE_BUILD" ]]; then
             if [[ "$tag_commit" == "$head_commit" ]]; then
@@ -300,40 +381,69 @@ akuo_validate_candidate_history() {
         fi
     done <<<"$AKUO_RELEASE_TAGS"
 
-    # Legacy releases kept the build in the plist. Their merge parents can
-    # legitimately carry the same pair, as v0.3.0 does. The live tag inventory
-    # above remains authoritative and still rejects that pair on another tag.
-    if [[ "$exact_release" == true && "$exact_release_legacy" == true ]]; then
-        return 0
+    if [[ "${AKUO_CANDIDATE_IS_LEGACY:-false}" == true && \
+        "$has_expected_legacy_tag" != true ]]; then
+        printf 'missing authoritative build declaration; legacy candidate requires exact live-origin release tag %s\n' \
+            "$expected_legacy_tag" >&2
+        return 1
+    fi
+    if [[ "${AKUO_CANDIDATE_IS_LEGACY:-false}" == true && \
+        ( "$exact_release" != true || "$exact_release_legacy" != true ) ]]; then
+        echo 'cannot prove exact legacy release identity' >&2
+        return 1
     fi
     if ! revisions="$(git -C "$project_root" rev-list --all --reflog)"; then
         echo 'cannot enumerate candidate source history' >&2
         return 1
     fi
-    if [[ "$exact_release" == true ]] && \
-        ! ancestors="$(git -C "$project_root" rev-list "$head_commit^@")"; then
-        echo 'cannot enumerate tagged release ancestry' >&2
-        return 1
-    fi
     while IFS= read -r revision; do
         [[ -n "$revision" && "$revision" != "$head_commit" ]] || continue
         akuo_read_revision_identity "$project_root" "$revision" || return 1
+        relationship=visible
+        if [[ "$exact_release" == true ]]; then
+            if git -C "$project_root" merge-base --is-ancestor \
+                "$head_commit" "$revision"; then
+                relationship=descendant
+            else
+                ancestry_status=$?
+                if [[ "$ancestry_status" -ne 1 ]]; then
+                    echo 'cannot compare tagged release history direction' >&2
+                    return 1
+                fi
+                if git -C "$project_root" merge-base --is-ancestor \
+                    "$revision" "$head_commit"; then
+                    relationship=ancestor
+                else
+                    ancestry_status=$?
+                    if [[ "$ancestry_status" -ne 1 ]]; then
+                        echo 'cannot compare tagged release history direction' >&2
+                        return 1
+                    fi
+                    relationship=divergent
+                fi
+            fi
+        fi
+
         if [[ "$exact_release" == true && \
             "$AKUO_REVISION_VERSION" == "$AKUO_CANDIDATE_VERSION" && \
             "$AKUO_REVISION_BUILD" == "$AKUO_CANDIDATE_BUILD" ]]; then
+            # Historical releases carried one plist identity across adjacent
+            # pre- and post-tag commits. Keep that narrow ancestry exception,
+            # but never extend it to modern or divergent source revisions.
+            if [[ "$exact_release_legacy" == true && \
+                "$AKUO_REVISION_IS_LEGACY" == true && \
+                ( "$relationship" == ancestor || "$relationship" == descendant ) ]]; then
+                continue
+            fi
             printf 'candidate identity %s (%s) is assigned to another source revision\n' \
                 "$AKUO_CANDIDATE_VERSION" "$AKUO_CANDIDATE_BUILD" >&2
             return 1
         fi
-        if [[ "$exact_release" == true && \
-            $'\n'"$ancestors"$'\n' == *$'\n'"$revision"$'\n'* ]] && \
-            ! akuo_build_is_greater "$AKUO_CANDIDATE_BUILD" "$AKUO_REVISION_BUILD"; then
-            printf 'build identity %s is already assigned to another source revision\n' \
-                "$AKUO_CANDIDATE_BUILD" >&2
-            return 1
+        if [[ "$exact_release" == true && "$relationship" == descendant ]]; then
+            continue
         fi
-        if [[ "$exact_release" != true ]] && \
-            ! akuo_build_is_greater "$AKUO_CANDIDATE_BUILD" "$AKUO_REVISION_BUILD"; then
+        if ! akuo_build_is_greater \
+            "$AKUO_CANDIDATE_BUILD" "$AKUO_REVISION_BUILD"; then
             printf 'build identity %s is already assigned to another source revision\n' \
                 "$AKUO_CANDIDATE_BUILD" >&2
             return 1
@@ -350,6 +460,16 @@ akuo_assert_versionless_template() {
         >/dev/null 2>&1; then
         echo 'committed plist must not declare CFBundleShortVersionString or CFBundleVersion' >&2
         return 1
+    fi
+}
+
+akuo_validate_candidate_template() {
+    local plist_path="$1"
+
+    if [[ "${AKUO_CANDIDATE_IS_LEGACY:-false}" == true ]]; then
+        akuo_verify_candidate_plist "$plist_path"
+    else
+        akuo_assert_versionless_template "$plist_path"
     fi
 }
 

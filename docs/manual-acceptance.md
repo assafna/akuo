@@ -49,16 +49,20 @@ authoritative source declaration and exact `HEAD` SHA with the packaged plist,
 the runtime identity and compiled source revision reported by that executable,
 and every identity visible through local refs and reflogs. It also requires
 local `v*` tag objects to match the live origin result, then inspects their tagged
-source/plist contents. The build compiles an archived snapshot of the exact
-captured commit rather than caller-worktree files. Rebuilding the exact clean
+source/plist contents. Before extraction, the build rejects tracked symlinks and
+gitlinks, then compiles an archived snapshot of the exact captured commit rather
+than caller-worktree or external target files. Rebuilding the exact clean
 source commit retains the same candidate identity. A rebase, squash,
 cherry-pick, merge, or other new candidate SHA requires a higher build number;
 if an older candidate is outside the local refs/reflogs, the operator must still
 advance it before build. A modern exact release tag must have advanced beyond
-every ancestor and may not share its version/build pair with another visible
-source revision, while later descendants do not block rebuilding that older
-tag. A legacy exact tag whose build came from its plist may retain same-pair
-merge ancestry, but no other live-origin release tag may reuse its pair.
+every visible revision that is not its descendant and may not share its
+version/build pair with another visible source revision. True later descendants
+do not block rebuilding that older tag; divergent history does. A legacy source
+without a Swift build declaration is accepted only at its exact live-origin
+`v<marketing-version>` tag when its Swift version and plist identity agree. It
+may retain same-pair legacy ancestors or descendants, but divergent same-pair or
+unadvanced history and reuse by another live-origin release tag are rejected.
 
 Run this local inspection command and record whether each required language is
 advertised by either its base identifier or its locale-specific identifier:

@@ -71,6 +71,12 @@ akuo_refresh_tag_evidence() {
 }
 
 akuo_reset_fixture() {
+    local fixture_mode="${1:-candidate}"
+
+    if [[ "$fixture_mode" != candidate && "$fixture_mode" != legacy ]]; then
+        printf 'unknown fixture mode: %s\n' "$fixture_mode" >&2
+        return 2
+    fi
     rm -rf -- \
         "$AKUO_FIXTURE_ROOT" "$AKUO_ORIGIN_ROOT" "$AKUO_FAKE_BIN" "$AKUO_BUILD_BIN" \
         "$AKUO_BUILD_INPUT_LOG" "$AKUO_BUILD_CWD_LOG"
@@ -105,6 +111,8 @@ akuo_reset_fixture() {
         'public enum AkuoSourceRevision {' \
         '    public static let current = ""' \
         '}'
+    akuo_write_file "$AKUO_FIXTURE_ROOT/Package.swift" \
+        '// executable packaging-contract fixture manifest'
     akuo_write_template
 
     # Stub bodies are single-quoted so their variables expand when each generated
@@ -121,9 +129,11 @@ akuo_reset_fixture() {
         '        printf "\n// transient build mutation\n" >>"$source_path"' \
         '    fi' \
         '    {' \
+        '        cat Package.swift' \
         '        if [[ -f Sources/AkuoCore/Ignored.swift ]]; then printf "ignored-input\n"; fi' \
         '        cat Sources/AkuoCore/AkuoCoreVersion.swift' \
         '        cat Sources/AkuoCore/AkuoSourceRevision.swift' \
+        '        cat Sources/AkuoMac/AkuoMacVersion.swift' \
         '    } >"${AKUO_BUILD_INPUT_LOG:?}"' \
         '    compiled_source_revision="$(sed -E -n '\''s/^[[:space:]]*public[[:space:]]+static[[:space:]]+let[[:space:]]+current[[:space:]]*=[[:space:]]*"([0-9a-f]{40})"[[:space:]]*$/\1/p'\'' Sources/AkuoCore/AkuoSourceRevision.swift)"' \
         '    if [[ ! "$compiled_source_revision" =~ ^[0-9a-f]{40}$ ]]; then' \
@@ -183,20 +193,39 @@ akuo_reset_fixture() {
     git -C "$AKUO_FIXTURE_ROOT" config user.email version-contract@example.invalid
     akuo_write_file "$AKUO_FIXTURE_ROOT/.gitignore" '.build/' 'dist/'
     akuo_write_identity_source 'public static let current = "0.3.0"' ''
+    if [[ "$fixture_mode" == legacy ]]; then
+        akuo_write_file "$AKUO_FIXTURE_ROOT/Sources/AkuoMac/AkuoMacVersion.swift" \
+            'import AkuoCore' \
+            'public enum AkuoMacVersion {' \
+            '    public static let current = AkuoCoreVersion.current' \
+            '}'
+    fi
     akuo_write_template 0.3.0 3
     akuo_commit 'released fixture identity'
     git -C "$AKUO_FIXTURE_ROOT" tag -a v0.3.0 -m 'fixture release'
-    akuo_write_identity_source \
-        'public static let current = "0.4.0"' \
-        'public static let build = "4"'
-    akuo_write_template
-    akuo_commit 'fixture candidate identity'
+    if [[ "$fixture_mode" == candidate ]]; then
+        akuo_write_identity_source \
+            'public static let current = "0.4.0"' \
+            'public static let build = "4"'
+        akuo_write_template
+        akuo_commit 'fixture candidate identity'
+    fi
 
     git init -q --bare "$AKUO_ORIGIN_ROOT"
     git -C "$AKUO_FIXTURE_ROOT" remote add origin "$AKUO_ORIGIN_ROOT"
     git -C "$AKUO_FIXTURE_ROOT" push -q --set-upstream origin HEAD
     git -C "$AKUO_FIXTURE_ROOT" push -q origin --tags
     akuo_refresh_tag_evidence
+}
+
+akuo_replace_tracked_file_with_symlink() {
+    local tracked_path="$1"
+    local outside_path="$2"
+
+    mkdir -p -- "$(dirname -- "$outside_path")"
+    cp "$AKUO_FIXTURE_ROOT/$tracked_path" "$outside_path"
+    rm -- "$AKUO_FIXTURE_ROOT/$tracked_path"
+    ln -s "$outside_path" "$AKUO_FIXTURE_ROOT/$tracked_path"
 }
 
 akuo_build() {
@@ -234,6 +263,7 @@ akuo_validate_history_at_head() {
         akuo_read_revision_identity "$AKUO_FIXTURE_ROOT" HEAD
         AKUO_CANDIDATE_VERSION="$AKUO_REVISION_VERSION"
         AKUO_CANDIDATE_BUILD="$AKUO_REVISION_BUILD"
+        AKUO_CANDIDATE_IS_LEGACY="$AKUO_REVISION_IS_LEGACY"
         akuo_validate_candidate_history "$AKUO_FIXTURE_ROOT"
     )
 }
@@ -459,7 +489,7 @@ test_allows_modern_exact_tag_rebuild_after_later_build() {
 # merge-tagged release whose feature parent necessarily carries the release
 # plist identity, making the real v0.3.0 topology impossible to rebuild.
 test_allows_legacy_merge_tagged_release() {
-    akuo_reset_fixture
+    akuo_reset_fixture legacy
     local released_commit
     released_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse 'v0.3.0^{commit}')"
     git -C "$AKUO_FIXTURE_ROOT" tag -d v0.3.0 >/dev/null
@@ -476,7 +506,52 @@ test_allows_legacy_merge_tagged_release() {
     git -C "$AKUO_FIXTURE_ROOT" tag -a v0.3.0 -m 'fixture legacy merge release'
     git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.3.0
 
-    akuo_validate_history_at_head
+    AKUO_RUNTIME_IDENTITY=$'0.3.0\t3' akuo_build >/dev/null
+    AKUO_RUNTIME_IDENTITY=$'0.3.0\t3' akuo_verify >/dev/null
+    local plist="$AKUO_FIXTURE_ROOT/dist/Akuo.app/Contents/Info.plist"
+    [[ "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" == 0.3.0 ]]
+    [[ "$(plutil -extract CFBundleVersion raw -o - "$plist")" == 3 ]]
+}
+
+# Production mutation caught: classifying any source without a Swift build
+# declaration as legacy even when HEAD lacks the exact live-origin v<version> tag.
+test_rejects_mistagged_legacy_candidate() {
+    akuo_reset_fixture
+    akuo_write_identity_source 'public static let current = "0.4.0"' ''
+    akuo_write_template 0.4.0 5
+    akuo_commit 'legacy-format candidate with wrong tag name'
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v9.9.9 -m 'wrong legacy tag name'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v9.9.9
+    AKUO_RUNTIME_IDENTITY=$'0.4.0\t5' \
+        akuo_assert_rejected 'requires exact live-origin release tag v0.4.0' akuo_build
+}
+
+# Production mutation caught: letting the legacy exact-tag compatibility path
+# ignore an equal build on a visible revision from divergent history.
+test_rejects_divergent_equal_build_for_legacy_exact_tag() {
+    akuo_reset_fixture legacy
+    local base_commit
+    base_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)"
+    git -C "$AKUO_FIXTURE_ROOT" tag -d v0.3.0 >/dev/null
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin :refs/tags/v0.3.0
+
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q -b legacy-exact-tag "$base_commit"
+    akuo_write_file "$AKUO_FIXTURE_ROOT/release.txt" 'legacy release source'
+    akuo_commit 'legacy release source'
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.3.0 -m 'legacy exact release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.3.0
+
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q -b divergent-equal-legacy "$base_commit"
+    akuo_write_identity_source \
+        'public static let current = "0.9.0"' \
+        'public static let build = "3"'
+    akuo_write_template
+    akuo_commit 'divergent source with equal legacy build'
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q legacy-exact-tag
+
+    AKUO_RUNTIME_IDENTITY=$'0.3.0\t3' \
+        akuo_assert_rejected 'build identity 3 is already assigned to another source revision' \
+        akuo_build
 }
 
 # Production mutation caught: treating a tag on a later source commit as
@@ -526,6 +601,54 @@ test_rejects_cross_version_equal_build_exact_tag() {
     git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.5.0
     AKUO_RUNTIME_IDENTITY=$'0.5.0\t6' \
         akuo_assert_rejected 'build identity 6 is already assigned to another source revision' \
+        akuo_build
+}
+
+# Production mutation caught: ignoring a greater build on a visible divergent
+# branch merely because the lower-build candidate is an exact modern tag.
+test_rejects_divergent_lower_build_exact_tag() {
+    akuo_reset_fixture
+    local candidate_branch
+    local candidate_commit
+    local base_commit
+    candidate_branch="$(git -C "$AKUO_FIXTURE_ROOT" branch --show-current)"
+    candidate_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)"
+    base_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD^)"
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q -b divergent-higher-build "$base_commit"
+    akuo_write_identity_source \
+        'public static let current = "0.6.0"' \
+        'public static let build = "7"'
+    akuo_write_template
+    akuo_commit 'divergent source with higher build'
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q "$candidate_branch"
+    [[ "$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)" == "$candidate_commit" ]]
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.4.0 -m 'invalid lower-build release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.4.0
+    akuo_assert_rejected 'build identity 4 is already assigned to another source revision' \
+        akuo_build
+}
+
+# Production mutation caught: treating an equal build on divergent visible
+# history as advancement when an exact modern tag changes marketing version.
+test_rejects_divergent_equal_build_exact_tag() {
+    akuo_reset_fixture
+    local candidate_branch
+    local candidate_commit
+    local base_commit
+    candidate_branch="$(git -C "$AKUO_FIXTURE_ROOT" branch --show-current)"
+    candidate_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)"
+    base_commit="$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD^)"
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q -b divergent-equal-build "$base_commit"
+    akuo_write_identity_source \
+        'public static let current = "0.6.0"' \
+        'public static let build = "4"'
+    akuo_write_template
+    akuo_commit 'divergent source with equal build'
+    git -C "$AKUO_FIXTURE_ROOT" checkout -q "$candidate_branch"
+    [[ "$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)" == "$candidate_commit" ]]
+    git -C "$AKUO_FIXTURE_ROOT" tag -a v0.4.0 -m 'invalid equal-build release'
+    git -C "$AKUO_FIXTURE_ROOT" push -q origin v0.4.0
+    akuo_assert_rejected 'build identity 4 is already assigned to another source revision' \
         akuo_build
 }
 
@@ -622,9 +745,8 @@ test_build_uses_snapshot_during_transient_mutation() {
     [[ -z "$(git -C "$AKUO_FIXTURE_ROOT" status --porcelain=v1 --untracked-files=all)" ]]
 }
 
-# Test-harness mutation caught: making the fake runtime discover repository HEAD
-# dynamically instead of retaining the source revision consumed at fake compile
-# time, which would hide a removed or corrupted snapshot injection.
+# Production mutation caught: resolving the runtime source revision from mutable
+# repository state instead of compiling the snapshot-injected revision into Akuo.
 test_fake_runtime_retains_compiled_source_revision() {
     akuo_reset_fixture
     local built_revision
@@ -643,6 +765,63 @@ test_fake_runtime_retains_compiled_source_revision() {
         printf 'FAIL: fake runtime did not retain compiled source revision\n' >&2
         return 1
     fi
+}
+
+# Production mutation caught: extracting and overwriting a tracked source-
+# revision symlink, which can modify bytes outside the immutable snapshot.
+test_rejects_tracked_source_revision_symlink() {
+    akuo_reset_fixture
+    akuo_write_identity_source \
+        'public static let current = "0.4.0"' \
+        'public static let build = "5"'
+    local outside_path="$AKUO_TEST_TMP/outside/source-revision.swift"
+    akuo_replace_tracked_file_with_symlink \
+        Sources/AkuoCore/AkuoSourceRevision.swift "$outside_path"
+    akuo_commit 'tracked source-revision symlink'
+    AKUO_RUNTIME_IDENTITY=$'0.4.0\t5' \
+        akuo_assert_rejected 'tracked symlink' akuo_build
+}
+
+# Production mutation caught: letting SwiftPM resolve a tracked manifest symlink
+# to mutable bytes outside the captured commit.
+test_rejects_tracked_manifest_symlink() {
+    akuo_reset_fixture
+    akuo_write_identity_source \
+        'public static let current = "0.4.0"' \
+        'public static let build = "5"'
+    akuo_replace_tracked_file_with_symlink \
+        Package.swift "$AKUO_TEST_TMP/outside/Package.swift"
+    akuo_commit 'tracked package manifest symlink'
+    AKUO_RUNTIME_IDENTITY=$'0.4.0\t5' \
+        akuo_assert_rejected 'tracked symlink' akuo_build
+}
+
+# Production mutation caught: reading candidate configuration through a tracked
+# symlink whose external target is not part of the committed archive.
+test_rejects_tracked_configuration_symlink() {
+    akuo_reset_fixture
+    akuo_write_identity_source \
+        'public static let current = "0.4.0"' \
+        'public static let build = "5"'
+    akuo_replace_tracked_file_with_symlink \
+        Configuration/Akuo-Info.plist "$AKUO_TEST_TMP/outside/Akuo-Info.plist"
+    akuo_commit 'tracked configuration symlink'
+    AKUO_RUNTIME_IDENTITY=$'0.4.0\t5' \
+        akuo_assert_rejected 'tracked symlink' akuo_build
+}
+
+# Production mutation caught: compiling a tracked source symlink whose external
+# target can change without changing the candidate Git object.
+test_rejects_tracked_source_symlink() {
+    akuo_reset_fixture
+    akuo_write_identity_source \
+        'public static let current = "0.4.0"' \
+        'public static let build = "5"'
+    akuo_replace_tracked_file_with_symlink \
+        Sources/AkuoMac/AkuoMacVersion.swift "$AKUO_TEST_TMP/outside/AkuoMacVersion.swift"
+    akuo_commit 'tracked Swift source symlink'
+    AKUO_RUNTIME_IDENTITY=$'0.4.0\t5' \
+        akuo_assert_rejected 'tracked symlink' akuo_build
 }
 
 # Production mutation caught: allowing dirty source merely because HEAD is an
@@ -779,9 +958,13 @@ case "${1:-all}" in
     exact-tag) test_allows_exact_tagged_release ;;
     modern-tag-later-build) test_allows_modern_exact_tag_rebuild_after_later_build ;;
     legacy-merge-tag) test_allows_legacy_merge_tagged_release ;;
+    legacy-wrong-tag) test_rejects_mistagged_legacy_candidate ;;
+    legacy-divergent-equal-tag) test_rejects_divergent_equal_build_for_legacy_exact_tag ;;
     exact-tag-laundering) test_rejects_exact_tag_laundering ;;
     cross-version-lower-tag) test_rejects_cross_version_lower_build_exact_tag ;;
     cross-version-equal-tag) test_rejects_cross_version_equal_build_exact_tag ;;
+    divergent-lower-tag) test_rejects_divergent_lower_build_exact_tag ;;
+    divergent-equal-tag) test_rejects_divergent_equal_build_exact_tag ;;
     legacy-tag-pair-reuse) test_rejects_legacy_pair_reuse_across_release_tags ;;
     new-source-reuse) test_rejects_new_source_with_same_build ;;
     same-commit) test_allows_same_commit_rebuild ;;
@@ -792,6 +975,10 @@ case "${1:-all}" in
     dirty-during-build) test_rejects_source_change_during_build ;;
     transient-mutation) test_build_uses_snapshot_during_transient_mutation ;;
     compiled-source-revision) test_fake_runtime_retains_compiled_source_revision ;;
+    symlink-source-revision) test_rejects_tracked_source_revision_symlink ;;
+    symlink-manifest) test_rejects_tracked_manifest_symlink ;;
+    symlink-configuration) test_rejects_tracked_configuration_symlink ;;
+    symlink-source) test_rejects_tracked_source_symlink ;;
     dirty-tag) test_rejects_dirty_exact_tagged_release ;;
     incomplete-tags) test_rejects_incomplete_local_tags ;;
     no-tags) test_rejects_no_tag_provenance ;;
@@ -821,9 +1008,13 @@ case "${1:-all}" in
         test_allows_exact_tagged_release
         test_allows_modern_exact_tag_rebuild_after_later_build
         test_allows_legacy_merge_tagged_release
+        test_rejects_mistagged_legacy_candidate
+        test_rejects_divergent_equal_build_for_legacy_exact_tag
         test_rejects_exact_tag_laundering
         test_rejects_cross_version_lower_build_exact_tag
         test_rejects_cross_version_equal_build_exact_tag
+        test_rejects_divergent_lower_build_exact_tag
+        test_rejects_divergent_equal_build_exact_tag
         test_rejects_legacy_pair_reuse_across_release_tags
         test_rejects_new_source_with_same_build
         test_allows_same_commit_rebuild
@@ -834,6 +1025,10 @@ case "${1:-all}" in
         test_rejects_source_change_during_build
         test_build_uses_snapshot_during_transient_mutation
         test_fake_runtime_retains_compiled_source_revision
+        test_rejects_tracked_source_revision_symlink
+        test_rejects_tracked_manifest_symlink
+        test_rejects_tracked_configuration_symlink
+        test_rejects_tracked_source_symlink
         test_rejects_dirty_exact_tagged_release
         test_rejects_incomplete_local_tags
         test_rejects_no_tag_provenance

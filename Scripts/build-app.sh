@@ -30,6 +30,7 @@ AKUO_EXECUTABLE_PATH="$AKUO_APP_PATH/Contents/MacOS/Akuo"
 cd "$AKUO_PROJECT_ROOT"
 akuo_capture_clean_source_revision "$AKUO_PROJECT_ROOT"
 AKUO_PACKAGED_SOURCE_REVISION="$AKUO_SOURCE_REVISION"
+akuo_assert_safe_archive_entries "$AKUO_PROJECT_ROOT" "$AKUO_PACKAGED_SOURCE_REVISION"
 AKUO_SNAPSHOT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/akuo-build-snapshot.XXXXXX")"
 git -C "$AKUO_PROJECT_ROOT" archive --format=tar "$AKUO_PACKAGED_SOURCE_REVISION" | \
     tar -xf - -C "$AKUO_SNAPSHOT_ROOT"
@@ -42,9 +43,10 @@ if [[ ! -f "$AKUO_SOURCE_REVISION_SOURCE" ]]; then
 fi
 printf 'public enum AkuoSourceRevision {\n    public static let current = "%s"\n}\n' \
     "$AKUO_PACKAGED_SOURCE_REVISION" >"$AKUO_SOURCE_REVISION_SOURCE"
-akuo_read_candidate_identity "$AKUO_VERSION_SOURCE"
+akuo_read_packaging_identity \
+    "$AKUO_PROJECT_ROOT" "$AKUO_PACKAGED_SOURCE_REVISION" "$AKUO_VERSION_SOURCE"
 plutil -lint "$AKUO_INFO_PLIST"
-akuo_assert_versionless_template "$AKUO_INFO_PLIST"
+akuo_validate_candidate_template "$AKUO_INFO_PLIST"
 akuo_validate_candidate_history "$AKUO_PROJECT_ROOT"
 cd "$AKUO_SNAPSHOT_ROOT"
 swift build -c "$AKUO_BUILD_CONFIGURATION" --product Akuo
@@ -62,10 +64,17 @@ rm -rf -- "$AKUO_APP_PATH"
 mkdir -p -- "$AKUO_APP_PATH/Contents/MacOS" "$AKUO_APP_PATH/Contents/Resources"
 
 cp "$AKUO_INFO_PLIST" "$AKUO_APP_PATH/Contents/Info.plist"
-plutil -insert CFBundleShortVersionString -string "$AKUO_CANDIDATE_VERSION" \
-    "$AKUO_APP_PATH/Contents/Info.plist"
-plutil -insert CFBundleVersion -string "$AKUO_CANDIDATE_BUILD" \
-    "$AKUO_APP_PATH/Contents/Info.plist"
+if [[ "$AKUO_CANDIDATE_IS_LEGACY" == true ]]; then
+    plutil -replace CFBundleShortVersionString -string "$AKUO_CANDIDATE_VERSION" \
+        "$AKUO_APP_PATH/Contents/Info.plist"
+    plutil -replace CFBundleVersion -string "$AKUO_CANDIDATE_BUILD" \
+        "$AKUO_APP_PATH/Contents/Info.plist"
+else
+    plutil -insert CFBundleShortVersionString -string "$AKUO_CANDIDATE_VERSION" \
+        "$AKUO_APP_PATH/Contents/Info.plist"
+    plutil -insert CFBundleVersion -string "$AKUO_CANDIDATE_BUILD" \
+        "$AKUO_APP_PATH/Contents/Info.plist"
+fi
 plutil -insert AkuoSourceRevision -string "$AKUO_PACKAGED_SOURCE_REVISION" \
     "$AKUO_APP_PATH/Contents/Info.plist"
 plutil -lint "$AKUO_APP_PATH/Contents/Info.plist"

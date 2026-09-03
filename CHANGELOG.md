@@ -36,7 +36,10 @@ All notable changes to Akuo are documented in this file.
   its revision in the runtime and plist, require a live read-only origin tag
   query and non-shallow history, and reject malformed, drifted, reused-release,
   exact-tag-laundered, or unadvanced new-source identities across merges, local
-  refs, and reflogs while preserving rebuilds of legacy merge-tagged releases.
+  refs, and reflogs. Reject tracked symlinks and gitlinks before archive
+  extraction, compare exact modern tags against divergent as well as ancestral
+  history, and preserve the narrowly authenticated end-to-end rebuild path for
+  exact legacy merge-tagged releases.
 - Require a focused text control to expose a writable Accessibility value and
   reject it when Accessibility explicitly reports that it is disabled.
   Read-only, disabled, and otherwise unprovable editing contexts remain
