@@ -250,6 +250,17 @@ test_rejects_bundle_root_symlink() {
         akuo_verify_app_path "$linked_app"
 }
 
+# Production mutation caught: allowing a trailing slash to make Bash
+# dereference a symlinked bundle root before the root symlink check.
+test_rejects_bundle_root_symlink_with_trailing_slash() {
+    akuo_reset_fixture
+    akuo_generate >/dev/null
+    local linked_app="$AKUO_TEST_TMP/Linked Akuo.app"
+    ln -s "$AKUO_APP_PATH" "$linked_app"
+    akuo_assert_rejected 'bundle root must not be a symbolic link' \
+        akuo_verify_app_path "$linked_app/"
+}
+
 # Production mutation caught: following or ignoring a newly introduced bundle
 # symlink instead of failing closed on an unsupported entry type.
 test_rejects_bundle_symlinks() {
@@ -342,6 +353,8 @@ case "${1:-all}" in
     bundle-mode) test_rejects_bundle_mode_tampering ;;
     bundle-root-mode) test_rejects_bundle_root_mode_tampering ;;
     bundle-root-symlink) test_rejects_bundle_root_symlink ;;
+    bundle-root-symlink-trailing-slash) \
+        test_rejects_bundle_root_symlink_with_trailing_slash ;;
     bundle-symlink) test_rejects_bundle_symlinks ;;
     metadata-mismatch) test_rejects_bundle_metadata_mismatch ;;
     requirement-mismatch) test_rejects_designated_requirement_mismatch ;;
@@ -357,6 +370,7 @@ case "${1:-all}" in
         test_rejects_bundle_mode_tampering
         test_rejects_bundle_root_mode_tampering
         test_rejects_bundle_root_symlink
+        test_rejects_bundle_root_symlink_with_trailing_slash
         test_rejects_bundle_symlinks
         test_rejects_bundle_metadata_mismatch
         test_rejects_designated_requirement_mismatch

@@ -15,6 +15,9 @@ if [[ "$#" -ne 1 ]]; then
     echo "usage: $0 BUNDLE_PATH" >&2
     exit 2
 fi
+while [[ "$AKUO_BUNDLE_ROOT" != / && "$AKUO_BUNDLE_ROOT" == */ ]]; do
+    AKUO_BUNDLE_ROOT="${AKUO_BUNDLE_ROOT%/}"
+done
 if [[ -L "$AKUO_BUNDLE_ROOT" ]]; then
     echo "bundle root must not be a symbolic link" >&2
     exit 1
