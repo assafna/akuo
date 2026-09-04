@@ -718,6 +718,67 @@ final class KeyboardEventMonitorTests: XCTestCase {
         ))
     }
 
+    func testShiftModifiedReturnBoundariesClearTokenWithoutCorrection() {
+        let boundaries: [(text: String, keyCode: CGKeyCode)] = [
+            ("\r", 36),
+            ("\u{3}", 76),
+        ]
+
+        for boundary in boundaries {
+            let retranslator = MutableCurrentLayoutRetranslator(characters: "a")
+            let decoder = SystemNativeEventDecoder(retranslator: retranslator)
+            let fixture = makeFixture(decoderOverride: decoder)
+            let letterEvent = nativeKeyEvent(keyCode: 0, flags: [])
+            XCTAssertTrue(fixture.monitor.process(letterEvent) === letterEvent)
+            XCTAssertEqual(fixture.monitor.currentTokenForTesting, "a")
+            fixture.coordinator.boundaryResult = .handled
+
+            retranslator.characters = boundary.text
+            let boundaryEvent = nativeKeyEvent(
+                keyCode: boundary.keyCode,
+                flags: [.maskShift]
+            )
+
+            XCTAssertTrue(fixture.monitor.process(boundaryEvent) === boundaryEvent)
+            XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+            XCTAssertTrue(
+                fixture.coordinator.boundaryCalls.isEmpty,
+                "keyCode \(boundary.keyCode)"
+            )
+        }
+    }
+
+    func testUnmodifiedCorrectionBoundariesStillReachCoordinator() {
+        let boundaries: [(text: String, keyCode: CGKeyCode)] = [
+            (" ", 49),
+            ("\r", 36),
+            ("\n", 36),
+            ("\u{3}", 76),
+        ]
+
+        for boundary in boundaries {
+            let retranslator = MutableCurrentLayoutRetranslator(characters: "a")
+            let decoder = SystemNativeEventDecoder(retranslator: retranslator)
+            let fixture = makeFixture(decoderOverride: decoder)
+            let letterEvent = nativeKeyEvent(keyCode: 0, flags: [])
+            XCTAssertTrue(fixture.monitor.process(letterEvent) === letterEvent)
+
+            retranslator.characters = boundary.text
+            let boundaryEvent = nativeKeyEvent(keyCode: boundary.keyCode, flags: [])
+
+            XCTAssertTrue(fixture.monitor.process(boundaryEvent) === boundaryEvent)
+            XCTAssertEqual(fixture.coordinator.boundaryCalls.count, 1)
+            XCTAssertEqual(
+                fixture.coordinator.boundaryCalls.first?.boundaryKeyCode,
+                Int(boundary.keyCode)
+            )
+            XCTAssertEqual(
+                fixture.coordinator.boundaryCalls.first?.completedWord.boundary,
+                boundary.text
+            )
+        }
+    }
+
     func testReturnBoundaryKeyCodeReachesCoordinator() {
         let fixture = makeFixture()
         type("a", in: fixture)
@@ -1017,7 +1078,8 @@ final class KeyboardEventMonitorTests: XCTestCase {
         readiness: InputSourceReadiness = .init(
             englishAvailable: true,
             hebrewAvailable: true
-        )
+        ),
+        decoderOverride: (any NativeEventDecoding)? = nil
     ) -> MonitorFixture {
         let decoder = FakeNativeEventDecoder()
         let coordinator = FakeCorrectionCoordinator()
@@ -1033,7 +1095,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
         let tapManager = FakeNativeEventTapManager()
         let delegate = FakeMonitorDelegate()
         let monitor = KeyboardEventMonitor(
-            decoder: decoder,
+            decoder: decoderOverride ?? decoder,
             coordinator: coordinator,
             permission: permission,
             secureInput: secureInput,
@@ -1075,6 +1137,19 @@ final class KeyboardEventMonitorTests: XCTestCase {
                 unicodeString: buffer.baseAddress
             )
         }
+        return event
+    }
+
+    private func nativeKeyEvent(
+        keyCode: CGKeyCode,
+        flags: CGEventFlags
+    ) -> CGEvent {
+        let event = CGEvent(
+            keyboardEventSource: nil,
+            virtualKey: keyCode,
+            keyDown: true
+        )!
+        event.flags = flags
         return event
     }
 
@@ -1182,6 +1257,18 @@ private final class FakeNativeEventDecoder: NativeEventDecoding {
 
 private struct FixedCurrentLayoutRetranslator: CurrentKeyboardTextRetranslating {
     let characters: String?
+
+    func characters(for event: CGEvent) -> String? {
+        characters
+    }
+}
+
+private final class MutableCurrentLayoutRetranslator: CurrentKeyboardTextRetranslating {
+    var characters: String?
+
+    init(characters: String?) {
+        self.characters = characters
+    }
 
     func characters(for event: CGEvent) -> String? {
         characters

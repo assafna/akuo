@@ -577,6 +577,11 @@ public final class KeyboardEventMonitor {
             }
             lastInputSourceIdentifier = sourceAfterDecoding.identifier
             let language = sourceAfterDecoding.language
+            if event.flags.contains(.maskShift),
+               isCorrectionBoundary(text, keyCode: keyCode) {
+                clearTransientState()
+                return event
+            }
             coordinator.noteOrdinaryInput()
             let isSilentShiftedHebrewLetter = language == .hebrew
                 && text.isEmpty
