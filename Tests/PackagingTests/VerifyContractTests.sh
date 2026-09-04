@@ -35,6 +35,14 @@ akuo_write_stub "$AKUO_CONTRACT_PROJECT/Tests/PackagingTests/VerifyContractTests
     'set -euo pipefail' \
     'printf "verify-contract\n" >>"${AKUO_STAGE_LOG:?}"' \
     '[[ "${AKUO_FAIL_STAGE:-}" != verify-contract ]] || exit 40'
+# Production mutation caught: omitting the executable CI workflow contract or
+# running later verification after it fails.
+# shellcheck disable=SC2016
+akuo_write_stub "$AKUO_CONTRACT_PROJECT/Tests/PackagingTests/CIWorkflowContractTests.sh" \
+    '#!/usr/bin/env bash' \
+    'set -euo pipefail' \
+    'printf "ci-workflow-contract\n" >>"${AKUO_STAGE_LOG:?}"' \
+    '[[ "${AKUO_FAIL_STAGE:-}" != ci-workflow-contract ]] || exit 48'
 # Production mutation caught: omitting the executable candidate-version contract
 # suite from the unified verifier or running later stages after it fails.
 # shellcheck disable=SC2016
@@ -119,14 +127,15 @@ akuo_assert_run() {
     fi
 }
 
-akuo_assert_run "" 0 $'verify-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test\nbuild release\ncandidate-version-verify dist/Akuo.app\nbuild-manifest-verify dist/Akuo.app dist/Akuo.build-manifest.json'
+akuo_assert_run "" 0 $'verify-contract\nci-workflow-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test\nbuild release\ncandidate-version-verify dist/Akuo.app\nbuild-manifest-verify dist/Akuo.app dist/Akuo.build-manifest.json'
 akuo_assert_run verify-contract 40 'verify-contract'
-akuo_assert_run candidate-version-contract 44 $'verify-contract\ncandidate-version-contract'
-akuo_assert_run build-manifest-contract 46 $'verify-contract\ncandidate-version-contract\nbuild-manifest-contract'
-akuo_assert_run local-signing 42 $'verify-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing'
-akuo_assert_run swift 41 $'verify-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test'
-akuo_assert_run build 43 $'verify-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test\nbuild release'
-akuo_assert_run candidate-version-verify 45 $'verify-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test\nbuild release\ncandidate-version-verify dist/Akuo.app'
-akuo_assert_run build-manifest-verify 47 $'verify-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test\nbuild release\ncandidate-version-verify dist/Akuo.app\nbuild-manifest-verify dist/Akuo.app dist/Akuo.build-manifest.json'
+akuo_assert_run ci-workflow-contract 48 $'verify-contract\nci-workflow-contract'
+akuo_assert_run candidate-version-contract 44 $'verify-contract\nci-workflow-contract\ncandidate-version-contract'
+akuo_assert_run build-manifest-contract 46 $'verify-contract\nci-workflow-contract\ncandidate-version-contract\nbuild-manifest-contract'
+akuo_assert_run local-signing 42 $'verify-contract\nci-workflow-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing'
+akuo_assert_run swift 41 $'verify-contract\nci-workflow-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test'
+akuo_assert_run build 43 $'verify-contract\nci-workflow-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test\nbuild release'
+akuo_assert_run candidate-version-verify 45 $'verify-contract\nci-workflow-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test\nbuild release\ncandidate-version-verify dist/Akuo.app'
+akuo_assert_run build-manifest-verify 47 $'verify-contract\nci-workflow-contract\ncandidate-version-contract\nbuild-manifest-contract\nlocal-signing\nswift test\nbuild release\ncandidate-version-verify dist/Akuo.app\nbuild-manifest-verify dist/Akuo.app dist/Akuo.build-manifest.json'
 
 printf 'PASS: unified verification order and fail-fast propagation\n'

@@ -5,6 +5,7 @@ AKUO_PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)"
 
 cd "$AKUO_PROJECT_ROOT"
 "$AKUO_PROJECT_ROOT/Tests/PackagingTests/VerifyContractTests.sh"
+"$AKUO_PROJECT_ROOT/Tests/PackagingTests/CIWorkflowContractTests.sh"
 "$AKUO_PROJECT_ROOT/Tests/PackagingTests/CandidateVersionContractTests.sh"
 "$AKUO_PROJECT_ROOT/Tests/PackagingTests/BuildManifestContractTests.sh"
 "$AKUO_PROJECT_ROOT/Tests/PackagingTests/LocalSigningContractTests.sh"

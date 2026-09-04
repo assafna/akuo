@@ -40,27 +40,75 @@ akuo_write_identity_source() {
 akuo_write_template() {
     local version="${1:-}"
     local build="${2:-}"
-    local identity_lines=()
+    local template_lines=(
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">'
+        '<plist version="1.0"><dict>'
+        '  <key>CFBundleExecutable</key><string>Akuo</string>'
+        '  <key>CFBundleIdentifier</key><string>app.akuo.Akuo</string>'
+        '  <key>CFBundlePackageType</key><string>APPL</string>'
+    )
 
     if [[ -n "$version" ]]; then
-        identity_lines+=(
+        template_lines+=(
             '  <key>CFBundleShortVersionString</key><string>'"$version"'</string>'
         )
     fi
     if [[ -n "$build" ]]; then
-        identity_lines+=(
+        template_lines+=(
             '  <key>CFBundleVersion</key><string>'"$build"'</string>'
         )
     fi
+    template_lines+=('</dict></plist>')
     akuo_write_file "$AKUO_FIXTURE_ROOT/Configuration/Akuo-Info.plist" \
-        '<?xml version="1.0" encoding="UTF-8"?>' \
-        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">' \
-        '<plist version="1.0"><dict>' \
-        '  <key>CFBundleExecutable</key><string>Akuo</string>' \
-        '  <key>CFBundleIdentifier</key><string>app.akuo.Akuo</string>' \
-        '  <key>CFBundlePackageType</key><string>APPL</string>' \
-        "${identity_lines[@]}" \
-        '</dict></plist>'
+        "${template_lines[@]}"
+}
+
+akuo_run_empty_template_helper() {
+    local plist_path="$AKUO_FIXTURE_ROOT/Configuration/Akuo-Info.plist"
+
+    akuo_write_template
+    plutil -lint "$plist_path" >/dev/null
+    if plutil -extract CFBundleShortVersionString raw -o - "$plist_path" \
+        >/dev/null 2>&1 || \
+        plutil -extract CFBundleVersion raw -o - "$plist_path" \
+            >/dev/null 2>&1; then
+        printf 'FAIL: declaration-free template unexpectedly contains version identity\n' >&2
+        return 1
+    fi
+    printf 'EMPTY_TEMPLATE_OK\n'
+}
+
+# Production mutation caught: expanding a declared-but-empty array under
+# `set -u`, which Bash 3.2 reports as an unbound variable before the helper can
+# finish writing and validating the declaration-free plist template.
+test_empty_template_is_bash_3_2_nounset_safe() {
+    local bash_version
+    local helper_output
+    local helper_status
+    local expected_output
+
+    bash_version="$(/bin/bash -c 'printf "%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}"')"
+    if [[ "$bash_version" != 3.2 ]]; then
+        printf 'FAIL: focused compatibility test requires /bin/bash 3.2, found %s\n' \
+            "$bash_version" >&2
+        return 1
+    fi
+
+    set +e
+    helper_output="$(
+        /bin/bash "$AKUO_TEST_ROOT/Tests/PackagingTests/CandidateVersionContractTests.sh" \
+            empty-template-helper 2>&1
+    )"
+    helper_status=$?
+    set -e
+
+    expected_output=$'EMPTY_TEMPLATE_OK\nPASS: candidate version source, packaging, runtime, and reuse contracts'
+    if [[ "$helper_status" -ne 0 || "$helper_output" != "$expected_output" ]]; then
+        printf 'FAIL: empty template is not clean under Bash 3.2 nounset\nstatus: %d\noutput:\n%s\n' \
+            "$helper_status" "$helper_output" >&2
+        return 1
+    fi
 }
 
 akuo_commit() {
@@ -1178,6 +1226,8 @@ test_rejects_merge_parent_identity_reuse() {
 }
 
 case "${1:-all}" in
+    empty-template-bash32) test_empty_template_is_bash_3_2_nounset_safe ;;
+    empty-template-helper) akuo_run_empty_template_helper ;;
     injection) test_injects_authoritative_identity ;;
     template-drift) test_rejects_template_drift ;;
     absent-version) test_rejects_absent_version ;;
@@ -1238,6 +1288,7 @@ case "${1:-all}" in
     merge-identical-tree) test_allows_two_parent_merge_with_identical_tree ;;
     merge-parent) test_rejects_merge_parent_identity_reuse ;;
     all)
+        test_empty_template_is_bash_3_2_nounset_safe
         test_injects_authoritative_identity
         test_rejects_template_drift
         test_rejects_absent_version

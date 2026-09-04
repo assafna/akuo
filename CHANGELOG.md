@@ -6,6 +6,8 @@ All notable changes to Akuo are documented in this file.
 
 ### Added
 
+- Verify every pull request and push to `main` on macOS 15 with Xcode 16.4
+  through the same unified `Scripts/verify.sh` entry point used locally.
 - Emit `dist/Akuo.build-manifest.json` beside every built application with the
   packaged Git revision and source state, Swift and Xcode versions, bundle
   identity, exact designated requirement, executable SHA-256, and deterministic
@@ -35,9 +37,13 @@ All notable changes to Akuo are documented in this file.
 
 ### Changed
 
-- Advance the Unreleased candidate identity to `0.4.0 (17)` and harden build
+- Advance the Unreleased candidate identity to `0.4.0 (23)` and harden build
   manifest verification against duplicate JSON keys, invalid signatures,
   bundle-root aliasing or mode changes, and source mutation during generation.
+- Keep verification compatible with Xcode 16.4 and macOS Bash 3.2 when testing
+  weak object lifetime and declaration-free candidate templates.
+- Skip installed-layout integration matrices when the current macOS session
+  does not expose both required Apple input sources.
 - Make the core Swift version declaration authoritative for both marketing and
   build identity, compile an immutable archive of the clean source commit, embed
   its revision in the runtime and plist, require a live read-only origin tag

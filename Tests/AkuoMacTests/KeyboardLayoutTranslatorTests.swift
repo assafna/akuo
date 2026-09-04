@@ -1,16 +1,24 @@
+import Carbon
 import XCTest
 import AkuoCore
 @testable import AkuoMac
 
 final class KeyboardLayoutTranslatorTests: XCTestCase {
-    func testInstalledAppleLayoutsTranslateLettersAndShiftedPunctuation() {
+    private let abcIdentifier = "com.apple.keylayout.ABC"
+    private let hebrewIdentifier = "com.apple.keylayout.Hebrew"
+
+    func testInstalledAppleLayoutsTranslateLettersAndShiftedPunctuation() throws {
+        try XCTSkipUnless(
+            requiredEnabledLayoutsAreAvailable(),
+            "Requires enabled ABC and Hebrew input sources in the current macOS session."
+        )
         let translator = AppleKeyboardLayoutTextTranslator()
 
         XCTAssertEqual(
             translator.characters(
                 keyCode: 13,
                 modifiers: [],
-                inputSourceIdentifier: "com.apple.keylayout.Hebrew"
+                inputSourceIdentifier: hebrewIdentifier
             ),
             "׳"
         )
@@ -18,7 +26,7 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
             translator.characters(
                 keyCode: 13,
                 modifiers: [],
-                inputSourceIdentifier: "com.apple.keylayout.ABC"
+                inputSourceIdentifier: abcIdentifier
             ),
             "w"
         )
@@ -27,7 +35,7 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
                 translator.characters(
                     keyCode: keyCode,
                     modifiers: [.shift],
-                    inputSourceIdentifier: "com.apple.keylayout.Hebrew"
+                    inputSourceIdentifier: hebrewIdentifier
                 ),
                 expected
             )
@@ -35,14 +43,18 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
                 translator.characters(
                     keyCode: keyCode,
                     modifiers: [.shift],
-                    inputSourceIdentifier: "com.apple.keylayout.ABC"
+                    inputSourceIdentifier: abcIdentifier
                 ),
                 expected
             )
         }
     }
 
-    func testInstalledABCLayoutTranslatesShiftAndCapsLockLettersAsUppercase() {
+    func testInstalledABCLayoutTranslatesShiftAndCapsLockLettersAsUppercase() throws {
+        try XCTSkipUnless(
+            requiredEnabledLayoutsAreAvailable(),
+            "Requires enabled ABC and Hebrew input sources in the current macOS session."
+        )
         let translator = AppleKeyboardLayoutTextTranslator()
 
         for (keyCode, expected) in [(4, "H"), (8, "C")] {
@@ -50,7 +62,7 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
                 translator.characters(
                     keyCode: keyCode,
                     modifiers: [.shift, .capsLock],
-                    inputSourceIdentifier: "com.apple.keylayout.ABC"
+                    inputSourceIdentifier: abcIdentifier
                 ),
                 expected,
                 "ABC key code \(keyCode)"
@@ -58,7 +70,11 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
         }
     }
 
-    func testInstalledAppleLayoutsTranslateEveryPrintablePunctuationKey() {
+    func testInstalledAppleLayoutsTranslateEveryPrintablePunctuationKey() throws {
+        try XCTSkipUnless(
+            requiredEnabledLayoutsAreAvailable(),
+            "Requires enabled ABC and Hebrew input sources in the current macOS session."
+        )
         let translator = AppleKeyboardLayoutTextTranslator()
         let rows: [(
             keyCode: Int,
@@ -95,7 +111,7 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
                 translator.characters(
                     keyCode: row.keyCode,
                     modifiers: [],
-                    inputSourceIdentifier: "com.apple.keylayout.ABC"
+                    inputSourceIdentifier: abcIdentifier
                 ),
                 row.english,
                 "ABC key code \(row.keyCode)"
@@ -104,7 +120,7 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
                 translator.characters(
                     keyCode: row.keyCode,
                     modifiers: [.shift],
-                    inputSourceIdentifier: "com.apple.keylayout.ABC"
+                    inputSourceIdentifier: abcIdentifier
                 ),
                 row.shiftedEnglish,
                 "Shift+ABC key code \(row.keyCode)"
@@ -113,7 +129,7 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
                 translator.characters(
                     keyCode: row.keyCode,
                     modifiers: [],
-                    inputSourceIdentifier: "com.apple.keylayout.Hebrew"
+                    inputSourceIdentifier: hebrewIdentifier
                 ),
                 row.hebrew,
                 "Hebrew key code \(row.keyCode)"
@@ -122,11 +138,30 @@ final class KeyboardLayoutTranslatorTests: XCTestCase {
                 translator.characters(
                     keyCode: row.keyCode,
                     modifiers: [.shift],
-                    inputSourceIdentifier: "com.apple.keylayout.Hebrew"
+                    inputSourceIdentifier: hebrewIdentifier
                 ),
                 row.shiftedHebrew,
                 "Shift+Hebrew key code \(row.keyCode)"
             )
         }
+    }
+
+    private func requiredEnabledLayoutsAreAvailable() -> Bool {
+        let abcIsAvailable = enabledInputSourceExists(identifier: abcIdentifier)
+        let hebrewIsAvailable = enabledInputSourceExists(identifier: hebrewIdentifier)
+
+        return abcIsAvailable && hebrewIsAvailable
+    }
+
+    private func enabledInputSourceExists(identifier: String) -> Bool {
+        let condition = [
+            kTISPropertyInputSourceID as String: identifier,
+        ] as CFDictionary
+        guard let inputSources = TISCreateInputSourceList(
+            condition,
+            false
+        )?.takeRetainedValue() else { return false }
+
+        return CFArrayGetCount(inputSources) > 0
     }
 }
