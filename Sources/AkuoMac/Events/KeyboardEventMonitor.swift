@@ -345,6 +345,11 @@ public final class KeyboardEventMonitor {
     ].reduce(CGEventMask(0)) { mask, eventType in
         mask | (CGEventMask(1) << eventType.rawValue)
     }
+    private static let correctionBoundaryDisallowedModifiers: CGEventFlags = [
+        .maskShift,
+        .maskSecondaryFn,
+        .maskHelp,
+    ]
 
     public weak var delegate: (any KeyboardEventMonitorDelegate)?
     public private(set) var state: State = .stopped
@@ -577,6 +582,13 @@ public final class KeyboardEventMonitor {
             }
             lastInputSourceIdentifier = sourceAfterDecoding.identifier
             let language = sourceAfterDecoding.language
+            if !event.flags.intersection(
+                Self.correctionBoundaryDisallowedModifiers
+            ).isEmpty,
+               isCorrectionBoundary(text, keyCode: keyCode) {
+                clearTransientState()
+                return event
+            }
             coordinator.noteOrdinaryInput()
             let isSilentShiftedHebrewLetter = language == .hebrew
                 && text.isEmpty

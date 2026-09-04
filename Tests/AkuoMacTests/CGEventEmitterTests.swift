@@ -151,6 +151,32 @@ final class CGEventEmitterTests: XCTestCase {
         )
     }
 
+    func testKeypadEnterBoundaryPreservesPhysicalIdentityAndUnicodeWithoutSyntheticKeyUp() {
+        let posting = FakeNativeEventPosting()
+        let emitter = CGEventEmitter(posting: posting)
+
+        XCTAssertTrue(emitter.replacePreviousText(
+            deleteCount: 1,
+            replacement: "שלום",
+            boundary: "\u{3}",
+            boundaryKeyCode: 76
+        ))
+
+        XCTAssertEqual(posting.requests.last, .boundary(text: "\u{3}", keyCode: 76))
+        XCTAssertEqual(posting.requests.filter {
+            if case .boundary = $0 { return true }
+            return false
+        }.count, 1)
+        let boundary = try! XCTUnwrap(posting.posted.last)
+        XCTAssertEqual(boundary.getIntegerValueField(.keyboardEventKeycode), 76)
+        XCTAssertEqual(unicodeText(of: boundary), "\u{3}")
+        XCTAssertEqual(boundary.flags, [])
+        XCTAssertEqual(
+            boundary.getIntegerValueField(.eventSourceUserData),
+            KeyboardEventMonitor.syntheticMarker
+        )
+    }
+
     private func unicodeText(of event: CGEvent) -> String {
         var count = 0
         event.keyboardGetUnicodeString(
