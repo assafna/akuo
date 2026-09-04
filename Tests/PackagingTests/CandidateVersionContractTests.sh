@@ -91,6 +91,10 @@ akuo_reset_fixture() {
         "$AKUO_FAKE_BIN" \
         "$AKUO_BUILD_BIN"
     cp "$AKUO_TEST_ROOT/Scripts/build-app.sh" "$AKUO_FIXTURE_ROOT/Scripts/build-app.sh"
+    cp "$AKUO_TEST_ROOT/Scripts/generate-build-manifest.sh" \
+        "$AKUO_FIXTURE_ROOT/Scripts/generate-build-manifest.sh"
+    cp "$AKUO_TEST_ROOT/Scripts/lib/bundle-content-digest.sh" \
+        "$AKUO_FIXTURE_ROOT/Scripts/lib/bundle-content-digest.sh"
     cp "$AKUO_TEST_ROOT/Scripts/lib/signing-policy.sh" \
         "$AKUO_FIXTURE_ROOT/Scripts/lib/signing-policy.sh"
     if [[ -f "$AKUO_TEST_ROOT/Scripts/lib/candidate-version.sh" ]]; then
@@ -101,7 +105,8 @@ akuo_reset_fixture() {
         cp "$AKUO_TEST_ROOT/Scripts/verify-candidate-version.sh" \
             "$AKUO_FIXTURE_ROOT/Scripts/verify-candidate-version.sh"
     fi
-    chmod +x "$AKUO_FIXTURE_ROOT/Scripts/"*.sh
+    chmod +x "$AKUO_FIXTURE_ROOT/Scripts/"*.sh \
+        "$AKUO_FIXTURE_ROOT/Scripts/lib/bundle-content-digest.sh"
 
     akuo_write_identity_source \
         'public static let current = "0.4.0"' \
@@ -126,6 +131,13 @@ akuo_reset_fixture() {
     akuo_write_file "$AKUO_FAKE_BIN/swift" \
         '#!/usr/bin/env bash' \
         'set -euo pipefail' \
+        'if [[ "${1:-}" == --version ]]; then' \
+        '    if [[ "${AKUO_MUTATE_DURING_MANIFEST:-}" == true ]]; then' \
+        '        printf "mutated during manifest generation\n" >>"${AKUO_FIXTURE_ROOT_ENV:?}/README.md"' \
+        '    fi' \
+        '    printf '\''Swift version 6.1-dev\ntarget: arm64-apple-macosx15.0\n'\''' \
+        '    exit 0' \
+        'fi' \
         'if [[ " $* " != *" --show-bin-path "* ]]; then' \
         '    printf "%s\n" "$PWD" >"${AKUO_BUILD_CWD_LOG:?}"' \
         '    if [[ "${AKUO_MUTATE_THEN_RESTORE:-}" == true ]]; then' \
@@ -182,8 +194,16 @@ akuo_reset_fixture() {
     chmod +x "$AKUO_FAKE_BIN/git"
     akuo_write_file "$AKUO_FAKE_BIN/codesign" \
         '#!/usr/bin/env bash' \
+        'if [[ " $* " == *" -d -r- "* ]]; then' \
+        '    printf '\''# designated => cdhash H"0123456789abcdef"\n'\'' >&2' \
+        'fi' \
         'exit 0'
     chmod +x "$AKUO_FAKE_BIN/codesign"
+    # shellcheck disable=SC2016
+    akuo_write_file "$AKUO_FAKE_BIN/xcodebuild" \
+        '#!/usr/bin/env bash' \
+        'printf '\''Xcode 16.4\nBuild version 16F6\n'\'''
+    chmod +x "$AKUO_FAKE_BIN/xcodebuild"
     # shellcheck disable=SC2016
     akuo_write_file "$AKUO_RUNTIME_TEMPLATE" \
         '#!/usr/bin/env bash' \
@@ -300,6 +320,7 @@ test_injects_authoritative_identity() {
     akuo_reset_fixture
     akuo_build >/dev/null
     local plist="$AKUO_FIXTURE_ROOT/dist/Akuo.app/Contents/Info.plist"
+    local manifest="$AKUO_FIXTURE_ROOT/dist/Akuo.build-manifest.json"
 
     [[ "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" == 0.4.0 ]]
     [[ "$(plutil -extract CFBundleVersion raw -o - "$plist")" == 4 ]]
@@ -310,6 +331,11 @@ test_injects_authoritative_identity() {
         "$AKUO_FIXTURE_ROOT/dist/Akuo.app/Contents/MacOS/Akuo" \
             --candidate-source-revision)" == \
         "$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)" ]]
+    [[ "$(plutil -extract gitHead raw -o - "$manifest")" == \
+        "$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)" ]]
+    [[ "$(plutil -extract sourceState raw -o - "$manifest")" == clean ]]
+    [[ "$(plutil -extract CFBundleIdentifier raw -o - "$manifest")" == \
+        app.akuo.Akuo ]]
     akuo_verify >/dev/null
 }
 
@@ -867,6 +893,18 @@ test_rejects_source_change_during_build() {
         akuo_assert_rejected 'candidate source changed during packaging' akuo_build
 }
 
+# Production mutation caught: checking source only before manifest generation,
+# or leaving a manifest that claims clean provenance after generation mutates it.
+test_rejects_source_change_during_manifest_generation() {
+    akuo_reset_fixture
+    AKUO_MUTATE_DURING_MANIFEST=true \
+        akuo_assert_rejected 'candidate source changed during packaging' akuo_build
+    if [[ -e "$AKUO_FIXTURE_ROOT/dist/Akuo.build-manifest.json" ]]; then
+        echo 'FAIL: manifest survived a source mutation during generation' >&2
+        exit 1
+    fi
+}
+
 # Production mutation caught: compiling transient caller-worktree bytes that are
 # restored before the post-build clean check can observe them.
 test_build_uses_snapshot_during_transient_mutation() {
@@ -1181,6 +1219,7 @@ case "${1:-all}" in
     ignored-input) test_build_ignores_ignored_swift_input ;;
     dirty-verifier) test_verifier_rejects_dirty_source ;;
     dirty-during-build) test_rejects_source_change_during_build ;;
+    dirty-during-manifest) test_rejects_source_change_during_manifest_generation ;;
     transient-mutation) test_build_uses_snapshot_during_transient_mutation ;;
     compiled-source-revision) test_fake_runtime_retains_compiled_source_revision ;;
     symlink-source-revision) test_rejects_tracked_source_revision_symlink ;;
@@ -1240,6 +1279,7 @@ case "${1:-all}" in
         test_build_ignores_ignored_swift_input
         test_verifier_rejects_dirty_source
         test_rejects_source_change_during_build
+        test_rejects_source_change_during_manifest_generation
         test_build_uses_snapshot_during_transient_mutation
         test_fake_runtime_retains_compiled_source_revision
         test_rejects_tracked_source_revision_symlink
