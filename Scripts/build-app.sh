@@ -26,6 +26,7 @@ fi
 
 AKUO_APP_PATH="$AKUO_PROJECT_ROOT/dist/Akuo.app"
 AKUO_EXECUTABLE_PATH="$AKUO_APP_PATH/Contents/MacOS/Akuo"
+AKUO_BUILD_MANIFEST_PATH="$AKUO_PROJECT_ROOT/dist/Akuo.build-manifest.json"
 
 cd "$AKUO_PROJECT_ROOT"
 akuo_capture_clean_source_revision "$AKUO_PROJECT_ROOT"
@@ -55,11 +56,13 @@ akuo_assert_source_unchanged "$AKUO_PROJECT_ROOT" "$AKUO_PACKAGED_SOURCE_REVISIO
 
 # This is deliberately the only path packaging removes. Other files under dist/
 # may be release evidence or artifacts owned by another build.
-if [[ "$AKUO_APP_PATH" != "$AKUO_PROJECT_ROOT/dist/Akuo.app" ]]; then
-    echo "refusing to remove unexpected app path: $AKUO_APP_PATH" >&2
+if [[ "$AKUO_APP_PATH" != "$AKUO_PROJECT_ROOT/dist/Akuo.app" || \
+    "$AKUO_BUILD_MANIFEST_PATH" != "$AKUO_PROJECT_ROOT/dist/Akuo.build-manifest.json" ]]; then
+    echo "refusing to remove unexpected build artifact path" >&2
     exit 1
 fi
 rm -rf -- "$AKUO_APP_PATH"
+rm -f -- "$AKUO_BUILD_MANIFEST_PATH"
 mkdir -p -- "$AKUO_APP_PATH/Contents/MacOS" "$AKUO_APP_PATH/Contents/Resources"
 
 cp "$AKUO_INFO_PLIST" "$AKUO_APP_PATH/Contents/Info.plist"
@@ -95,10 +98,16 @@ else
 fi
 codesign --verify --deep --strict "$AKUO_APP_PATH"
 akuo_assert_source_unchanged "$AKUO_PROJECT_ROOT" "$AKUO_PACKAGED_SOURCE_REVISION"
+"$AKUO_PROJECT_ROOT/Scripts/generate-build-manifest.sh" \
+    "$AKUO_APP_PATH" \
+    "$AKUO_BUILD_MANIFEST_PATH" \
+    "$AKUO_PACKAGED_SOURCE_REVISION" \
+    clean
 
 AKUO_EXECUTABLE_SHA256="$(shasum -a 256 "$AKUO_EXECUTABLE_PATH" | awk '{print $1}')"
 printf 'Akuo executable SHA-256: %s\n' "$AKUO_EXECUTABLE_SHA256"
 printf 'Bundle: %s\n' "$AKUO_APP_PATH"
+printf 'Manifest: %s\n' "$AKUO_BUILD_MANIFEST_PATH"
 if [[ "$AKUO_CODE_SIGN_IDENTITY" == "-" ]]; then
     echo "Signing: ad-hoc (not eligible for persistent Accessibility permission)"
 else

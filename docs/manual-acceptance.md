@@ -12,9 +12,13 @@ Use this checklist only with the exact release candidate you intend to accept. B
 | macOS version and build | |
 | Akuo version | |
 | Akuo `CFBundleVersion` | |
-| Git commit | |
+| Manifest path and schema version | |
+| Packaged Git `HEAD` and source state | |
+| Swift version | |
+| Xcode version | |
 | Installed app path | `/Applications/Akuo.app` |
 | Executable SHA-256 | |
+| Bundle-content SHA-256 | |
 | Signing identity and team identifier | |
 | Designated requirement | |
 | English input source and identifier | |
@@ -26,24 +30,22 @@ Use this checklist only with the exact release candidate you intend to accept. B
 
 For each checkbox, write `PASS`, `FAIL`, or `BLOCKED` in **Result** and add concise evidence such as a screenshot name, screen recording timestamp, observed text/source, Console export, or command output. Redact unrelated private content.
 
-Read the candidate identity from the exact bundle under acceptance; do not copy a
-version or build literal from an issue, checklist, or previous candidate. From the
-repository commit used to build it, record the output of:
+Treat the sidecar build manifest produced with the exact bundle under acceptance
+as the authoritative provenance record; do not reconstruct its values from an
+issue, checklist, previous candidate, or a collection of manual commands. Preserve
+the manifest with the candidate, independently verify it, and record its complete
+contents:
 
 ```bash
 AKUO_CANDIDATE_PATH=/Applications/Akuo.app
+AKUO_CANDIDATE_MANIFEST="$PWD/dist/Akuo.build-manifest.json"
 Scripts/verify-candidate-version.sh "$AKUO_CANDIDATE_PATH"
-plutil -extract CFBundleShortVersionString raw -o - \
-  "$AKUO_CANDIDATE_PATH/Contents/Info.plist"
-plutil -extract CFBundleVersion raw -o - \
-  "$AKUO_CANDIDATE_PATH/Contents/Info.plist"
-plutil -extract AkuoSourceRevision raw -o - \
-  "$AKUO_CANDIDATE_PATH/Contents/Info.plist"
-git rev-parse HEAD
-shasum -a 256 "$AKUO_CANDIDATE_PATH/Contents/MacOS/Akuo"
+Scripts/verify-build-manifest.sh \
+  "$AKUO_CANDIDATE_PATH" "$AKUO_CANDIDATE_MANIFEST"
+plutil -p "$AKUO_CANDIDATE_MANIFEST"
 ```
 
-The verifier requires a clean committed checkout with non-shallow history and
+The candidate-version verifier requires a clean committed checkout with non-shallow history and
 network access for a live read-only `origin` tag query. It compares the
 authoritative source declaration and exact `HEAD` SHA with the packaged plist,
 the runtime identity and compiled source revision reported by that executable,
@@ -72,6 +74,17 @@ Declaration-free historical tags are
 outside the modern pipeline and reserve their Swift marketing version; visible
 declaration-free history with the same version also prevents a moved tag from
 laundering that release onto a later strict source.
+
+Manifest schema 1 records the packaged Git `HEAD`, clean/dirty source state,
+Swift and Xcode versions, bundle identifier/version/build, exact designated
+requirement, executable SHA-256, and deterministic bundle-content SHA-256. The
+manifest verifier fails closed on any missing, extra, or wrongly typed field and
+independently reads the bundle metadata and signature before recomputing both
+hashes. The bundle hash covers path-sorted directory and regular-file records,
+including relative UTF-8 path bytes and permission modes plus each file's length
+and content SHA-256. It excludes the bundle root and mtimes; it rejects symlinks
+and other entry types. The sidecar is outside the bundle, so the digest is not
+self-referential.
 
 The `v0.3.0` tag predates the Swift build declaration, embedded source revision,
 and runtime identity probes. Its faithful rebuild procedure is a disposable
@@ -109,9 +122,9 @@ Record the blocker here before stopping:
 
 ## 1. Build, install, and metadata
 
-- [ ] **Release bundle built once.** Run `swift test` and `AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' Scripts/build-app.sh release`; record the passing test count, absolute bundle path, signing identity, and designated requirement. Do not rebuild or modify this candidate during the remaining metadata and installation steps. **Result:**
+- [ ] **Release bundle built once.** Run `swift test` and `AKUO_CODE_SIGN_IDENTITY='Apple Development: Your Name (TEAMID)' Scripts/build-app.sh release`; preserve `dist/Akuo.app` together with `dist/Akuo.build-manifest.json`, and record the passing test count and absolute paths. Do not rebuild or modify this candidate during the remaining metadata and installation steps. **Result:**
   **Evidence:**
-- [ ] **Bundle identity verified and candidate hash recorded once.** Set `AKUO_CANDIDATE_PATH="$PWD/dist/Akuo.app"`, run `Scripts/verify-candidate-version.sh "$AKUO_CANDIDATE_PATH"` for source, plist, runtime, Git-history, and released-tag identity agreement, then run `Scripts/verify-local-signing.sh "$AKUO_CANDIDATE_PATH"` for signing policy. Use `plutil -p "$AKUO_CANDIDATE_PATH/Contents/Info.plist"` to confirm `CFBundleIdentifier = app.akuo.Akuo`, the version and build reported by the candidate-version verifier, `LSMinimumSystemVersion = 13.0`, and `LSUIElement = true`. Confirm the signing verifier reports a non-ad-hoc, Apple-anchored signature, an Apple team identifier, and Akuo's repository-controlled designated requirement with that exact identifier and team. Then calculate `AKUO_CANDIDATE_SHA256="$(shasum -a 256 "$AKUO_CANDIDATE_PATH/Contents/MacOS/Akuo" | awk '{print $1}')"`, print it with `printf 'Record candidate SHA-256: %s\n' "$AKUO_CANDIDATE_SHA256"`, and record that exact lowercase value in the release evidence. Do not recalculate it before installation. **Result:**
+- [ ] **Manifest, bundle identity, and candidate hashes verified once.** Set `AKUO_CANDIDATE_PATH="$PWD/dist/Akuo.app"` and `AKUO_CANDIDATE_MANIFEST="$PWD/dist/Akuo.build-manifest.json"`. Run `Scripts/verify-candidate-version.sh "$AKUO_CANDIDATE_PATH"` for source, plist, runtime, Git-history, and released-tag identity agreement; `Scripts/verify-build-manifest.sh "$AKUO_CANDIDATE_PATH" "$AKUO_CANDIDATE_MANIFEST"` for exact schema, bundle metadata/signature, executable hash, and whole-bundle hash agreement; and `Scripts/verify-local-signing.sh "$AKUO_CANDIDATE_PATH"` for signing policy. Record `plutil -p "$AKUO_CANDIDATE_MANIFEST"` as the authoritative provenance. Separately use `plutil -p "$AKUO_CANDIDATE_PATH/Contents/Info.plist"` only to confirm `LSMinimumSystemVersion = 13.0` and `LSUIElement = true`. Confirm the signing verifier reports a non-ad-hoc, Apple-anchored signature, an Apple team identifier, and Akuo's repository-controlled designated requirement with that exact identifier and team. Set `AKUO_CANDIDATE_SHA256="$(plutil -extract executableSHA256 raw -o - "$AKUO_CANDIDATE_MANIFEST")"`, print it with `printf 'Record manifest-backed candidate SHA-256: %s\n' "$AKUO_CANDIDATE_SHA256"`, and record that exact lowercase value in the release evidence. Do not recalculate the expected value before installation. **Result:**
   **Evidence:**
 - [ ] **Exact stable candidate installed.** Quit Akuo and run `Scripts/install-local.sh --candidate "$AKUO_CANDIDATE_PATH" --sha256 "$AKUO_CANDIDATE_SHA256"`, reusing the path and hash recorded above. This mode must not build again. Confirm its reported installed executable hash matches the hash recorded for the tested candidate, independently run `shasum -a 256 /Applications/Akuo.app/Contents/MacOS/Akuo`, and launch only `/Applications/Akuo.app`. **Result:**
   **Evidence:**

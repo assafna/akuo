@@ -6,6 +6,10 @@ All notable changes to Akuo are documented in this file.
 
 ### Added
 
+- Emit `dist/Akuo.build-manifest.json` beside every built application with the
+  packaged Git revision and source state, Swift and Xcode versions, bundle
+  identity, exact designated requirement, executable SHA-256, and deterministic
+  whole-bundle SHA-256, plus independent schema and artifact verification.
 - Add an explicit local-install mode for a caller-selected, already signed
   `Akuo.app` and its previously recorded executable SHA-256, rejecting changed
   candidate bytes before staging and preserving that hash through installation

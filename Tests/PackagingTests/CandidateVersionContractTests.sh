@@ -91,6 +91,10 @@ akuo_reset_fixture() {
         "$AKUO_FAKE_BIN" \
         "$AKUO_BUILD_BIN"
     cp "$AKUO_TEST_ROOT/Scripts/build-app.sh" "$AKUO_FIXTURE_ROOT/Scripts/build-app.sh"
+    cp "$AKUO_TEST_ROOT/Scripts/generate-build-manifest.sh" \
+        "$AKUO_FIXTURE_ROOT/Scripts/generate-build-manifest.sh"
+    cp "$AKUO_TEST_ROOT/Scripts/lib/bundle-content-digest.sh" \
+        "$AKUO_FIXTURE_ROOT/Scripts/lib/bundle-content-digest.sh"
     cp "$AKUO_TEST_ROOT/Scripts/lib/signing-policy.sh" \
         "$AKUO_FIXTURE_ROOT/Scripts/lib/signing-policy.sh"
     if [[ -f "$AKUO_TEST_ROOT/Scripts/lib/candidate-version.sh" ]]; then
@@ -101,7 +105,8 @@ akuo_reset_fixture() {
         cp "$AKUO_TEST_ROOT/Scripts/verify-candidate-version.sh" \
             "$AKUO_FIXTURE_ROOT/Scripts/verify-candidate-version.sh"
     fi
-    chmod +x "$AKUO_FIXTURE_ROOT/Scripts/"*.sh
+    chmod +x "$AKUO_FIXTURE_ROOT/Scripts/"*.sh \
+        "$AKUO_FIXTURE_ROOT/Scripts/lib/bundle-content-digest.sh"
 
     akuo_write_identity_source \
         'public static let current = "0.4.0"' \
@@ -126,6 +131,10 @@ akuo_reset_fixture() {
     akuo_write_file "$AKUO_FAKE_BIN/swift" \
         '#!/usr/bin/env bash' \
         'set -euo pipefail' \
+        'if [[ "${1:-}" == --version ]]; then' \
+        '    printf '\''Swift version 6.1-dev\ntarget: arm64-apple-macosx15.0\n'\''' \
+        '    exit 0' \
+        'fi' \
         'if [[ " $* " != *" --show-bin-path "* ]]; then' \
         '    printf "%s\n" "$PWD" >"${AKUO_BUILD_CWD_LOG:?}"' \
         '    if [[ "${AKUO_MUTATE_THEN_RESTORE:-}" == true ]]; then' \
@@ -182,8 +191,16 @@ akuo_reset_fixture() {
     chmod +x "$AKUO_FAKE_BIN/git"
     akuo_write_file "$AKUO_FAKE_BIN/codesign" \
         '#!/usr/bin/env bash' \
+        'if [[ " $* " == *" -d -r- "* ]]; then' \
+        '    printf '\''# designated => cdhash H"0123456789abcdef"\n'\'' >&2' \
+        'fi' \
         'exit 0'
     chmod +x "$AKUO_FAKE_BIN/codesign"
+    # shellcheck disable=SC2016
+    akuo_write_file "$AKUO_FAKE_BIN/xcodebuild" \
+        '#!/usr/bin/env bash' \
+        'printf '\''Xcode 16.4\nBuild version 16F6\n'\'''
+    chmod +x "$AKUO_FAKE_BIN/xcodebuild"
     # shellcheck disable=SC2016
     akuo_write_file "$AKUO_RUNTIME_TEMPLATE" \
         '#!/usr/bin/env bash' \
@@ -300,6 +317,7 @@ test_injects_authoritative_identity() {
     akuo_reset_fixture
     akuo_build >/dev/null
     local plist="$AKUO_FIXTURE_ROOT/dist/Akuo.app/Contents/Info.plist"
+    local manifest="$AKUO_FIXTURE_ROOT/dist/Akuo.build-manifest.json"
 
     [[ "$(plutil -extract CFBundleShortVersionString raw -o - "$plist")" == 0.4.0 ]]
     [[ "$(plutil -extract CFBundleVersion raw -o - "$plist")" == 4 ]]
@@ -310,6 +328,11 @@ test_injects_authoritative_identity() {
         "$AKUO_FIXTURE_ROOT/dist/Akuo.app/Contents/MacOS/Akuo" \
             --candidate-source-revision)" == \
         "$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)" ]]
+    [[ "$(plutil -extract gitHead raw -o - "$manifest")" == \
+        "$(git -C "$AKUO_FIXTURE_ROOT" rev-parse HEAD)" ]]
+    [[ "$(plutil -extract sourceState raw -o - "$manifest")" == clean ]]
+    [[ "$(plutil -extract CFBundleIdentifier raw -o - "$manifest")" == \
+        app.akuo.Akuo ]]
     akuo_verify >/dev/null
 }
 
