@@ -103,6 +103,11 @@ akuo_assert_source_unchanged "$AKUO_PROJECT_ROOT" "$AKUO_PACKAGED_SOURCE_REVISIO
     "$AKUO_BUILD_MANIFEST_PATH" \
     "$AKUO_PACKAGED_SOURCE_REVISION" \
     clean
+if ! akuo_assert_source_unchanged \
+    "$AKUO_PROJECT_ROOT" "$AKUO_PACKAGED_SOURCE_REVISION"; then
+    rm -f -- "$AKUO_BUILD_MANIFEST_PATH"
+    exit 1
+fi
 
 AKUO_EXECUTABLE_SHA256="$(shasum -a 256 "$AKUO_EXECUTABLE_PATH" | awk '{print $1}')"
 printf 'Akuo executable SHA-256: %s\n' "$AKUO_EXECUTABLE_SHA256"

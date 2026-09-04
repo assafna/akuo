@@ -67,10 +67,14 @@ akuo_reset_fixture() {
     akuo_write_file "$AKUO_FAKE_BIN/xcodebuild" \
         '#!/usr/bin/env bash' \
         'printf '\''Xcode 16.4\nBuild version 16F6\n'\'''
+    # shellcheck disable=SC2016
     akuo_write_file "$AKUO_FAKE_BIN/codesign" \
         '#!/usr/bin/env bash' \
         'if [[ " $* " == *" -d -r- "* ]]; then' \
         '    printf '\''Executable=fixture\n# designated => cdhash H"0123456789abcdef"\n'\'' >&2' \
+        'elif [[ " $* " == *" --verify --deep --strict "* && "${AKUO_CODESIGN_VERIFY_FAIL:-}" == true ]]; then' \
+        '    printf '\''strict signature verification failed\n'\'' >&2' \
+        '    exit 91' \
         'fi'
     chmod +x "$AKUO_FAKE_BIN/swift" "$AKUO_FAKE_BIN/xcodebuild" \
         "$AKUO_FAKE_BIN/codesign"
@@ -88,6 +92,29 @@ akuo_generate() {
 akuo_verify() {
     env PATH="$AKUO_FAKE_BIN:$PATH" \
         "$AKUO_VERIFIER" "$AKUO_APP_PATH" "$AKUO_MANIFEST_PATH"
+}
+
+akuo_generate_with_invalid_signature() {
+    env PATH="$AKUO_FAKE_BIN:$PATH" \
+        AKUO_CODESIGN_VERIFY_FAIL=true \
+        "$AKUO_GENERATOR" \
+        "$AKUO_APP_PATH" \
+        "$AKUO_MANIFEST_PATH" \
+        "$AKUO_SOURCE_REVISION" \
+        clean
+}
+
+akuo_verify_with_invalid_signature() {
+    env PATH="$AKUO_FAKE_BIN:$PATH" \
+        AKUO_CODESIGN_VERIFY_FAIL=true \
+        "$AKUO_VERIFIER" "$AKUO_APP_PATH" "$AKUO_MANIFEST_PATH"
+}
+
+akuo_verify_app_path() {
+    local app_path="$1"
+
+    env PATH="$AKUO_FAKE_BIN:$PATH" \
+        "$AKUO_VERIFIER" "$app_path" "$AKUO_MANIFEST_PATH"
 }
 
 akuo_assert_rejected() {
@@ -121,10 +148,29 @@ test_canonical_digest_has_a_literal_contract() {
     chmod 644 "$digest_root/payload"
 
     [[ "$("$AKUO_DIGEST" "$digest_root")" == \
-        e890ec598558479c602fc76f40293d30c30681a31355855a911ba04b3ea070a3 ]]
+        0fc9bfa84cda150e0ad3e0b9689b4b6f5565b266ddd980af402d7ed3f2b6577a ]]
     touch -t 202001020304 "$digest_root/payload"
     [[ "$("$AKUO_DIGEST" "$digest_root")" == \
-        e890ec598558479c602fc76f40293d30c30681a31355855a911ba04b3ea070a3 ]]
+        0fc9bfa84cda150e0ad3e0b9689b4b6f5565b266ddd980af402d7ed3f2b6577a ]]
+}
+
+# Production mutation caught: normalizing JSON through plutil before checking
+# duplicate top-level keys, allowing an ambiguous manifest to be accepted.
+test_rejects_duplicate_json_keys_before_normalization() {
+    akuo_reset_fixture
+    akuo_generate >/dev/null
+    cp "$AKUO_MANIFEST_PATH" "$AKUO_TEST_TMP/canonical-manifest.json"
+    sed 's/^{/{"schemaVersion":1,/' "$AKUO_MANIFEST_PATH" \
+        >"$AKUO_TEST_TMP/duplicate-manifest.json"
+    mv "$AKUO_TEST_TMP/duplicate-manifest.json" "$AKUO_MANIFEST_PATH"
+    akuo_assert_rejected 'manifest contains a duplicate JSON key: schemaVersion' \
+        akuo_verify
+
+    sed 's/^{/{"\\u0073chemaVersion":1,/' \
+        "$AKUO_TEST_TMP/canonical-manifest.json" \
+        >"$AKUO_MANIFEST_PATH"
+    akuo_assert_rejected 'manifest JSON keys must use canonical ASCII spelling' \
+        akuo_verify
 }
 
 # Production mutation caught: omitting a required provenance field, emitting a
@@ -183,6 +229,27 @@ test_rejects_bundle_mode_tampering() {
     akuo_assert_rejected 'bundle content SHA-256 does not match manifest' akuo_verify
 }
 
+# Production mutation caught: excluding the bundle root directory's permission
+# mode from the canonical digest.
+test_rejects_bundle_root_mode_tampering() {
+    akuo_reset_fixture
+    chmod 755 "$AKUO_APP_PATH"
+    akuo_generate >/dev/null
+    chmod 700 "$AKUO_APP_PATH"
+    akuo_assert_rejected 'bundle content SHA-256 does not match manifest' akuo_verify
+}
+
+# Production mutation caught: resolving a symlink supplied as the bundle root
+# and hashing its target as though the requested root were an ordinary directory.
+test_rejects_bundle_root_symlink() {
+    akuo_reset_fixture
+    akuo_generate >/dev/null
+    local linked_app="$AKUO_TEST_TMP/LinkedAkuo.app"
+    ln -s "$AKUO_APP_PATH" "$linked_app"
+    akuo_assert_rejected 'bundle root must not be a symbolic link' \
+        akuo_verify_app_path "$linked_app"
+}
+
 # Production mutation caught: following or ignoring a newly introduced bundle
 # symlink instead of failing closed on an unsupported entry type.
 test_rejects_bundle_symlinks() {
@@ -213,6 +280,39 @@ test_rejects_designated_requirement_mismatch() {
         akuo_verify
 }
 
+# Production mutation caught: extracting a displayed designated requirement
+# without first requiring the bundle to pass deep, strict signature verification.
+test_generator_and_verifier_reject_invalid_signature() {
+    akuo_reset_fixture
+    local displayed_requirement
+    displayed_requirement="$(
+        env PATH="$AKUO_FAKE_BIN:$PATH" \
+            AKUO_CODESIGN_VERIFY_FAIL=true \
+            codesign -d -r- "$AKUO_APP_PATH" 2>&1
+    )"
+    [[ "$displayed_requirement" == *"$AKUO_REQUIREMENT"* ]]
+    akuo_assert_rejected 'bundle failed strict code-signature verification' \
+        akuo_generate_with_invalid_signature
+
+    akuo_generate >/dev/null
+    akuo_assert_rejected 'bundle failed strict code-signature verification' \
+        akuo_verify_with_invalid_signature
+}
+
+# Production mutation caught: narrowing sourceState to clean even though schema
+# 1 represents either captured state at the low-level manifest contract.
+test_dirty_source_state_round_trips() {
+    akuo_reset_fixture
+    env PATH="$AKUO_FAKE_BIN:$PATH" \
+        "$AKUO_GENERATOR" \
+        "$AKUO_APP_PATH" \
+        "$AKUO_MANIFEST_PATH" \
+        "$AKUO_SOURCE_REVISION" \
+        dirty >/dev/null
+    [[ "$(plutil -extract sourceState raw -o - "$AKUO_MANIFEST_PATH")" == dirty ]]
+    [[ "$(akuo_verify)" == *"Source: $AKUO_SOURCE_REVISION (dirty)"* ]]
+}
+
 # Production mutation caught: permissive dictionary decoding that ignores
 # missing, additional, or wrong-typed manifest fields.
 test_rejects_non_exact_manifest_schema() {
@@ -233,14 +333,41 @@ test_rejects_non_exact_manifest_schema() {
         akuo_verify
 }
 
-test_canonical_digest_has_a_literal_contract
-test_emits_complete_typed_manifest_and_verifies_it
-test_rejects_executable_tampering
-test_rejects_non_executable_bundle_tampering
-test_rejects_bundle_mode_tampering
-test_rejects_bundle_symlinks
-test_rejects_bundle_metadata_mismatch
-test_rejects_designated_requirement_mismatch
-test_rejects_non_exact_manifest_schema
+case "${1:-all}" in
+    canonical-digest) test_canonical_digest_has_a_literal_contract ;;
+    duplicate-json-keys) test_rejects_duplicate_json_keys_before_normalization ;;
+    complete-manifest) test_emits_complete_typed_manifest_and_verifies_it ;;
+    executable-tampering) test_rejects_executable_tampering ;;
+    bundle-tampering) test_rejects_non_executable_bundle_tampering ;;
+    bundle-mode) test_rejects_bundle_mode_tampering ;;
+    bundle-root-mode) test_rejects_bundle_root_mode_tampering ;;
+    bundle-root-symlink) test_rejects_bundle_root_symlink ;;
+    bundle-symlink) test_rejects_bundle_symlinks ;;
+    metadata-mismatch) test_rejects_bundle_metadata_mismatch ;;
+    requirement-mismatch) test_rejects_designated_requirement_mismatch ;;
+    invalid-signature) test_generator_and_verifier_reject_invalid_signature ;;
+    dirty-source-state) test_dirty_source_state_round_trips ;;
+    exact-schema) test_rejects_non_exact_manifest_schema ;;
+    all)
+        test_canonical_digest_has_a_literal_contract
+        test_rejects_duplicate_json_keys_before_normalization
+        test_emits_complete_typed_manifest_and_verifies_it
+        test_rejects_executable_tampering
+        test_rejects_non_executable_bundle_tampering
+        test_rejects_bundle_mode_tampering
+        test_rejects_bundle_root_mode_tampering
+        test_rejects_bundle_root_symlink
+        test_rejects_bundle_symlinks
+        test_rejects_bundle_metadata_mismatch
+        test_rejects_designated_requirement_mismatch
+        test_generator_and_verifier_reject_invalid_signature
+        test_dirty_source_state_round_trips
+        test_rejects_non_exact_manifest_schema
+        ;;
+    *)
+        printf 'unknown test case: %s\n' "$1" >&2
+        exit 2
+        ;;
+esac
 
 printf 'PASS: build manifest generation, schema, and tamper-detection contracts\n'

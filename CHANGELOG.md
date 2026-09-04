@@ -35,6 +35,9 @@ All notable changes to Akuo are documented in this file.
 
 ### Changed
 
+- Advance the Unreleased candidate identity to `0.4.0 (14)` and harden build
+  manifest verification against duplicate JSON keys, invalid signatures,
+  bundle-root aliasing or mode changes, and source mutation during generation.
 - Make the core Swift version declaration authoritative for both marketing and
   build identity, compile an immutable archive of the clean source commit, embed
   its revision in the runtime and plist, require a live read-only origin tag

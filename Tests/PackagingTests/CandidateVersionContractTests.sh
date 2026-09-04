@@ -132,6 +132,9 @@ akuo_reset_fixture() {
         '#!/usr/bin/env bash' \
         'set -euo pipefail' \
         'if [[ "${1:-}" == --version ]]; then' \
+        '    if [[ "${AKUO_MUTATE_DURING_MANIFEST:-}" == true ]]; then' \
+        '        printf "mutated during manifest generation\n" >>"${AKUO_FIXTURE_ROOT_ENV:?}/README.md"' \
+        '    fi' \
         '    printf '\''Swift version 6.1-dev\ntarget: arm64-apple-macosx15.0\n'\''' \
         '    exit 0' \
         'fi' \
@@ -890,6 +893,18 @@ test_rejects_source_change_during_build() {
         akuo_assert_rejected 'candidate source changed during packaging' akuo_build
 }
 
+# Production mutation caught: checking source only before manifest generation,
+# or leaving a manifest that claims clean provenance after generation mutates it.
+test_rejects_source_change_during_manifest_generation() {
+    akuo_reset_fixture
+    AKUO_MUTATE_DURING_MANIFEST=true \
+        akuo_assert_rejected 'candidate source changed during packaging' akuo_build
+    if [[ -e "$AKUO_FIXTURE_ROOT/dist/Akuo.build-manifest.json" ]]; then
+        echo 'FAIL: manifest survived a source mutation during generation' >&2
+        exit 1
+    fi
+}
+
 # Production mutation caught: compiling transient caller-worktree bytes that are
 # restored before the post-build clean check can observe them.
 test_build_uses_snapshot_during_transient_mutation() {
@@ -1204,6 +1219,7 @@ case "${1:-all}" in
     ignored-input) test_build_ignores_ignored_swift_input ;;
     dirty-verifier) test_verifier_rejects_dirty_source ;;
     dirty-during-build) test_rejects_source_change_during_build ;;
+    dirty-during-manifest) test_rejects_source_change_during_manifest_generation ;;
     transient-mutation) test_build_uses_snapshot_during_transient_mutation ;;
     compiled-source-revision) test_fake_runtime_retains_compiled_source_revision ;;
     symlink-source-revision) test_rejects_tracked_source_revision_symlink ;;
@@ -1263,6 +1279,7 @@ case "${1:-all}" in
         test_build_ignores_ignored_swift_input
         test_verifier_rejects_dirty_source
         test_rejects_source_change_during_build
+        test_rejects_source_change_during_manifest_generation
         test_build_uses_snapshot_during_transient_mutation
         test_fake_runtime_retains_compiled_source_revision
         test_rejects_tracked_source_revision_symlink

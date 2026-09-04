@@ -11,12 +11,22 @@ akuo_cleanup_digest() {
 }
 trap akuo_cleanup_digest EXIT
 
-if [[ "$#" -ne 1 || ! -d "$AKUO_BUNDLE_ROOT" ]]; then
+if [[ "$#" -ne 1 ]]; then
+    echo "usage: $0 BUNDLE_PATH" >&2
+    exit 2
+fi
+if [[ -L "$AKUO_BUNDLE_ROOT" ]]; then
+    echo "bundle root must not be a symbolic link" >&2
+    exit 1
+fi
+if [[ ! -d "$AKUO_BUNDLE_ROOT" ]]; then
     echo "usage: $0 BUNDLE_PATH" >&2
     exit 2
 fi
 
 AKUO_BUNDLE_ROOT="$(cd -- "$AKUO_BUNDLE_ROOT" && pwd -P)"
+AKUO_ROOT_MODE="0000$(stat -f '%Lp' "$AKUO_BUNDLE_ROOT")"
+AKUO_ROOT_MODE="${AKUO_ROOT_MODE: -4}"
 AKUO_DIGEST_TMP="$(mktemp -d "${TMPDIR:-/tmp}/akuo-bundle-digest.XXXXXX")"
 AKUO_PATHS="$AKUO_DIGEST_TMP/paths"
 AKUO_RECORDS="$AKUO_DIGEST_TMP/records"
@@ -56,5 +66,6 @@ done <"$AKUO_PATHS"
 
 {
     printf '%s\n' 'akuo-bundle-content-v1'
+    printf 'R %s\n' "$AKUO_ROOT_MODE"
     LC_ALL=C sort -t $'\t' -k1,1 "$AKUO_RECORDS" | cut -f2-
 } | shasum -a 256 | awk '{ print $1 }'

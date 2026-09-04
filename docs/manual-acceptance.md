@@ -78,13 +78,15 @@ laundering that release onto a later strict source.
 Manifest schema 1 records the packaged Git `HEAD`, clean/dirty source state,
 Swift and Xcode versions, bundle identifier/version/build, exact designated
 requirement, executable SHA-256, and deterministic bundle-content SHA-256. The
-manifest verifier fails closed on any missing, extra, or wrongly typed field and
-independently reads the bundle metadata and signature before recomputing both
-hashes. The bundle hash covers path-sorted directory and regular-file records,
+manifest verifier fails closed on any duplicate, missing, extra, or wrongly
+typed field, requires a valid deep and strict signature before extracting its
+designated requirement, and independently reads the bundle metadata before
+recomputing both hashes. The bundle hash covers the root directory mode plus
+path-sorted descendant-directory and regular-file records,
 including relative UTF-8 path bytes and permission modes plus each file's length
-and content SHA-256. It excludes the bundle root and mtimes; it rejects symlinks
-and other entry types. The sidecar is outside the bundle, so the digest is not
-self-referential.
+and content SHA-256. It excludes mtimes; it rejects a symlink root, symlink
+descendants, and other entry types. The sidecar is outside the bundle, so the
+digest is not self-referential.
 
 The `v0.3.0` tag predates the Swift build declaration, embedded source revision,
 and runtime identity probes. Its faithful rebuild procedure is a disposable

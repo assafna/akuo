@@ -25,6 +25,10 @@ if [[ "$AKUO_FIRST_JSON_CHARACTER" != "{" ]]; then
     echo "build manifest must be a JSON object" >&2
     exit 1
 fi
+if ! awk -f "$AKUO_PROJECT_ROOT/Scripts/lib/reject-duplicate-json-keys.awk" \
+    "$AKUO_MANIFEST_PATH"; then
+    exit 1
+fi
 
 AKUO_VERIFY_TMP="$(mktemp -d "${TMPDIR:-/tmp}/akuo-build-manifest-verify.XXXXXX")"
 AKUO_MANIFEST_XML="$AKUO_VERIFY_TMP/manifest.xml"
@@ -147,6 +151,10 @@ if [[ ! -f "$AKUO_EXECUTABLE_PATH" || -L "$AKUO_EXECUTABLE_PATH" ]]; then
     exit 1
 fi
 
+if ! codesign --verify --deep --strict "$AKUO_APP_PATH"; then
+    echo "bundle failed strict code-signature verification" >&2
+    exit 1
+fi
 AKUO_REQUIREMENT_OUTPUT="$(codesign -d -r- "$AKUO_APP_PATH" 2>&1)"
 AKUO_ACTUAL_DESIGNATED_REQUIREMENT="$(
     awk '{ sub(/^# /, "") } /^designated => / { print; exit }' \
