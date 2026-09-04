@@ -212,7 +212,8 @@ final class AppModelTests: XCTestCase {
         )
         model?.setEnabled(true)
         let pendingRecovery = scheduler.jobs.last
-        weak let weakModel = model
+        weak var weakModel: AppModel?
+        weakModel = model
 
         model = nil
 
