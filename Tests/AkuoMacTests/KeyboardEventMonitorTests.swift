@@ -673,7 +673,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
             .init(
                 completedWord: .init(
                     token: "/וןבל",
-                    boundary: " ",
+                    boundary: CorrectionBoundary(text: " ", keyCode: 49),
                     keyStrokes: [.init(text: "/", keyCode: 12)]
                 ),
                 boundaryKeyCode: 49,
@@ -697,7 +697,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
             fixture.coordinator.boundaryCalls.first?.completedWord,
             .init(
                 token: "'ן",
-                boundary: " ",
+                boundary: CorrectionBoundary(text: " ", keyCode: 49),
                 keyStrokes: [.init(text: "'", keyCode: 13)]
             )
         )
@@ -714,7 +714,7 @@ final class KeyboardEventMonitorTests: XCTestCase {
 
         XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord, .init(
             token: "https://akuo.app",
-            boundary: " "
+            boundary: CorrectionBoundary(text: " ", keyCode: 49)
         ))
     }
 
@@ -785,7 +785,10 @@ final class KeyboardEventMonitorTests: XCTestCase {
             )
             XCTAssertEqual(
                 fixture.coordinator.boundaryCalls.first?.completedWord.boundary,
-                boundary.text
+                CorrectionBoundary(
+                    text: boundary.text,
+                    keyCode: Int(boundary.keyCode)
+                )
             )
         }
     }
@@ -820,7 +823,10 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
         XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.boundaryKeyCode, 36)
-        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord.boundary, "\r")
+        XCTAssertEqual(
+            fixture.coordinator.boundaryCalls.first?.completedWord.boundary,
+            CorrectionBoundary(text: "\r", keyCode: 36)
+        )
     }
 
     func testKeypadEnterBoundaryKeyCodeReachesCoordinator() {
@@ -831,7 +837,10 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
         XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.boundaryKeyCode, 76)
-        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord.boundary, "\u{3}")
+        XCTAssertEqual(
+            fixture.coordinator.boundaryCalls.first?.completedWord.boundary,
+            CorrectionBoundary(text: "\u{3}", keyCode: 76)
+        )
     }
 
     func testCorrectionBoundaryRequiresMatchingPhysicalKey() {
@@ -1243,8 +1252,7 @@ private final class MonitorRecordingTextReplacer: TextReplacing {
     func replacePreviousText(
         deleteCount: Int,
         replacement: String,
-        boundary: String,
-        boundaryKeyCode: Int?
+        boundary: CorrectionBoundary?
     ) -> Bool {
         callCount += 1
         return true
@@ -1345,7 +1353,6 @@ private final class FakeCorrectionCoordinator: CorrectionCoordinating {
 
     func handleBoundary(
         _ completedWord: CompletedWord,
-        boundaryKeyCode: Int?,
         context: FocusContext,
         priorInputLanguage: Language,
         priorInputSourceIdentifier: String?,
@@ -1353,7 +1360,7 @@ private final class FakeCorrectionCoordinator: CorrectionCoordinating {
     ) -> CorrectionHandlingResult {
         boundaryCalls.append(.init(
             completedWord: completedWord,
-            boundaryKeyCode: boundaryKeyCode,
+            boundaryKeyCode: completedWord.boundary?.keyCode,
             context: context,
             priorInputLanguage: priorInputLanguage,
             priorInputSourceIdentifier: priorInputSourceIdentifier

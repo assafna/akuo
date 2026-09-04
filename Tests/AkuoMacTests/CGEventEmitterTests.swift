@@ -1,8 +1,13 @@
 import CoreGraphics
 import XCTest
+import AkuoCore
 @testable import AkuoMac
 
 final class CGEventEmitterTests: XCTestCase {
+    private let space = CorrectionBoundary(text: " ", keyCode: 49)!
+    private let carriageReturn = CorrectionBoundary(text: "\r", keyCode: 36)!
+    private let keypadEnter = CorrectionBoundary(text: "\u{3}", keyCode: 76)!
+
     func testReplacementPostsCompleteTaggedBatchInOrder() {
         let posting = FakeNativeEventPosting()
         let emitter = CGEventEmitter(posting: posting)
@@ -10,8 +15,7 @@ final class CGEventEmitterTests: XCTestCase {
         XCTAssertTrue(emitter.replacePreviousText(
             deleteCount: 2,
             replacement: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49
+            boundary: space
         ))
 
         XCTAssertEqual(posting.requests, [
@@ -36,8 +40,7 @@ final class CGEventEmitterTests: XCTestCase {
         XCTAssertTrue(emitter.replacePreviousText(
             deleteCount: 2,
             replacement: "עם",
-            boundary: "",
-            boundaryKeyCode: nil
+            boundary: nil
         ))
 
         XCTAssertEqual(posting.requests, [
@@ -61,8 +64,7 @@ final class CGEventEmitterTests: XCTestCase {
             XCTAssertFalse(emitter.replacePreviousText(
                 deleteCount: 2,
                 replacement: "שלום",
-                boundary: " ",
-                boundaryKeyCode: 49
+                boundary: space
             ))
             XCTAssertTrue(
                 posting.posted.isEmpty,
@@ -85,8 +87,7 @@ final class CGEventEmitterTests: XCTestCase {
         XCTAssertTrue(emitter.replacePreviousText(
             deleteCount: 1,
             replacement: "akuo",
-            boundary: " ",
-            boundaryKeyCode: 49
+            boundary: space
         ))
 
         XCTAssertEqual(posting.postedFlags.count, 5)
@@ -101,28 +102,11 @@ final class CGEventEmitterTests: XCTestCase {
         XCTAssertFalse(emitter.replacePreviousText(
             deleteCount: -1,
             replacement: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49
+            boundary: space
         ))
 
         XCTAssertTrue(posting.requests.isEmpty)
         XCTAssertTrue(posting.posted.isEmpty)
-    }
-
-    func testInvalidBoundaryKeyCodeFailsBeforeConstructingOrPosting() {
-        for keyCode in [-1, Int(UInt16.max) + 1] {
-            let posting = FakeNativeEventPosting()
-            let emitter = CGEventEmitter(posting: posting)
-
-            XCTAssertFalse(emitter.replacePreviousText(
-                deleteCount: 1,
-                replacement: "שלום",
-                boundary: "\r",
-                boundaryKeyCode: keyCode
-            ))
-            XCTAssertTrue(posting.requests.isEmpty)
-            XCTAssertTrue(posting.posted.isEmpty)
-        }
     }
 
     func testReturnBoundaryPreservesPhysicalIdentityAndUnicodeWithoutSyntheticKeyUp() {
@@ -132,8 +116,7 @@ final class CGEventEmitterTests: XCTestCase {
         XCTAssertTrue(emitter.replacePreviousText(
             deleteCount: 1,
             replacement: "שלום",
-            boundary: "\r",
-            boundaryKeyCode: 36
+            boundary: carriageReturn
         ))
 
         XCTAssertEqual(posting.requests.last, .boundary(text: "\r", keyCode: 36))
@@ -158,8 +141,7 @@ final class CGEventEmitterTests: XCTestCase {
         XCTAssertTrue(emitter.replacePreviousText(
             deleteCount: 1,
             replacement: "שלום",
-            boundary: "\u{3}",
-            boundaryKeyCode: 76
+            boundary: keypadEnter
         ))
 
         XCTAssertEqual(posting.requests.last, .boundary(text: "\u{3}", keyCode: 76))

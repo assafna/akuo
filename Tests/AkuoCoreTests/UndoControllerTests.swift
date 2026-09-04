@@ -4,6 +4,7 @@ import XCTest
 
 final class UndoControllerTests: XCTestCase {
     private let createdAt = Date(timeIntervalSinceReferenceDate: 100)
+    private let space = CorrectionBoundary(text: " ", keyCode: 49)!
     private let context = FocusContext(
         processIdentifier: 42,
         elementIdentifier: "field",
@@ -94,8 +95,7 @@ final class UndoControllerTests: XCTestCase {
         controller.register(UndoRecord(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: ineligibleContext,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -116,8 +116,7 @@ final class UndoControllerTests: XCTestCase {
         controller.register(UndoRecord(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: uncertainContext,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -138,8 +137,7 @@ final class UndoControllerTests: XCTestCase {
         controller.register(UndoRecord(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: secureContext,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -180,8 +178,7 @@ final class UndoControllerTests: XCTestCase {
         let record = UndoRecord(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             createdAt: createdAt
@@ -197,8 +194,7 @@ final class UndoControllerTests: XCTestCase {
         UndoRecord(
             original: original,
             corrected: corrected,
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",

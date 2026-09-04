@@ -96,7 +96,7 @@ final class LiveRecognitionPipelineTests: XCTestCase {
         XCTAssertEqual(fixture.backend.selectedIdentifiers, ["com.apple.keylayout.Hebrew"])
         XCTAssertEqual(fixture.inputSources.currentLanguage, .hebrew)
         XCTAssertEqual(fixture.counter.incrementCount, 1)
-        XCTAssertEqual(fixture.undo.registered.map(\.boundary), [""])
+        XCTAssertEqual(fixture.undo.registered.map(\.boundary), [nil])
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
     }
 
@@ -1105,18 +1105,18 @@ private final class LiveRecognitionTextReplacer: TextReplacing {
     func replacePreviousText(
         deleteCount: Int,
         replacement: String,
-        boundary: String,
-        boundaryKeyCode: Int?
+        boundary: CorrectionBoundary?
     ) -> Bool {
+        let boundaryText = boundary?.text ?? ""
         calls.append(.init(
             deleteCount: deleteCount,
             replacement: replacement,
-            boundary: boundary
+            boundary: boundaryText
         ))
         document.applyReplacement(
             deleteCount: deleteCount,
             replacement: replacement,
-            boundary: boundary
+            boundary: boundaryText
         )
         return true
     }

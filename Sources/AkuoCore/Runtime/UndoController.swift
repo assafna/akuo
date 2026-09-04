@@ -3,8 +3,7 @@ import Foundation
 public struct UndoRecord: Equatable, Sendable {
     public let original: String
     public let corrected: String
-    public let boundary: String
-    public let boundaryKeyCode: Int?
+    public let boundary: CorrectionBoundary?
     public let context: FocusContext
     public let priorInputLanguage: Language
     public let priorInputSourceIdentifier: String?
@@ -13,8 +12,7 @@ public struct UndoRecord: Equatable, Sendable {
     public init(
         original: String,
         corrected: String,
-        boundary: String,
-        boundaryKeyCode: Int?,
+        boundary: CorrectionBoundary?,
         context: FocusContext,
         priorInputLanguage: Language,
         priorInputSourceIdentifier: String,
@@ -24,7 +22,6 @@ public struct UndoRecord: Equatable, Sendable {
             original: original,
             corrected: corrected,
             boundary: boundary,
-            boundaryKeyCode: boundaryKeyCode,
             context: context,
             priorInputLanguage: priorInputLanguage,
             compatibilityPriorInputSourceIdentifier: priorInputSourceIdentifier,
@@ -36,8 +33,7 @@ public struct UndoRecord: Equatable, Sendable {
     public init(
         original: String,
         corrected: String,
-        boundary: String,
-        boundaryKeyCode: Int?,
+        boundary: CorrectionBoundary?,
         context: FocusContext,
         priorInputLanguage: Language,
         createdAt: Date
@@ -46,7 +42,6 @@ public struct UndoRecord: Equatable, Sendable {
             original: original,
             corrected: corrected,
             boundary: boundary,
-            boundaryKeyCode: boundaryKeyCode,
             context: context,
             priorInputLanguage: priorInputLanguage,
             compatibilityPriorInputSourceIdentifier: nil,
@@ -57,8 +52,7 @@ public struct UndoRecord: Equatable, Sendable {
     init(
         original: String,
         corrected: String,
-        boundary: String,
-        boundaryKeyCode: Int?,
+        boundary: CorrectionBoundary?,
         context: FocusContext,
         priorInputLanguage: Language,
         compatibilityPriorInputSourceIdentifier: String?,
@@ -67,7 +61,6 @@ public struct UndoRecord: Equatable, Sendable {
         self.original = original
         self.corrected = corrected
         self.boundary = boundary
-        self.boundaryKeyCode = boundaryKeyCode
         self.context = context
         self.priorInputLanguage = priorInputLanguage
         self.priorInputSourceIdentifier = compatibilityPriorInputSourceIdentifier

@@ -5,7 +5,6 @@ public final class CorrectionCoordinator {
 
     private struct PendingForcedCorrection {
         let completedWord: CompletedWord
-        let boundaryKeyCode: Int
         let correction: Correction
         let context: FocusContext
         let priorInputLanguage: Language
@@ -42,7 +41,6 @@ public final class CorrectionCoordinator {
 
     public func handleBoundary(
         _ completedWord: CompletedWord,
-        boundaryKeyCode: Int? = nil,
         context: FocusContext,
         priorInputLanguage: Language,
         priorInputSourceIdentifier: String? = nil,
@@ -55,7 +53,7 @@ public final class CorrectionCoordinator {
               context.isEditableTextInput else {
             return .notHandled
         }
-        guard let boundaryKeyCode else { return .notHandled }
+        guard let boundary = completedWord.boundary else { return .notHandled }
         let decision = policy.decision(
             for: completedWord.token,
             sourceHint: priorInputLanguage,
@@ -63,8 +61,8 @@ public final class CorrectionCoordinator {
         )
         guard case let .correct(correction) = decision else {
             if completedWord.physicalTraceIntegrity != .invalidated,
-               boundaryKeyCode == 49,
-               completedWord.boundary == " ",
+               boundary.keyCode == 49,
+               boundary.text == " ",
                let priorInputSourceIdentifier,
                case let .correct(forcedCorrection) = policy.forcedDecision(
                 for: completedWord.token,
@@ -74,7 +72,6 @@ public final class CorrectionCoordinator {
                 guard isContextStillEligible() else { return .notHandled }
                 pendingForcedCorrection = .init(
                     completedWord: completedWord,
-                    boundaryKeyCode: boundaryKeyCode,
                     correction: forcedCorrection,
                     context: context,
                     priorInputLanguage: priorInputLanguage,
@@ -99,8 +96,7 @@ public final class CorrectionCoordinator {
         guard textReplacer.replacePreviousText(
             deleteCount: completedWord.token.unicodeScalars.count,
             replacement: correction.replacement,
-            boundary: completedWord.boundary,
-            boundaryKeyCode: boundaryKeyCode
+            boundary: boundary
         ) else {
             return .notHandled
         }
@@ -110,8 +106,7 @@ public final class CorrectionCoordinator {
         undoController.register(UndoRecord(
             original: correction.original,
             corrected: correction.replacement,
-            boundary: completedWord.boundary,
-            boundaryKeyCode: boundaryKeyCode,
+            boundary: boundary,
             context: context,
             priorInputLanguage: priorInputLanguage,
             compatibilityPriorInputSourceIdentifier: priorInputSourceIdentifier,
@@ -138,7 +133,7 @@ public final class CorrectionCoordinator {
             return .notHandled
         }
         guard previousTextValidator.hasExactTextImmediatelyBeforeCaret(
-            record.corrected + record.boundary,
+            record.corrected + (record.boundary?.text ?? ""),
             context: context
         ) else {
             undoController.invalidate()
@@ -156,10 +151,9 @@ public final class CorrectionCoordinator {
         }
         guard textReplacer.replacePreviousText(
             deleteCount: record.corrected.unicodeScalars.count
-                + record.boundary.unicodeScalars.count,
+                + (record.boundary?.text.unicodeScalars.count ?? 0),
             replacement: record.original,
-            boundary: record.boundary,
-            boundaryKeyCode: record.boundaryKeyCode
+            boundary: record.boundary
         ) else {
             return .notHandled
         }
@@ -191,14 +185,13 @@ public final class CorrectionCoordinator {
                 return .notHandled
             }
             guard previousTextValidator.hasExactTextImmediatelyBeforeCaret(
-                unfinishedWord.token + unfinishedWord.boundary,
+                unfinishedWord.token + (unfinishedWord.boundary?.text ?? ""),
                 context: context
             ), isContextStillEligible() else {
                 return .notHandled
             }
             return applyForcedCorrection(
                 unfinishedWord,
-                boundaryKeyCode: nil,
                 correction: correction,
                 context: context,
                 priorInputLanguage: priorInputLanguage,
@@ -230,7 +223,7 @@ public final class CorrectionCoordinator {
         }
         guard previousTextValidator.hasExactTextImmediatelyBeforeCaret(
             pendingForcedCorrection.completedWord.token
-                + pendingForcedCorrection.completedWord.boundary,
+                + (pendingForcedCorrection.completedWord.boundary?.text ?? ""),
             context: context
         ), isContextStillEligible() else {
             return .notHandled
@@ -238,7 +231,6 @@ public final class CorrectionCoordinator {
 
         return applyForcedCorrection(
             pendingForcedCorrection.completedWord,
-            boundaryKeyCode: pendingForcedCorrection.boundaryKeyCode,
             correction: pendingForcedCorrection.correction,
             context: context,
             priorInputLanguage: pendingForcedCorrection.priorInputLanguage,
@@ -266,7 +258,7 @@ public final class CorrectionCoordinator {
             return .notHandled
         }
         guard previousTextValidator.hasExactTextImmediatelyBeforeCaret(
-            record.corrected + record.boundary,
+            record.corrected + (record.boundary?.text ?? ""),
             context: context
         ), isContextStillEligible() else {
             undoController.invalidate()
@@ -280,10 +272,9 @@ public final class CorrectionCoordinator {
         }
         guard textReplacer.replacePreviousText(
             deleteCount: record.corrected.unicodeScalars.count
-                + record.boundary.unicodeScalars.count,
+                + (record.boundary?.text.unicodeScalars.count ?? 0),
             replacement: record.original,
-            boundary: record.boundary,
-            boundaryKeyCode: record.boundaryKeyCode
+            boundary: record.boundary
         ) else {
             return .notHandled
         }
@@ -292,7 +283,6 @@ public final class CorrectionCoordinator {
             original: record.corrected,
             corrected: record.original,
             boundary: record.boundary,
-            boundaryKeyCode: record.boundaryKeyCode,
             context: context,
             priorInputLanguage: currentInputLanguage,
             compatibilityPriorInputSourceIdentifier: currentInputSourceIdentifier,
@@ -303,7 +293,6 @@ public final class CorrectionCoordinator {
 
     private func applyForcedCorrection(
         _ completedWord: CompletedWord,
-        boundaryKeyCode: Int?,
         correction: Correction,
         context: FocusContext,
         priorInputLanguage: Language,
@@ -311,10 +300,9 @@ public final class CorrectionCoordinator {
     ) -> CorrectionHandlingResult {
         guard textReplacer.replacePreviousText(
             deleteCount: completedWord.token.unicodeScalars.count
-                + completedWord.boundary.unicodeScalars.count,
+                + (completedWord.boundary?.text.unicodeScalars.count ?? 0),
             replacement: correction.replacement,
-            boundary: completedWord.boundary,
-            boundaryKeyCode: boundaryKeyCode
+            boundary: completedWord.boundary
         ) else {
             return .notHandled
         }
@@ -325,7 +313,6 @@ public final class CorrectionCoordinator {
             original: correction.original,
             corrected: correction.replacement,
             boundary: completedWord.boundary,
-            boundaryKeyCode: boundaryKeyCode,
             context: context,
             priorInputLanguage: priorInputLanguage,
             compatibilityPriorInputSourceIdentifier: priorInputSourceIdentifier,

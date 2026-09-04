@@ -185,13 +185,12 @@ private final class LiveExclusionTextReplacer: TextReplacing {
     func replacePreviousText(
         deleteCount: Int,
         replacement: String,
-        boundary: String,
-        boundaryKeyCode: Int?
+        boundary: CorrectionBoundary?
     ) -> Bool {
         calls.append(.init(
             deleteCount: deleteCount,
             replacement: replacement,
-            boundary: boundary
+            boundary: boundary?.text ?? ""
         ))
         return true
     }

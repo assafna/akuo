@@ -10,6 +10,8 @@ final class CorrectionCoordinatorTests: XCTestCase {
         isEditableTextInput: true
     )
     private let createdAt = Date(timeIntervalSinceReferenceDate: 100)
+    private let space = CorrectionBoundary(text: " ", keyCode: 49)!
+    private let carriageReturn = CorrectionBoundary(text: "\r", keyCode: 36)!
 
     func testSuccessfulCorrectionSuppressesBoundaryAndRegistersUndo() {
         let events = RuntimeEvents()
@@ -29,10 +31,11 @@ final class CorrectionCoordinatorTests: XCTestCase {
         )
 
         let handled = coordinator.handleBoundary(
-            .init(token: "akuo", boundary: " "),
-            boundaryKeyCode: 49,
+            .init(token: "akuo", boundary: space),
             context: context,
-            priorInputLanguage: .english
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            isContextStillEligible: { true }
         )
 
         XCTAssertEqual(handled, .handled)
@@ -102,10 +105,11 @@ final class CorrectionCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(coordinator.handleBoundary(
-            .init(token: "akuo", boundary: "\r"),
-            boundaryKeyCode: 36,
+            .init(token: "akuo", boundary: carriageReturn),
             context: context,
-            priorInputLanguage: .english
+            priorInputLanguage: .english,
+            priorInputSourceIdentifier: "com.apple.keylayout.ABC",
+            isContextStillEligible: { true }
         ), .handled)
         XCTAssertEqual(coordinator.handleImmediateUndo(context: context), .handled)
 
@@ -150,8 +154,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(coordinator.handleBoundary(
-            .init(token: "שמג", boundary: " "),
-            boundaryKeyCode: 49,
+            .init(token: "שמג", boundary: space),
             context: context,
             priorInputLanguage: .hebrew,
             priorInputSourceIdentifier: "com.apple.keylayout.Hebrew",
@@ -368,7 +371,6 @@ final class CorrectionCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.handleForcedCorrection(
             .init(
                 token: "aku",
-                boundary: "",
                 physicalTraceIntegrity: .invalidated
             ),
             context: context,
@@ -390,7 +392,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(coordinator.handleForcedCorrection(
-            .init(token: "go", boundary: ""),
+            .init(token: "go"),
             context: context,
             priorInputLanguage: .english,
             currentInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -420,8 +422,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         undoController.register(.init(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -591,8 +592,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         undoController.register(UndoRecord(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             createdAt: createdAt
@@ -620,8 +620,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         undoController.register(UndoRecord(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -847,8 +846,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         undoController.register(.init(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -890,8 +888,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         undoController.register(.init(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -1038,8 +1035,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         undoController.register(.init(
             original: "cool",
             corrected: "לֹם",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -1454,8 +1450,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         undoController.register(.init(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -1495,8 +1490,7 @@ final class CorrectionCoordinatorTests: XCTestCase {
         undoController.register(.init(
             original: "akuo",
             corrected: "שלום",
-            boundary: " ",
-            boundaryKeyCode: 49,
+            boundary: space,
             context: context,
             priorInputLanguage: .english,
             priorInputSourceIdentifier: "com.apple.keylayout.ABC",
@@ -1718,15 +1712,37 @@ private extension CorrectionCoordinator {
         context: FocusContext,
         priorInputLanguage: Language
     ) -> CorrectionHandlingResult {
-        handleBoundary(
+        guard completedWord.boundary?.keyCode == boundaryKeyCode else {
+            return .notHandled
+        }
+        return handleBoundary(
             completedWord,
-            boundaryKeyCode: boundaryKeyCode,
             context: context,
             priorInputLanguage: priorInputLanguage,
             priorInputSourceIdentifier: priorInputLanguage == .english
                 ? "com.apple.keylayout.ABC"
                 : "com.apple.keylayout.Hebrew",
             isContextStillEligible: { true }
+        )
+    }
+
+    func handleBoundary(
+        _ completedWord: CompletedWord,
+        boundaryKeyCode: Int?,
+        context: FocusContext,
+        priorInputLanguage: Language,
+        priorInputSourceIdentifier: String? = nil,
+        isContextStillEligible: () -> Bool
+    ) -> CorrectionHandlingResult {
+        guard completedWord.boundary?.keyCode == boundaryKeyCode else {
+            return .notHandled
+        }
+        return handleBoundary(
+            completedWord,
+            context: context,
+            priorInputLanguage: priorInputLanguage,
+            priorInputSourceIdentifier: priorInputSourceIdentifier,
+            isContextStillEligible: isContextStillEligible
         )
     }
 
@@ -1764,12 +1780,15 @@ private final class RecordingReplacer: TextReplacing {
     func replacePreviousText(
         deleteCount: Int,
         replacement: String,
-        boundary: String,
-        boundaryKeyCode: Int?
+        boundary: CorrectionBoundary?
     ) -> Bool {
         events?.values.append(.replace)
-        calls.append(.init(deleteCount: deleteCount, replacement: replacement, boundary: boundary))
-        boundaryKeyCodes.append(boundaryKeyCode)
+        calls.append(.init(
+            deleteCount: deleteCount,
+            replacement: replacement,
+            boundary: boundary?.text ?? ""
+        ))
+        boundaryKeyCodes.append(boundary?.keyCode)
         return results.isEmpty ? true : results.removeFirst()
     }
 }
