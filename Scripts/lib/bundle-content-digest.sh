@@ -18,6 +18,12 @@ fi
 while [[ "$AKUO_BUNDLE_ROOT" != / && "$AKUO_BUNDLE_ROOT" == */ ]]; do
     AKUO_BUNDLE_ROOT="${AKUO_BUNDLE_ROOT%/}"
 done
+case "$AKUO_BUNDLE_ROOT" in
+    . | .. | */. | */..)
+        echo "bundle root path must not end in . or .." >&2
+        exit 1
+        ;;
+esac
 if [[ -L "$AKUO_BUNDLE_ROOT" ]]; then
     echo "bundle root must not be a symbolic link" >&2
     exit 1

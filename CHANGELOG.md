@@ -35,7 +35,7 @@ All notable changes to Akuo are documented in this file.
 
 ### Changed
 
-- Advance the Unreleased candidate identity to `0.4.0 (16)` and harden build
+- Advance the Unreleased candidate identity to `0.4.0 (17)` and harden build
   manifest verification against duplicate JSON keys, invalid signatures,
   bundle-root aliasing or mode changes, and source mutation during generation.
 - Make the core Swift version declaration authoritative for both marketing and
