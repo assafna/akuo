@@ -59,9 +59,10 @@ All notable changes to Akuo are documented in this file.
 
 ### Fixed
 
-- Preserve Shift-modified Return and keypad Enter as original application-owned
-  events, clearing Akuo's transient state without attempting correction while
-  retaining unmodified Space, Return, and keypad Enter correction boundaries.
+- Preserve Shift-, Fn-, or Help-modified Return and keypad Enter as original
+  application-owned events, clearing Akuo's transient state without attempting
+  correction while retaining semantically unmodified Space, Return, and keypad
+  Enter correction boundaries.
 - Validate the exact visible suffix before every destructive immediate undo,
   unfinished force correction, and force toggle, then revalidate focus before
   any text or input-source mutation so mismatches fail open without side effects.

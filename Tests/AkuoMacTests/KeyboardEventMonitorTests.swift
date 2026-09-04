@@ -718,10 +718,49 @@ final class KeyboardEventMonitorTests: XCTestCase {
         ))
     }
 
-    func testShiftModifiedReturnBoundariesClearTokenWithoutCorrection() {
+    func testSemanticallyModifiedReturnBoundariesClearTokenWithoutCorrection() {
         let boundaries: [(text: String, keyCode: CGKeyCode)] = [
             ("\r", 36),
             ("\u{3}", 76),
+        ]
+        let modifiers: [CGEventFlags] = [
+            .maskShift,
+            .maskSecondaryFn,
+            .maskHelp,
+        ]
+
+        for modifier in modifiers {
+            for boundary in boundaries {
+                let retranslator = MutableCurrentLayoutRetranslator(characters: "a")
+                let decoder = SystemNativeEventDecoder(retranslator: retranslator)
+                let fixture = makeFixture(decoderOverride: decoder)
+                let letterEvent = nativeKeyEvent(keyCode: 0, flags: [])
+                XCTAssertTrue(fixture.monitor.process(letterEvent) === letterEvent)
+                XCTAssertEqual(fixture.monitor.currentTokenForTesting, "a")
+                fixture.coordinator.boundaryResult = .handled
+
+                retranslator.characters = boundary.text
+                let boundaryEvent = nativeKeyEvent(
+                    keyCode: boundary.keyCode,
+                    flags: modifier
+                )
+
+                XCTAssertTrue(fixture.monitor.process(boundaryEvent) === boundaryEvent)
+                XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+                XCTAssertTrue(
+                    fixture.coordinator.boundaryCalls.isEmpty,
+                    "flags \(modifier.rawValue), keyCode \(boundary.keyCode)"
+                )
+            }
+        }
+    }
+
+    func testSemanticallyUnmodifiedCorrectionBoundariesAreHandled() {
+        let boundaries: [(text: String, keyCode: CGKeyCode, flags: CGEventFlags)] = [
+            (" ", 49, []),
+            ("\r", 36, []),
+            ("\n", 36, [.maskAlphaShift]),
+            ("\u{3}", 76, [.maskNumericPad]),
         ]
 
         for boundary in boundaries {
@@ -730,43 +769,15 @@ final class KeyboardEventMonitorTests: XCTestCase {
             let fixture = makeFixture(decoderOverride: decoder)
             let letterEvent = nativeKeyEvent(keyCode: 0, flags: [])
             XCTAssertTrue(fixture.monitor.process(letterEvent) === letterEvent)
-            XCTAssertEqual(fixture.monitor.currentTokenForTesting, "a")
             fixture.coordinator.boundaryResult = .handled
 
             retranslator.characters = boundary.text
             let boundaryEvent = nativeKeyEvent(
                 keyCode: boundary.keyCode,
-                flags: [.maskShift]
+                flags: boundary.flags
             )
 
-            XCTAssertTrue(fixture.monitor.process(boundaryEvent) === boundaryEvent)
-            XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
-            XCTAssertTrue(
-                fixture.coordinator.boundaryCalls.isEmpty,
-                "keyCode \(boundary.keyCode)"
-            )
-        }
-    }
-
-    func testUnmodifiedCorrectionBoundariesStillReachCoordinator() {
-        let boundaries: [(text: String, keyCode: CGKeyCode)] = [
-            (" ", 49),
-            ("\r", 36),
-            ("\n", 36),
-            ("\u{3}", 76),
-        ]
-
-        for boundary in boundaries {
-            let retranslator = MutableCurrentLayoutRetranslator(characters: "a")
-            let decoder = SystemNativeEventDecoder(retranslator: retranslator)
-            let fixture = makeFixture(decoderOverride: decoder)
-            let letterEvent = nativeKeyEvent(keyCode: 0, flags: [])
-            XCTAssertTrue(fixture.monitor.process(letterEvent) === letterEvent)
-
-            retranslator.characters = boundary.text
-            let boundaryEvent = nativeKeyEvent(keyCode: boundary.keyCode, flags: [])
-
-            XCTAssertTrue(fixture.monitor.process(boundaryEvent) === boundaryEvent)
+            XCTAssertNil(fixture.monitor.process(boundaryEvent))
             XCTAssertEqual(fixture.coordinator.boundaryCalls.count, 1)
             XCTAssertEqual(
                 fixture.coordinator.boundaryCalls.first?.boundaryKeyCode,
@@ -777,6 +788,28 @@ final class KeyboardEventMonitorTests: XCTestCase {
                 boundary.text
             )
         }
+    }
+
+    func testModifiedReturnBoundaryInvalidatesImmediateUndoBeforeCommandZ() {
+        let retranslator = MutableCurrentLayoutRetranslator(characters: "a")
+        let decoder = SystemNativeEventDecoder(retranslator: retranslator)
+        let fixture = makeFixture(decoderOverride: decoder)
+        fixture.coordinator.boundaryResult = .handled
+        fixture.coordinator.armUndoOnHandledBoundary = true
+        XCTAssertNotNil(fixture.monitor.process(nativeKeyEvent(keyCode: 0, flags: [])))
+        retranslator.characters = " "
+        XCTAssertNil(fixture.monitor.process(nativeKeyEvent(keyCode: 49, flags: [])))
+
+        retranslator.characters = "\r"
+        let modifiedReturn = nativeKeyEvent(
+            keyCode: 36,
+            flags: [.maskSecondaryFn]
+        )
+        XCTAssertTrue(fixture.monitor.process(modifiedReturn) === modifiedReturn)
+
+        let commandZ = nativeKeyEvent(keyCode: 6, flags: [.maskCommand])
+        XCTAssertTrue(fixture.monitor.process(commandZ) === commandZ)
+        XCTAssertEqual(fixture.coordinator.undoContexts, [fixture.focus.context!])
     }
 
     func testReturnBoundaryKeyCodeReachesCoordinator() {
