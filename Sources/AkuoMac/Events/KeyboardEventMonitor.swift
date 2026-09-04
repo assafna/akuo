@@ -188,7 +188,6 @@ final class SystemNativeEventDecoder: NativeEventDecoding {
 protocol CorrectionCoordinating: AnyObject {
     func handleBoundary(
         _ completedWord: CompletedWord,
-        boundaryKeyCode: Int?,
         context: FocusContext,
         priorInputLanguage: Language,
         priorInputSourceIdentifier: String?,
@@ -582,10 +581,13 @@ public final class KeyboardEventMonitor {
             }
             lastInputSourceIdentifier = sourceAfterDecoding.identifier
             let language = sourceAfterDecoding.language
+            let correctionBoundary = keyCode.flatMap {
+                CorrectionBoundary(text: text, keyCode: Int($0))
+            }
             if !event.flags.intersection(
                 Self.correctionBoundaryDisallowedModifiers
             ).isEmpty,
-               isCorrectionBoundary(text, keyCode: keyCode) {
+               correctionBoundary != nil {
                 clearTransientState()
                 return event
             }
@@ -641,16 +643,15 @@ public final class KeyboardEventMonitor {
                 return event
             }
 
-            guard isCorrectionBoundary(text, keyCode: keyCode) else {
+            guard let correctionBoundary else {
                 resetInputContext(invalidateImmediateUndo: false)
                 return event
             }
 
-            switch wordBuffer.consume(.boundary(text)) {
+            switch wordBuffer.consume(.boundary(correctionBoundary)) {
             case let .completed(completedWord):
                 let result = coordinator.handleBoundary(
                     completedWord,
-                    boundaryKeyCode: keyCode.map(Int.init),
                     context: context,
                     priorInputLanguage: language,
                     priorInputSourceIdentifier: sourceAfterDecoding.identifier,
@@ -743,16 +744,6 @@ public final class KeyboardEventMonitor {
         return text.unicodeScalars.allSatisfy {
             !CharacterSet.whitespacesAndNewlines.contains($0)
                 && !CharacterSet.controlCharacters.contains($0)
-        }
-    }
-
-    private func isCorrectionBoundary(_ text: String, keyCode: CGKeyCode?) -> Bool {
-        guard let keyCode else { return false }
-        switch (keyCode, text) {
-        case (49, " "), (36, "\r"), (36, "\n"), (76, "\u{3}"):
-            return true
-        default:
-            return false
         }
     }
 

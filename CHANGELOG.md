@@ -37,7 +37,7 @@ All notable changes to Akuo are documented in this file.
 
 ### Changed
 
-- Advance the Unreleased candidate identity to `0.4.0 (23)` and harden build
+- Advance the Unreleased candidate identity to `0.4.0 (24)` and harden build
   manifest verification against duplicate JSON keys, invalid signatures,
   bundle-root aliasing or mode changes, and source mutation during generation.
 - Keep verification compatible with Xcode 16.4 and macOS Bash 3.2 when testing

@@ -2,7 +2,7 @@ public enum BufferedInput: Equatable, Sendable {
     case text(String)
     case observedKeyStroke(ObservedKeyStroke)
     case deleteBackward
-    case boundary(String)
+    case boundary(CorrectionBoundary)
     case navigation
     case shortcut
     case reset
@@ -46,13 +46,13 @@ public enum PhysicalTraceIntegrity: Equatable, Sendable {
 
 public struct CompletedWord: Equatable, Sendable {
     public let token: String
-    public let boundary: String
+    public let boundary: CorrectionBoundary?
     public let keyStrokes: [ObservedKeyStroke]
     public let physicalTraceIntegrity: PhysicalTraceIntegrity
 
     public init(
         token: String,
-        boundary: String,
+        boundary: CorrectionBoundary? = nil,
         keyStrokes: [ObservedKeyStroke] = [],
         physicalTraceIntegrity: PhysicalTraceIntegrity = .unavailable
     ) {
@@ -81,7 +81,6 @@ public struct WordBuffer: Sendable {
         }
         return CompletedWord(
             token: currentToken,
-            boundary: "",
             keyStrokes: currentKeyStrokes,
             physicalTraceIntegrity: physicalTraceIntegrity
         )

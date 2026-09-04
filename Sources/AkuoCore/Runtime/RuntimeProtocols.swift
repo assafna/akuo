@@ -29,8 +29,7 @@ public protocol TextReplacing {
     func replacePreviousText(
         deleteCount: Int,
         replacement: String,
-        boundary: String,
-        boundaryKeyCode: Int?
+        boundary: CorrectionBoundary?
     ) -> Bool
 }
 

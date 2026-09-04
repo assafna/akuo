@@ -2,13 +2,18 @@ import XCTest
 @testable import AkuoCore
 
 final class WordBufferTests: XCTestCase {
+    private let space = CorrectionBoundary(text: " ", keyCode: 49)!
+
     func testBoundaryCompletesOnlyCurrentWord() {
         var buffer = WordBuffer()
         XCTAssertEqual(buffer.consume(.text("a")), .accumulating)
         XCTAssertEqual(buffer.consume(.text("k")), .accumulating)
         XCTAssertEqual(buffer.consume(.text("u")), .accumulating)
         XCTAssertEqual(buffer.consume(.text("o")), .accumulating)
-        XCTAssertEqual(buffer.consume(.boundary(" ")), .completed(.init(token: "akuo", boundary: " ")))
+        XCTAssertEqual(
+            buffer.consume(.boundary(space)),
+            .completed(.init(token: "akuo", boundary: space))
+        )
         XCTAssertEqual(buffer.currentToken, "")
     }
 
@@ -40,10 +45,10 @@ final class WordBufferTests: XCTestCase {
 
             XCTAssertEqual(buffer.consume(.deleteBackward), .accumulating)
             XCTAssertEqual(
-                buffer.consume(.boundary(" ")),
+                buffer.consume(.boundary(space)),
                 .completed(.init(
                     token: remainingToken,
-                    boundary: " ",
+                    boundary: space,
                     keyStrokes: [],
                     physicalTraceIntegrity: .invalidated
                 ))
@@ -84,7 +89,7 @@ final class WordBufferTests: XCTestCase {
 
     func testBoundaryWithEmptyBufferPassesThrough() {
         var buffer = WordBuffer()
-        XCTAssertEqual(buffer.consume(.boundary(" ")), .passThrough)
+        XCTAssertEqual(buffer.consume(.boundary(space)), .passThrough)
     }
 
     func testBoundaryCompletesRecordedSilentKeyStrokesWithoutVisibleText() {
@@ -102,10 +107,10 @@ final class WordBufferTests: XCTestCase {
         }
 
         XCTAssertEqual(
-            buffer.consume(.boundary(" ")),
+            buffer.consume(.boundary(space)),
             .completed(.init(
                 token: "",
-                boundary: " ",
+                boundary: space,
                 keyStrokes: keyStrokes,
                 physicalTraceIntegrity: .complete
             ))
@@ -121,8 +126,13 @@ final class WordBufferTests: XCTestCase {
         }
     }
 
-    func testReturnAndPunctuationAreBoundaries() {
-        for boundary in ["\n", ".", ",", "!", "?", ":", ";"] {
+    func testSupportedBoundariesCompleteTheCurrentWord() {
+        let boundaries = [
+            CorrectionBoundary(text: "\r", keyCode: 36)!,
+            CorrectionBoundary(text: "\n", keyCode: 36)!,
+            CorrectionBoundary(text: "\u{3}", keyCode: 76)!,
+        ]
+        for boundary in boundaries {
             var buffer = WordBuffer()
             _ = buffer.consume(.text("a"))
             XCTAssertEqual(buffer.consume(.boundary(boundary)),

@@ -73,16 +73,14 @@ public final class CGEventEmitter: TextReplacing {
     public func replacePreviousText(
         deleteCount: Int,
         replacement: String,
-        boundary: String,
-        boundaryKeyCode: Int?
+        boundary: CorrectionBoundary?
     ) -> Bool {
-        guard deleteCount >= 0,
-              boundary.isEmpty == (boundaryKeyCode == nil) else {
+        guard deleteCount >= 0 else {
             return false
         }
         let nativeBoundaryKeyCode: CGKeyCode?
-        if let boundaryKeyCode {
-            guard let keyCode = CGKeyCode(exactly: boundaryKeyCode) else {
+        if let boundary {
+            guard let keyCode = CGKeyCode(exactly: boundary.keyCode) else {
                 return false
             }
             nativeBoundaryKeyCode = keyCode
@@ -91,7 +89,7 @@ public final class CGEventEmitter: TextReplacing {
         }
 
         var events: [CGEvent] = []
-        events.reserveCapacity((deleteCount * 2) + 2 + (boundaryKeyCode == nil ? 0 : 1))
+        events.reserveCapacity((deleteCount * 2) + 2 + (boundary == nil ? 0 : 1))
 
         for _ in 0..<deleteCount {
             guard let keyDown = prepareKeyEvent(keyDown: true),
@@ -108,9 +106,9 @@ public final class CGEventEmitter: TextReplacing {
         }
         events.append(unicodeDown)
         events.append(unicodeUp)
-        if let nativeBoundaryKeyCode {
+        if let boundary, let nativeBoundaryKeyCode {
             guard let boundaryEvent = prepare(posting.makeBoundaryEvent(
-                      boundary,
+                      boundary.text,
                       keyCode: nativeBoundaryKeyCode
                   )) else {
                 return false
