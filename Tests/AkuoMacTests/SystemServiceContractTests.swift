@@ -52,6 +52,33 @@ final class SystemServiceContractTests: XCTestCase {
         ))
     }
 
+    func testFocusContextReturnsOnlyRequestedTextBeforeStableEditableCaret() {
+        let context = FocusContext(
+            processIdentifier: 42,
+            elementIdentifier: "field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: FakeAccessibilityFocusProvider(
+                element: .init(
+                    identifier: "field",
+                    role: "AXTextField",
+                    subrole: .absent,
+                    isEnabled: .value(true),
+                    isValueSettable: true
+                ),
+                precedingText: "akuo"
+            )
+        )
+
+        XCTAssertEqual(
+            provider.textImmediatelyBeforeCaret(utf16Length: 4, context: context),
+            "akuo"
+        )
+    }
+
     func testSpellCheckerUsesEnglishLocale() {
         let checker = SystemSpellChecker(
             backend: LocaleSpellCheckerBackend(recognized: [("hello", "en_US")])
@@ -352,6 +379,58 @@ final class SystemServiceContractTests: XCTestCase {
         XCTAssertEqual(reader.parameterizedRanges, [
             NSRange(location: 7, length: 3),
         ])
+    }
+
+    func testSystemFocusProviderReturnsRequestedRecoverySpanAtDocumentStart() {
+        let element = AXUIElementCreateApplication(42)
+        let value = "akuo"
+        var caret = CFRange(location: (value as NSString).length, length: 0)
+        guard let caretValue = AXValueCreate(.cfRange, &caret) else {
+            return XCTFail("Expected AX caret range")
+        }
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, element],
+            parameterizedTextValue: "akuo" as CFString,
+            selectedTextRangeValues: [caretValue, caretValue]
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+        guard let snapshot = provider.focusedElement(for: 42) else {
+            return XCTFail("Expected focused element snapshot")
+        }
+
+        XCTAssertEqual(provider.textImmediatelyBeforeCaret(
+            utf16Length: 4,
+            processIdentifier: 42,
+            elementIdentifier: snapshot.identifier
+        ), "akuo")
+        XCTAssertEqual(reader.parameterizedRanges, [
+            NSRange(location: 0, length: 4),
+        ])
+    }
+
+    func testSystemFocusProviderRejectsRecoverySpanInsideLargerToken() {
+        let element = AXUIElementCreateApplication(42)
+        let value = "xakuo"
+        var caret = CFRange(location: (value as NSString).length, length: 0)
+        guard let caretValue = AXValueCreate(.cfRange, &caret) else {
+            return XCTFail("Expected AX caret range")
+        }
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, element],
+            parameterizedTextValue: "akuo" as CFString,
+            selectedTextRangeValues: [caretValue, caretValue]
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+        guard let snapshot = provider.focusedElement(for: 42) else {
+            return XCTFail("Expected focused element snapshot")
+        }
+
+        XCTAssertNil(provider.textImmediatelyBeforeCaret(
+            utf16Length: 4,
+            processIdentifier: 42,
+            elementIdentifier: snapshot.identifier
+        ))
+        XCTAssertTrue(reader.parameterizedRanges.isEmpty)
     }
 
     func testSystemFocusProviderRejectsCaretMovementDuringTextValidation() {
@@ -741,6 +820,7 @@ private final class ScriptedFrontmostProcessProvider: FrontmostProcessProviding 
 private struct FakeAccessibilityFocusProvider: AccessibilityFocusProviding {
     let element: AccessibilityFocusElement?
     var previousTextMatches = false
+    var precedingText: String?
 
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
         element
@@ -752,6 +832,14 @@ private struct FakeAccessibilityFocusProvider: AccessibilityFocusProviding {
         elementIdentifier: String
     ) -> Bool {
         previousTextMatches
+    }
+
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> String? {
+        precedingText
     }
 }
 

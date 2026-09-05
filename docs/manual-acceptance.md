@@ -417,6 +417,25 @@ In every row, test both correction directions, one correct word, one excluded to
 | [ ] | Terminal | Harmless local prompt/input; do not execute test text | | |
 | [ ] | Electron editor | Name: | | |
 
+- [ ] **Fast launcher focus recovery.** Quit Raycast completely, select English,
+  invoke Raycast with its configured keyboard shortcut, and immediately type
+  `akuo ` as soon as the search bar appears. Confirm the query becomes exactly
+  `שלום ` with one space and the input source changes to standard Hebrew.
+  Clear the query and repeat once with Raycast already warm. Repeat both cases
+  five times; no attempt may leave a partial token, duplicate text, or insert
+  text outside the search field. **Result:**
+  **Evidence:**
+- [ ] **Launcher recovery rejects an adjacent prefix.** Put `x` in Raycast's
+  search field, dismiss and immediately reopen Raycast, then append `akuo `.
+  Confirm Akuo leaves `xakuo ` unchanged rather than correcting only the
+  `akuo` suffix. **Result:**
+  **Evidence:**
+- [ ] **Same-app focus gaps fail open.** With Raycast already frontmost, move
+  focus between its controls while immediately typing `akuo `. Confirm Akuo
+  never reconstructs text from the transient focus gap and never corrects a
+  partial suffix. **Result:**
+  **Evidence:**
+
 ### Native Return identity
 
 For every item below, start from a fresh field and use Return itself as the correction boundary. Confirm the corrected text appears exactly once and the host receives its normal Return action exactly once—no missing submission/newline and no duplicate action.

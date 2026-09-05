@@ -121,19 +121,28 @@ enum AccessibilityTextMatcher {
         selectedRange: NSRange,
         expectedText: String
     ) -> NSRange? {
-        guard !expectedText.isEmpty,
+        precedingRange(
+            selectedRange: selectedRange,
+            utf16Length: (expectedText as NSString).length
+        )
+    }
+
+    static func precedingRange(
+        selectedRange: NSRange,
+        utf16Length: Int
+    ) -> NSRange? {
+        guard utf16Length > 0,
               selectedRange.location != NSNotFound,
               selectedRange.length == 0 else {
             return nil
         }
 
-        let expectedLength = (expectedText as NSString).length
-        guard selectedRange.location >= expectedLength else {
+        guard selectedRange.location >= utf16Length else {
             return nil
         }
         return NSRange(
-            location: selectedRange.location - expectedLength,
-            length: expectedLength
+            location: selectedRange.location - utf16Length,
+            length: utf16Length
         )
     }
 }
@@ -153,6 +162,21 @@ protocol AccessibilityFocusProviding {
         processIdentifier: Int32,
         elementIdentifier: String
     ) -> Bool
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> String?
+}
+
+extension AccessibilityFocusProviding {
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> String? {
+        nil
+    }
 }
 
 struct AccessibilityAttributeRead {
@@ -271,12 +295,41 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         processIdentifier: Int32,
         elementIdentifier: String
     ) -> Bool {
+        guard !expectedText.isEmpty else { return false }
+        return readTextImmediatelyBeforeCaret(
+            utf16Length: (expectedText as NSString).length,
+            processIdentifier: processIdentifier,
+            elementIdentifier: elementIdentifier,
+            requiresDocumentStart: false
+        ) == expectedText
+    }
+
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> String? {
+        readTextImmediatelyBeforeCaret(
+            utf16Length: utf16Length,
+            processIdentifier: processIdentifier,
+            elementIdentifier: elementIdentifier,
+            requiresDocumentStart: true
+        )
+    }
+
+    private func readTextImmediatelyBeforeCaret(
+        utf16Length: Int,
+        processIdentifier: Int32,
+        elementIdentifier: String,
+        requiresDocumentStart: Bool
+    ) -> String? {
+        guard utf16Length > 0 else { return nil }
         let application = AXUIElementCreateApplication(processIdentifier)
         let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
         guard initialFocus.result == .success,
               let element = AccessibilityAttributeDecoder.element(from: initialFocus.value),
               identityTracker.identifier(for: element) == elementIdentifier else {
-            return false
+            return nil
         }
 
         let selectedRange = reader.attribute(kAXSelectedTextRangeAttribute, of: element)
@@ -286,16 +339,17 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
               ),
               let precedingRange = AccessibilityTextMatcher.precedingRange(
                   selectedRange: caretRange,
-                  expectedText: expectedText
-              ) else {
-            return false
+                  utf16Length: utf16Length
+              ),
+              !requiresDocumentStart || precedingRange.location == 0 else {
+            return nil
         }
         var requestedRange = CFRange(
             location: precedingRange.location,
             length: precedingRange.length
         )
         guard let requestedRangeValue = AXValueCreate(.cfRange, &requestedRange) else {
-            return false
+            return nil
         }
         let previousText = reader.parameterizedAttribute(
             kAXStringForRangeParameterizedAttribute,
@@ -305,18 +359,18 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         let finalSelectedRange = reader.attribute(kAXSelectedTextRangeAttribute, of: element)
         let finalFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
         guard previousText.result == .success,
-              AccessibilityAttributeDecoder.string(from: previousText.value)
-                  == expectedText,
+              let text = AccessibilityAttributeDecoder.string(from: previousText.value),
+              (text as NSString).length == utf16Length,
               finalSelectedRange.result == .success,
               AccessibilityAttributeDecoder.range(from: finalSelectedRange.value)
                   == caretRange,
               finalFocus.result == .success,
               let confirmedElement = AccessibilityAttributeDecoder.element(from: finalFocus.value),
               CFEqual(element, confirmedElement) else {
-            return false
+            return nil
         }
 
-        return true
+        return text
     }
 }
 
@@ -398,6 +452,28 @@ public struct FocusContextProvider {
             return false
         }
         return true
+    }
+
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        context: FocusContext
+    ) -> String? {
+        guard utf16Length > 0,
+              context.elementIdentifier != nil,
+              !context.isSecureField,
+              context.isEditableTextInput,
+              let elementIdentifier = context.elementIdentifier,
+              frontmostProcessProvider.processIdentifier == context.processIdentifier,
+              let text = accessibilityProvider.textImmediatelyBeforeCaret(
+                  utf16Length: utf16Length,
+                  processIdentifier: context.processIdentifier,
+                  elementIdentifier: elementIdentifier
+              ),
+              (text as NSString).length == utf16Length,
+              frontmostProcessProvider.processIdentifier == context.processIdentifier else {
+            return nil
+        }
+        return text
     }
 }
 

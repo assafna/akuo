@@ -211,6 +211,19 @@ extension CorrectionCoordinator: CorrectionCoordinating {}
 
 protocol FocusContextProviding {
     func current() -> FocusContext?
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        context: FocusContext
+    ) -> String?
+}
+
+extension FocusContextProviding {
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        context: FocusContext
+    ) -> String? {
+        nil
+    }
 }
 
 extension FocusContextProvider: FocusContextProviding {}
@@ -349,6 +362,32 @@ public final class KeyboardEventMonitor {
         .maskSecondaryFn,
         .maskHelp,
     ]
+    private static let recoveryDisallowedModifiers: CGEventFlags = [
+        .maskCommand,
+        .maskControl,
+        .maskAlternate,
+        .maskSecondaryFn,
+        .maskHelp,
+    ]
+    private static let unavailableBoundaryDisallowedModifiers: CGEventFlags = [
+        .maskCommand,
+        .maskControl,
+        .maskAlternate,
+        .maskShift,
+        .maskSecondaryFn,
+        .maskHelp,
+    ]
+    private static let maximumRecoveredUTF16Length = 64
+    private static let maximumRecoveryInterval: TimeInterval = 1
+    private static let recoveryBoundaryKeyCodes: Set<CGKeyCode> = [49, 36, 76]
+    private static let shiftKeyCodes: Set<CGKeyCode> = [56, 60]
+
+    private struct PendingTextRecovery {
+        let processIdentifier: Int32
+        let inputSourceIdentifier: String
+        var missingUTF16Length: Int
+        let armedAt: TimeInterval
+    }
 
     public weak var delegate: (any KeyboardEventMonitorDelegate)?
     public private(set) var state: State = .stopped
@@ -366,8 +405,11 @@ public final class KeyboardEventMonitor {
 
     private var wordBuffer = WordBuffer()
     private var lastFocusContext: FocusContext?
+    private var lastObservedProcessIdentifier: Int32?
+    private var unconsumedProcessTransitionIdentifier: Int32?
     private var lastInputSourceIdentifier: String?
     private var suppressCorrectionUntilBoundary = false
+    private var pendingTextRecovery: PendingTextRecovery?
     private var shiftGestureRecognizer = ShiftGestureRecognizer(activationInterval: 0.4)
 
     public convenience init(
@@ -446,6 +488,8 @@ public final class KeyboardEventMonitor {
 
     public func stop() {
         clearTransientState()
+        lastObservedProcessIdentifier = nil
+        unconsumedProcessTransitionIdentifier = nil
         tapManager.remove()
         setState(.stopped)
     }
@@ -491,18 +535,42 @@ public final class KeyboardEventMonitor {
         switch eventType {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             clearTransientState()
+            unconsumedProcessTransitionIdentifier = nil
             return event
         default:
             break
         }
 
-        guard let context = focusContextProvider.current(),
+        let observedContext = focusContextProvider.current()
+        let previousObservedProcessIdentifier = lastObservedProcessIdentifier
+        if let observedProcessIdentifier = observedContext?.processIdentifier {
+            if let previousObservedProcessIdentifier,
+               previousObservedProcessIdentifier != observedProcessIdentifier {
+                unconsumedProcessTransitionIdentifier = observedProcessIdentifier
+            }
+            lastObservedProcessIdentifier = observedProcessIdentifier
+        }
+        guard let context = observedContext,
               context.elementIdentifier != nil,
               !context.isSecureField,
               context.isEditableTextInput else {
+            if let context = observedContext,
+               context.elementIdentifier == nil,
+               !context.isSecureField {
+                beginPotentialTextRecovery(
+                    for: event,
+                    eventType: eventType,
+                    context: context,
+                    observedProcessTransition:
+                        unconsumedProcessTransitionIdentifier == context.processIdentifier
+                )
+                return event
+            }
             clearTransientState()
+            unconsumedProcessTransitionIdentifier = nil
             return event
         }
+        unconsumedProcessTransitionIdentifier = nil
 
         if let lastFocusContext, lastFocusContext != context {
             clearTransientState()
@@ -580,6 +648,14 @@ public final class KeyboardEventMonitor {
                 lastFocusContext = context
             }
             lastInputSourceIdentifier = sourceAfterDecoding.identifier
+            if let pendingTextRecovery,
+               pendingTextRecovery.processIdentifier != context.processIdentifier
+                || pendingTextRecovery.inputSourceIdentifier
+                    != sourceAfterDecoding.identifier {
+                self.pendingTextRecovery = nil
+                wordBuffer.reset()
+                suppressCorrectionUntilBoundary = true
+            }
             let language = sourceAfterDecoding.language
             let correctionBoundary = keyCode.flatMap {
                 CorrectionBoundary(text: text, keyCode: Int($0))
@@ -645,6 +721,16 @@ public final class KeyboardEventMonitor {
 
             guard let correctionBoundary else {
                 resetInputContext(invalidateImmediateUndo: false)
+                return event
+            }
+
+            guard recoverPendingTextIfNeeded(
+                context: context,
+                inputSource: sourceAfterDecoding,
+                language: language,
+                boundaryTimestamp: TimeInterval(event.timestamp) / 1_000_000_000
+            ) else {
+                clearTransientState()
                 return event
             }
 
@@ -751,11 +837,118 @@ public final class KeyboardEventMonitor {
         resetInputContext(invalidateImmediateUndo: true)
     }
 
+    private func beginPotentialTextRecovery(
+        for event: CGEvent,
+        eventType: CGEventType,
+        context: FocusContext,
+        observedProcessTransition: Bool
+    ) {
+        if suppressCorrectionUntilBoundary {
+            clearTransientState()
+            suppressCorrectionUntilBoundary = true
+            return
+        }
+
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let wasPendingRecovery = pendingTextRecovery != nil
+        if eventType == .flagsChanged,
+           Self.shiftKeyCodes.contains(keyCode) {
+            return
+        }
+        guard eventType == .keyDown,
+              KeyboardLayoutMap.isAlphabeticKeyCode(Int(keyCode)),
+              event.flags.intersection(Self.recoveryDisallowedModifiers).isEmpty,
+              let inputSource = inputSources.currentSource else {
+            clearTransientState()
+            unconsumedProcessTransitionIdentifier = nil
+            if wasPendingRecovery,
+               !(eventType == .keyDown
+                   && Self.recoveryBoundaryKeyCodes.contains(keyCode)
+                   && event.flags.intersection(
+                       Self.unavailableBoundaryDisallowedModifiers
+                   ).isEmpty) {
+                suppressCorrectionUntilBoundary = true
+            }
+            return
+        }
+
+        let bufferedLength = wordBuffer.currentToken.utf16.count
+        let missingLength: Int
+        let armedAt: TimeInterval
+        if let pendingTextRecovery {
+            guard pendingTextRecovery.processIdentifier == context.processIdentifier,
+                  pendingTextRecovery.inputSourceIdentifier == inputSource.identifier else {
+                clearTransientState()
+                suppressCorrectionUntilBoundary = true
+                return
+            }
+            missingLength = pendingTextRecovery.missingUTF16Length + bufferedLength + 1
+            armedAt = pendingTextRecovery.armedAt
+        } else {
+            guard observedProcessTransition else {
+                clearTransientState()
+                unconsumedProcessTransitionIdentifier = nil
+                suppressCorrectionUntilBoundary = true
+                return
+            }
+            missingLength = bufferedLength + 1
+            armedAt = TimeInterval(event.timestamp) / 1_000_000_000
+        }
+
+        clearTransientState()
+        unconsumedProcessTransitionIdentifier = nil
+        guard missingLength <= Self.maximumRecoveredUTF16Length else {
+            suppressCorrectionUntilBoundary = true
+            return
+        }
+        pendingTextRecovery = PendingTextRecovery(
+            processIdentifier: context.processIdentifier,
+            inputSourceIdentifier: inputSource.identifier,
+            missingUTF16Length: missingLength,
+            armedAt: armedAt
+        )
+    }
+
+    private func recoverPendingTextIfNeeded(
+        context: FocusContext,
+        inputSource: InputSourceSnapshot,
+        language: Language,
+        boundaryTimestamp: TimeInterval
+    ) -> Bool {
+        guard let pendingTextRecovery else { return true }
+        self.pendingTextRecovery = nil
+
+        let bufferedToken = wordBuffer.currentToken
+        let requestedLength = pendingTextRecovery.missingUTF16Length
+            + bufferedToken.utf16.count
+        let elapsed = boundaryTimestamp - pendingTextRecovery.armedAt
+        guard pendingTextRecovery.processIdentifier == context.processIdentifier,
+              pendingTextRecovery.inputSourceIdentifier == inputSource.identifier,
+              elapsed >= 0,
+              elapsed <= Self.maximumRecoveryInterval,
+              requestedLength <= Self.maximumRecoveredUTF16Length,
+              let recoveredText = focusContextProvider.textImmediatelyBeforeCaret(
+                  utf16Length: requestedLength,
+                  context: context
+              ),
+              recoveredText.utf16.count == requestedLength,
+              recoveredText.hasSuffix(bufferedToken),
+              isTokenText(recoveredText, keyCode: nil, language: language),
+              inputSources.currentSource == inputSource else {
+            return false
+        }
+
+        wordBuffer.reset()
+        _ = wordBuffer.consume(.text(recoveredText))
+        return true
+    }
+
     private func resetInputContext(invalidateImmediateUndo: Bool) {
         wordBuffer.reset()
         lastFocusContext = nil
         lastInputSourceIdentifier = nil
         suppressCorrectionUntilBoundary = false
+        pendingTextRecovery = nil
         shiftGestureRecognizer.reset()
         decoder.resetModifierState()
         if invalidateImmediateUndo {

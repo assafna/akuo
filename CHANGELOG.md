@@ -37,7 +37,7 @@ All notable changes to Akuo are documented in this file.
 
 ### Changed
 
-- Advance the Unreleased candidate identity to `0.4.0 (24)` and harden build
+- Advance the Unreleased candidate identity to `0.4.0 (25)` and harden build
   manifest verification against duplicate JSON keys, invalid signatures,
   bundle-root aliasing or mode changes, and source mutation during generation.
 - Keep verification compatible with Xcode 16.4 and macOS Bash 3.2 when testing
@@ -72,6 +72,13 @@ All notable changes to Akuo are documented in this file.
 
 ### Fixed
 
+- Recover a bounded unfinished token when initial alphabetic key events arrive
+  after an observed application transition while the newly frontmost app's
+  editable Accessibility element is still unavailable. Recovery reads only an
+  exact suspected span at the start of a stable field in the same process and
+  input source, expires one second after the first missed key, and suppresses
+  partial correction on any mismatch, same-app focus gap, secure or known
+  ineligible control, unsafe modifier, malformed text, or 64-unit overflow.
 - Preserve Shift-, Fn-, or Help-modified Return and keypad Enter as original
   application-owned events, clearing Akuo's transient state without attempting
   correction while retaining semantically unmodified Space, Return, and keypad
