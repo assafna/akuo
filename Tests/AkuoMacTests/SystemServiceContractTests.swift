@@ -60,6 +60,20 @@ final class SystemServiceContractTests: XCTestCase {
         )
     }
 
+    func testWindowOrderingReturnsEmptyListWhenActivationOwnerIsFirstAcceptedWindow() {
+        XCTAssertEqual(
+            WindowProcessOrdering.processIdentifiersInFront(
+                of: 42,
+                excluding: 265,
+                windows: [
+                    WindowProcessSnapshot(processIdentifier: 42, layer: 0, alpha: 1),
+                ],
+                acceptedLevels: 0 ... 8
+            ),
+            []
+        )
+    }
+
     func testWindowOrderingSystemProviderRejectsMalformedNumericMetadata() {
         let provider = SystemWindowProcessOrderingProvider(
             selfProcessIdentifier: 265,
@@ -69,6 +83,31 @@ final class SystemServiceContractTests: XCTestCase {
                     windowMetadata(pid: Int64(Int32.max) + 1, layer: 8, alpha: 1),
                     windowMetadata(pid: 70, layer: 8.5, alpha: 1),
                     windowMetadata(pid: 71, layer: 8, alpha: Double.infinity),
+                    windowMetadata(pid: 72, layer: 8, alpha: 1),
+                    windowMetadata(pid: 42, layer: 0, alpha: 1),
+                ]
+            }
+        )
+
+        XCTAssertEqual(provider.processIdentifiersInFront(of: 42), [72])
+    }
+
+    func testWindowOrderingSystemProviderRejectsHighPrecisionFractionalIntegers() {
+        let provider = SystemWindowProcessOrderingProvider(
+            selfProcessIdentifier: 265,
+            windowList: {
+                [
+                    windowMetadata(
+                        pid: NSDecimalNumber(string: "42.0000000000000000001"),
+                        layer: 8,
+                        alpha: 1
+                    ),
+                    windowMetadata(
+                        pid: 70,
+                        layer: NSDecimalNumber(string: "8.0000000000000000001"),
+                        alpha: 1
+                    ),
+                    windowMetadata(pid: 71, layer: 8, alpha: true),
                     windowMetadata(pid: 72, layer: 8, alpha: 1),
                     windowMetadata(pid: 42, layer: 0, alpha: 1),
                 ]

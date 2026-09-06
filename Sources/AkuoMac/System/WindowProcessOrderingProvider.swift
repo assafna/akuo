@@ -109,16 +109,22 @@ private enum WindowProcessSnapshotDecoder {
 
     private static func integer(from value: Any?) -> Int? {
         guard let number = value as? NSNumber,
-              CFGetTypeID(number) != CFBooleanGetTypeID() else {
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              let decimal = Decimal(
+                string: number.stringValue,
+                locale: Locale(identifier: "en_US_POSIX")
+              ),
+              decimal >= Decimal(Int.min),
+              decimal <= Decimal(Int.max) else {
             return nil
         }
-        let value = number.doubleValue
-        guard value.isFinite,
-              value.rounded(.towardZero) == value,
-              let integer = Int(exactly: value) else {
+
+        let integer = NSDecimalNumber(decimal: decimal).int64Value
+        guard let result = Int(exactly: integer),
+              Decimal(integer) == decimal else {
             return nil
         }
-        return integer
+        return result
     }
 
     private static func finiteDouble(from value: Any?) -> Double? {
