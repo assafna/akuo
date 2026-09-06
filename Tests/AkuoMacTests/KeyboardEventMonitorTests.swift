@@ -83,11 +83,16 @@ final class KeyboardEventMonitorTests: XCTestCase {
         fixture.decoder.event = .text("akuo", marker: 0)
         XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
         fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        let resetsBeforeBoundary = fixture.decoder.resetModifierStateCalls
 
         XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
 
         XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panel)
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+        XCTAssertEqual(
+            fixture.decoder.resetModifierStateCalls,
+            resetsBeforeBoundary + 1
+        )
         XCTAssertEqual(fixture.focus.interactionOwnerRequests, [42, 42, 42])
     }
 
@@ -139,37 +144,47 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.focus.interactionOwnerRequests, [42, 42, 42, 42, 42])
     }
 
-    func testUnavailableNewPanelUsesBoundedRecoveryWithoutActivationOwnerToken() {
+    func testActivationOwnerFallbackThenFocusedPanelUsesBoundedRecovery() {
         let fixture = makeFixture()
         let activationContext = fixture.focus.context!
-        let unavailablePanel = FocusContext(
-            processIdentifier: 70,
-            elementIdentifier: nil,
-            isSecureField: false,
-            isEditableTextInput: false
-        )
         let panel = FocusContext(
             processIdentifier: 70,
             elementIdentifier: "panel-search",
             isSecureField: false,
             isEditableTextInput: true
         )
-        fixture.focus.interactionContextsByActivationOwner[42] = activationContext
+        fixture.focus.contextsByProcessIdentifier[42] = activationContext
+        fixture.focus.unfocusedAheadProcessIdentifiersByActivationOwner.insert(42)
         fixture.decoder.event = .unsupportedModifiers(marker: 0)
         XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
 
-        fixture.focus.interactionContextsByActivationOwner[42] = unavailablePanel
         fixture.decoder.event = .text("a", marker: 0)
-        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 0)
+        ))
 
-        fixture.focus.interactionContextsByActivationOwner[42] = panel
+        fixture.focus.aheadFocusedContextsByActivationOwner[42] = panel
         fixture.focus.recoveredText = "akuo"
-        fixture.decoder.event = .text("kuo", marker: 0)
-        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text("k", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 40)
+        ))
+        fixture.decoder.event = .text("u", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 32)
+        ))
+        fixture.decoder.event = .text("o", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 31)
+        ))
         fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
-        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 49)
+        ))
 
         XCTAssertEqual(fixture.focus.recoveryContexts, [panel])
+        XCTAssertEqual(fixture.focus.recoveryLengths, [4])
+        XCTAssertEqual(fixture.focus.requestedProcessIdentifiers, [42, 42])
         XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord.token, "akuo")
         XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panel)
     }
@@ -202,6 +217,30 @@ final class KeyboardEventMonitorTests: XCTestCase {
             XCTAssertEqual(fixture.focus.currentCalls, 1)
             XCTAssertTrue(fixture.focus.requestedProcessIdentifiers.isEmpty)
         }
+    }
+
+    func testFrontmostInteractionResolverOwnsAheadPanelAndRevalidates() {
+        let fixture = makeFixture()
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.frontmostInteractionContext = panel
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeEvent(targetProcessIdentifier: 0)
+        ))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeEvent(targetProcessIdentifier: 0)
+        ))
+
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panel)
+        XCTAssertEqual(fixture.focus.frontmostInteractionCalls, 3)
+        XCTAssertEqual(fixture.focus.currentCalls, 0)
     }
 
     func testImmediateUndoRevalidatesEventTargetProcess() {
@@ -1911,6 +1950,18 @@ final class KeyboardEventMonitorTests: XCTestCase {
         nativeEvent(targetProcessIdentifier: Int64(processIdentifier))
     }
 
+    private func targetedNativeKeyEvent(
+        processIdentifier: Int32,
+        keyCode: CGKeyCode
+    ) -> CGEvent {
+        let event = nativeKeyEvent(keyCode: keyCode, flags: [])
+        event.setIntegerValueField(
+            .eventTargetUnixProcessID,
+            value: Int64(processIdentifier)
+        )
+        return event
+    }
+
     private func nativeEvent(targetProcessIdentifier: Int64) -> CGEvent {
         let event = nativeKeyEvent(keyCode: 0, flags: [])
         event.setIntegerValueField(
@@ -2171,12 +2222,16 @@ private final class FakeFocusContextProvider: FocusContextProviding {
     var context: FocusContext?
     var contextsByProcessIdentifier: [Int32: FocusContext] = [:]
     var interactionContextsByActivationOwner: [Int32: FocusContext] = [:]
+    var aheadFocusedContextsByActivationOwner: [Int32: FocusContext] = [:]
+    var unfocusedAheadProcessIdentifiersByActivationOwner: Set<Int32> = []
+    var frontmostInteractionContext: FocusContext?
     var scriptedInteractionContexts: [Int32: [FocusContext?]] = [:]
     var scriptedContexts: [FocusContext?] = []
     var recoveredText: String?
     private(set) var currentCalls = 0
     private(set) var requestedProcessIdentifiers: [Int32] = []
     private(set) var interactionOwnerRequests: [Int32] = []
+    private(set) var frontmostInteractionCalls = 0
     private(set) var recoveryLengths: [Int] = []
     private(set) var recoveryContexts: [FocusContext] = []
 
@@ -2198,7 +2253,8 @@ private final class FakeFocusContextProvider: FocusContextProviding {
     }
 
     func currentInteractionContext() -> FocusContext? {
-        current()
+        frontmostInteractionCalls += 1
+        return frontmostInteractionContext ?? current()
     }
 
     func currentInteractionContext(
@@ -2215,6 +2271,19 @@ private final class FakeFocusContextProvider: FocusContextProviding {
             activationOwnerProcessIdentifier
         ] {
             return context
+        }
+        if let context = aheadFocusedContextsByActivationOwner[
+            activationOwnerProcessIdentifier
+        ] {
+            return context
+        }
+        // Match Task 2 semantics: an ahead process without a focused AX
+        // element does not become an interaction owner, so resolution falls
+        // back to the activation owner's context.
+        if unfocusedAheadProcessIdentifiersByActivationOwner.contains(
+            activationOwnerProcessIdentifier
+        ) {
+            return current(processIdentifier: activationOwnerProcessIdentifier)
         }
         return current(processIdentifier: activationOwnerProcessIdentifier)
     }

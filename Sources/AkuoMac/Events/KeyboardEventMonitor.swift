@@ -599,6 +599,31 @@ public final class KeyboardEventMonitor {
             unconsumedProcessTransitionIdentifier = nil
             return event
         }
+        let isActivationOwnerFallbackTransition: Bool
+        switch focusOwner {
+        case let .eventTarget(activationOwner):
+            isActivationOwnerFallbackTransition =
+                previousObservedProcessIdentifier == activationOwner
+                && context.processIdentifier != activationOwner
+        case .frontmostApplication:
+            isActivationOwnerFallbackTransition = false
+        }
+        if isActivationOwnerFallbackTransition,
+           unconsumedProcessTransitionIdentifier == context.processIdentifier,
+           !wordBuffer.currentToken.isEmpty {
+            // An ahead panel can expose a window before its focused element is
+            // available. Until it is resolvable, Task 2 conservatively falls
+            // back to the activation owner. When a distinct eligible context
+            // later appears, recover only a bounded visible span; do not carry
+            // the activation owner's buffered token into the panel.
+            beginPotentialTextRecovery(
+                for: event,
+                eventType: eventType,
+                context: context,
+                observedProcessTransition: true
+            )
+            return event
+        }
         unconsumedProcessTransitionIdentifier = nil
 
         if let lastFocusContext, lastFocusContext != context {
