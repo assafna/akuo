@@ -838,6 +838,76 @@ final class SystemServiceContractTests: XCTestCase {
         ])
     }
 
+    func testExactSuffixTextReadPreparesApplicationAndFocusedElementBeforeIPC() {
+        let element = AXUIElementCreateApplication(43)
+        var caret = CFRange(location: 3, length: 0)
+        let caretValue = AXValueCreate(.cfRange, &caret)!
+        let timeline = AccessibilityTimeline()
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, element],
+            parameterizedTextValue: "go " as CFString,
+            selectedTextRangeValues: [caretValue, caretValue],
+            onRead: { timeline.record(readEvent($0, $1)) }
+        )
+        let provider = SystemAccessibilityFocusProvider(
+            reader: reader,
+            configureMessagingTimeout: { element, _ in
+                timeline.record("prepare:\(elementPID(element))")
+                return .success
+            }
+        )
+        let identifier = provider.focusedElement(for: 42)!.identifier
+        timeline.reset()
+
+        XCTAssertTrue(provider.hasExactTextImmediatelyBeforeCaret(
+            "go ", processIdentifier: 42, elementIdentifier: identifier
+        ))
+        XCTAssertEqual(timeline.events, [
+            "prepare:42", "focused:42", "prepare:43", "selected:43",
+            "parameterized:43", "selected:43", "focused:42",
+        ])
+    }
+
+    func testRecoveryTextReadPreparesApplicationAndFocusedElementBeforeIPC() {
+        let element = AXUIElementCreateApplication(43)
+        var caret = CFRange(location: 3, length: 0)
+        let caretValue = AXValueCreate(.cfRange, &caret)!
+        let timeline = AccessibilityTimeline()
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, element],
+            parameterizedTextValue: "go " as CFString,
+            selectedTextRangeValues: [caretValue, caretValue],
+            onRead: { timeline.record(readEvent($0, $1)) }
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader, configureMessagingTimeout: { element, _ in
+            timeline.record("prepare:\(elementPID(element))"); return .success
+        })
+        let identifier = provider.focusedElement(for: 42)!.identifier
+        timeline.reset()
+
+        XCTAssertEqual(provider.textImmediatelyBeforeCaret(
+            utf16Length: 3, processIdentifier: 42, elementIdentifier: identifier
+        ), "go ")
+        XCTAssertEqual(timeline.events.prefix(3), ["prepare:42", "focused:42", "prepare:43"])
+    }
+
+    func testTextReadPreparationFailureStopsBeforeIPC() {
+        let timeline = AccessibilityTimeline()
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [],
+            onRead: { timeline.record(readEvent($0, $1)) }
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader, configureMessagingTimeout: { _, _ in .cannotComplete })
+
+        XCTAssertFalse(provider.hasExactTextImmediatelyBeforeCaret(
+            "go ", processIdentifier: 42, elementIdentifier: "field"
+        ))
+        XCTAssertNil(provider.textImmediatelyBeforeCaret(
+            utf16Length: 3, processIdentifier: 42, elementIdentifier: "field"
+        ))
+        XCTAssertTrue(timeline.events.isEmpty)
+    }
+
     func testSystemFocusProviderReturnsRequestedRecoverySpanAtDocumentStart() {
         let element = AXUIElementCreateApplication(42)
         let value = "akuo"
@@ -1519,19 +1589,23 @@ private final class ScriptedAccessibilityAttributeReader: AccessibilityAttribute
     private var focusedElementValues: [CFTypeRef?]
     private let parameterizedTextValue: CFTypeRef?
     private var selectedTextRangeValues: [CFTypeRef?]
+    private let onRead: ((String, AXUIElement) -> Void)?
     private(set) var parameterizedRanges: [NSRange] = []
 
     init(
         focusedElementValues: [CFTypeRef?],
         parameterizedTextValue: CFTypeRef? = nil,
-        selectedTextRangeValues: [CFTypeRef?] = []
+        selectedTextRangeValues: [CFTypeRef?] = [],
+        onRead: ((String, AXUIElement) -> Void)? = nil
     ) {
         self.focusedElementValues = focusedElementValues
         self.parameterizedTextValue = parameterizedTextValue
         self.selectedTextRangeValues = selectedTextRangeValues
+        self.onRead = onRead
     }
 
     func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead {
+        onRead?(attribute, element)
         switch attribute {
         case kAXFocusedUIElementAttribute:
             guard !focusedElementValues.isEmpty else {
@@ -1557,6 +1631,7 @@ private final class ScriptedAccessibilityAttributeReader: AccessibilityAttribute
         parameter: CFTypeRef,
         of element: AXUIElement
     ) -> AccessibilityAttributeRead {
+        onRead?(attribute, element)
         guard attribute == kAXStringForRangeParameterizedAttribute,
               let range = AccessibilityAttributeDecoder.range(from: parameter) else {
             return .init(result: .parameterizedAttributeUnsupported, value: nil)
@@ -1571,6 +1646,29 @@ private final class ScriptedAccessibilityAttributeReader: AccessibilityAttribute
     func isAttributeSettable(_ attribute: String, of element: AXUIElement) -> Bool? {
         attribute == kAXValueAttribute ? true : nil
     }
+}
+
+private final class AccessibilityTimeline {
+    private(set) var events: [String] = []
+    func record(_ event: String) { events.append(event) }
+    func reset() { events.removeAll() }
+}
+
+private func elementPID(_ element: AXUIElement) -> Int32 {
+    var pid: pid_t = 0
+    _ = AXUIElementGetPid(element, &pid)
+    return Int32(pid)
+}
+
+private func readEvent(_ attribute: String, _ element: AXUIElement) -> String {
+    let name: String
+    switch attribute {
+    case kAXFocusedUIElementAttribute: name = "focused"
+    case kAXSelectedTextRangeAttribute: name = "selected"
+    case kAXStringForRangeParameterizedAttribute: name = "parameterized"
+    default: name = "other"
+    }
+    return "\(name):\(elementPID(element))"
 }
 
 private struct LiteralRecognizer: WordRecognizing {
