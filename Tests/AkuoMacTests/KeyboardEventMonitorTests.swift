@@ -1335,6 +1335,80 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(replacer.callCount, 0)
     }
 
+    func testCopiedSystemFocusProvidersShareBoundaryCallbackBudgetThroughValidation() {
+        var now: TimeInterval = 0
+        var preparationCalls = 0
+        let element = AXUIElementCreateApplication(43)
+        let accessibility = SystemAccessibilityFocusProvider(
+            reader: BudgetAccessibilityReader(element: element, text: "akuo"),
+            configureMessagingTimeout: { _, _ in
+                preparationCalls += 1
+                // Resolution uses two preparations and the first coordinator
+                // revalidation uses two more.  Expire the one callback-wide
+                // scope only after that revalidation has obtained its context.
+                if preparationCalls == 4 {
+                    now = 0.101
+                }
+                return .success
+            },
+            now: { now }
+        )
+        let focusForMonitor = FocusContextProvider(
+            frontmostProcessProvider: BudgetFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: BudgetWindowOrderingProvider()
+        )
+        // This copied value is deliberately supplied to CorrectionCoordinator.
+        // It retains the same reference-backed AX provider and must therefore
+        // observe the monitor's original callback deadline.
+        let focusForValidator = focusForMonitor
+        let decoder = FakeNativeEventDecoder()
+        let inputSources = FakeInputSourceState(readiness: .init(
+            englishAvailable: true,
+            hebrewAvailable: true
+        ), currentLanguage: .english)
+        let replacer = MonitorRecordingTextReplacer()
+        let selector = BudgetInputSourceSelector()
+        let scorer = WordScorer(recognizer: MonitorRecognizer())
+        let coordinator = CorrectionCoordinator(
+            policy: CorrectionPolicy(
+                layoutMap: KeyboardLayoutMap(),
+                originalScorer: scorer,
+                candidateScorer: scorer,
+                excluder: TokenExcluder()
+            ),
+            textReplacer: replacer,
+            inputSourceSelector: selector,
+            counter: MonitorCorrectionCounter(),
+            clock: MonitorRuntimeClock(),
+            undoController: UndoController(),
+            previousTextValidator: focusForValidator
+        )
+        let monitor = KeyboardEventMonitor(
+            decoder: decoder,
+            coordinator: coordinator,
+            permission: FakePermissionChecker(isGranted: true),
+            secureInput: FakeSecureInputChecker(isSecureInputEnabled: false),
+            focusContextProvider: focusForMonitor,
+            inputSources: inputSources,
+            tapManager: FakeNativeEventTapManager(),
+            isAkuoEnabled: { true }
+        )
+
+        decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        preparationCalls = 0
+        now = 0
+        decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertTrue(monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        XCTAssertEqual(preparationCalls, 4)
+        XCTAssertEqual(replacer.callCount, 0)
+        XCTAssertTrue(selector.selectedLanguages.isEmpty)
+        XCTAssertTrue(selector.exactIdentifiers.isEmpty)
+    }
+
     func testStableSourceChangeBetweenEventsStartsANewToken() {
         let fixture = makeFixture()
         type("a", in: fixture)
@@ -2204,6 +2278,72 @@ private struct MonitorCorrectionCounter: CorrectionCounting {
 
 private struct MonitorRuntimeClock: RuntimeClock {
     var now: Date { Date(timeIntervalSince1970: 0) }
+}
+
+private struct BudgetFrontmostProcessProvider: FrontmostProcessProviding {
+    let processIdentifier: Int32?
+}
+
+private struct BudgetWindowOrderingProvider: WindowProcessOrderingProviding {
+    func processIdentifiersInFront(of activationOwner: Int32) -> [Int32]? { [] }
+}
+
+private final class BudgetAccessibilityReader: AccessibilityAttributeReading {
+    private let element: AXUIElement
+    private let text: String
+    private let caretRange: AXValue
+
+    init(element: AXUIElement, text: String) {
+        self.element = element
+        self.text = text
+        var range = CFRange(location: (text as NSString).length, length: 0)
+        caretRange = AXValueCreate(.cfRange, &range)!
+    }
+
+    func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead {
+        switch attribute {
+        case kAXFocusedUIElementAttribute:
+            .init(result: .success, value: self.element)
+        case kAXRoleAttribute:
+            .init(result: .success, value: "AXTextArea" as CFString)
+        case kAXSubroleAttribute, kAXEnabledAttribute:
+            .init(result: .attributeUnsupported, value: nil)
+        case kAXSelectedTextRangeAttribute:
+            .init(result: .success, value: caretRange)
+        default:
+            .init(result: .attributeUnsupported, value: nil)
+        }
+    }
+
+    func parameterizedAttribute(
+        _ attribute: String,
+        parameter: CFTypeRef,
+        of element: AXUIElement
+    ) -> AccessibilityAttributeRead {
+        .init(
+            result: attribute == kAXStringForRangeParameterizedAttribute ? .success : .parameterizedAttributeUnsupported,
+            value: attribute == kAXStringForRangeParameterizedAttribute ? text as CFString : nil
+        )
+    }
+
+    func isAttributeSettable(_ attribute: String, of element: AXUIElement) -> Bool? {
+        attribute == kAXValueAttribute ? true : nil
+    }
+}
+
+private final class BudgetInputSourceSelector: InputSourceSelecting {
+    private(set) var selectedLanguages: [Language] = []
+    private(set) var exactIdentifiers: [String] = []
+
+    func select(_ language: Language) -> Bool {
+        selectedLanguages.append(language)
+        return true
+    }
+
+    func selectExact(identifier: String) -> Bool {
+        exactIdentifiers.append(identifier)
+        return true
+    }
 }
 
 private final class FakeNativeEventDecoder: NativeEventDecoding {

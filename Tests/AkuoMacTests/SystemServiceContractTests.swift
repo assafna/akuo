@@ -807,7 +807,100 @@ final class SystemServiceContractTests: XCTestCase {
         XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
         end()
         XCTAssertEqual(timeouts.count, 1)
-        XCTAssertLessThan(timeouts[0], 0.005)
+        XCTAssertEqual(timeouts[0], 0.002, accuracy: 0.0001)
+    }
+
+    func testCopiedFocusContextProviderUsesCallbackDeadlineForRecoveryRead() {
+        var now: TimeInterval = 0
+        let element = AXUIElementCreateApplication(43)
+        var caret = CFRange(location: 4, length: 0)
+        let provider = SystemAccessibilityFocusProvider(
+            reader: ScriptedAccessibilityAttributeReader(
+                focusedElementValues: [element, element],
+                parameterizedTextValue: "akuo" as CFString,
+                selectedTextRangeValues: [AXValueCreate(.cfRange, &caret)!]
+            ),
+            now: { now }
+        )
+        let resolutionProvider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: provider
+        )
+        let recoveryProvider = resolutionProvider
+        let end = resolutionProvider.beginAccessibilityCallbackBudget()
+        guard let context = resolutionProvider.current(processIdentifier: 42) else {
+            return XCTFail("Expected initial focus context")
+        }
+
+        now = 0.101
+
+        XCTAssertNil(recoveryProvider.textImmediatelyBeforeCaret(
+            utf16Length: 4,
+            context: context
+        ))
+        end()
+    }
+
+    func testNestedCallbackBudgetRetainsOuterDeadlineAndCleansUpAfterEarlyReturn() {
+        var now: TimeInterval = 0
+        var timeouts: [Float] = []
+        let provider = SystemAccessibilityFocusProvider(
+            reader: FocusSnapshotReader([]),
+            configureMessagingTimeout: { _, timeout in
+                timeouts.append(timeout)
+                return .success
+            },
+            now: { now }
+        )
+        let outerEnd = provider.beginCallbackBudget()
+        now = 0.050
+        let innerEnd = provider.beginCallbackBudget()
+        now = 0.101
+
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        innerEnd()
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        outerEnd()
+
+        func returnFromCallbackScope() {
+            let end = provider.beginCallbackBudget()
+            defer { end() }
+            XCTAssertEqual(provider.focusSnapshot(for: 42), .stablyAbsent)
+        }
+
+        now = 1
+        returnFromCallbackScope()
+        now = 1.101
+
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .stablyAbsent)
+        XCTAssertEqual(timeouts, [0.005, 0.005])
+    }
+
+    func testNextCallbackStartsAFreshHundredMillisecondBudget() {
+        var now: TimeInterval = 0
+        var timeouts: [Float] = []
+        let provider = SystemAccessibilityFocusProvider(
+            reader: FocusSnapshotReader([]),
+            configureMessagingTimeout: { _, timeout in
+                timeouts.append(timeout)
+                return .success
+            },
+            now: { now }
+        )
+
+        let firstEnd = provider.beginCallbackBudget()
+        now = 0.101
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        firstEnd()
+
+        now = 1
+        let secondEnd = provider.beginCallbackBudget()
+        now = 1.098
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .stablyAbsent)
+        secondEnd()
+
+        XCTAssertEqual(timeouts.count, 1)
+        XCTAssertEqual(timeouts[0], 0.002, accuracy: 0.0001)
     }
 
     func testSystemFocusProviderUsesStableOpaqueIdentityForEqualElements() {
