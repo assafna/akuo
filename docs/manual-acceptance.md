@@ -392,14 +392,18 @@ Use recognizable test data that contains no real credentials or personal informa
   **Evidence:**
 - [ ] **Leading mapped punctuation remains eligible.** In a new empty TextEdit document, select standard Hebrew and type the physical keys that produce `/וןבל `. Confirm the visible result is exactly `quick ` with one space and the active input source changes to English. **Result:**
   **Evidence:**
-- [ ] **Navigation and adjacent suffixes unchanged.** With English selected in
-  a fresh TextEdit document, type `x`, press Left and then Right to return the
-  caret immediately after `x`, and type `akuo `. Confirm the visible text
-  remains exactly `xakuo `, with no correction or source switch. For the
-  separate Right-cursor case, place the caret immediately before `x` (for
-  example, with Home), press Right to move after it, and type a fresh `akuo `;
-  confirm the same pass-through result. Also use Home/End where supported and
-  confirm navigation is preserved and no stale token is later corrected. **Result:**
+- [ ] **Navigation and adjacent suffixes unchanged.** With English selected,
+  run each scenario in a fresh TextEdit document. **Right:** create `x`, place
+  the caret immediately before it (for example, with Home), press Right once
+  to move after the existing `x`, then type `akuo `. Confirm the text remains
+  exactly `xakuo `, with no correction or source switch. **Left:** create
+  `xy`, place the caret after `x`, press Left once to move between `x` and
+  `y`, then type `akuo `. Confirm the text remains exactly `xakuo y`, with no
+  correction or source switch. **Standalone after reset:** create `x`, press
+  Home to move to document start, then type `akuo `. Confirm the text becomes
+  exactly `שלום x` and the input source changes to standard Hebrew. Also use
+  Home/End where supported and confirm navigation is preserved and no stale
+  token is later corrected. **Result:**
   **Evidence:**
 - [ ] **Same-editor mouse relocation clears partial input.** In a TextEdit document containing harmless marker text on two lines, type only `a` at the first marker, click after the second marker in the same editor, then type `kuo `. Confirm no correction occurs, neither marker nor the earlier `a` is deleted, and the second location contains exactly `kuo `. **Result:**
   **Evidence:**
