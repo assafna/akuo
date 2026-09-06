@@ -189,6 +189,126 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panel)
     }
 
+    func testFallbackPrefixSourceIdentifierChangeFailsOpenBeforeRecovery() {
+        let fixture = makeFixture()
+        let activationContext = fixture.focus.context!
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = activationContext
+        fixture.focus.unfocusedAheadProcessIdentifiersByActivationOwner.insert(42)
+        fixture.decoder.event = .text("a", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 0)
+        ))
+
+        fixture.inputSources.stableCurrentSource = .init(
+            identifier: "com.apple.keylayout.US",
+            language: .english
+        )
+        fixture.focus.aheadFocusedContextsByActivationOwner[42] = panel
+        fixture.focus.recoveredText = "ak"
+        fixture.decoder.event = .text("k", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 40)
+        ))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 49)
+        ))
+
+        XCTAssertTrue(fixture.focus.recoveryContexts.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testExpiredFallbackPrefixFailsOpenBeforeRecovery() {
+        let fixture = makeFixture()
+        let activationContext = fixture.focus.context!
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = activationContext
+        fixture.focus.unfocusedAheadProcessIdentifiersByActivationOwner.insert(42)
+        fixture.decoder.event = .text("a", marker: 0)
+        let prefix = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 0)
+        prefix.timestamp = 1_000_000_000
+        XCTAssertNotNil(fixture.monitor.process(prefix))
+
+        fixture.focus.aheadFocusedContextsByActivationOwner[42] = panel
+        fixture.focus.recoveredText = "ak"
+        fixture.decoder.event = .text("k", marker: 0)
+        let resolved = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 40)
+        resolved.timestamp = 2_100_000_000
+        XCTAssertNotNil(fixture.monitor.process(resolved))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        let boundary = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 49)
+        boundary.timestamp = 2_200_000_000
+        XCTAssertNotNil(fixture.monitor.process(boundary))
+
+        XCTAssertTrue(fixture.focus.recoveryContexts.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testFallbackTransitionSurvivesShiftUntilPanelRecoveryCanArm() {
+        let fixture = makeFixture()
+        let activationContext = fixture.focus.context!
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = activationContext
+        fixture.focus.unfocusedAheadProcessIdentifiersByActivationOwner.insert(42)
+        fixture.decoder.event = .text("a", marker: 0)
+        let prefix = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 0)
+        prefix.timestamp = 1_000_000_000
+        XCTAssertNotNil(fixture.monitor.process(prefix))
+
+        fixture.focus.aheadFocusedContextsByActivationOwner[42] = panel
+        fixture.decoder.event = .shiftChanged(
+            side: .left,
+            phase: .down,
+            timestamp: 1.1,
+            marker: 0
+        )
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeShiftEvent(
+                processIdentifier: 42,
+                keyCode: 56,
+                flags: [.maskShift],
+                timestamp: 1.1
+            )
+        ))
+
+        fixture.focus.recoveredText = "akuo"
+        fixture.decoder.event = .text("k", marker: 0)
+        let k = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 40)
+        k.timestamp = 1_200_000_000
+        XCTAssertNotNil(fixture.monitor.process(k))
+        fixture.decoder.event = .text("u", marker: 0)
+        let u = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 32)
+        u.timestamp = 1_300_000_000
+        XCTAssertNotNil(fixture.monitor.process(u))
+        fixture.decoder.event = .text("o", marker: 0)
+        let o = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 31)
+        o.timestamp = 1_400_000_000
+        XCTAssertNotNil(fixture.monitor.process(o))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        let boundary = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 49)
+        boundary.timestamp = 1_500_000_000
+        XCTAssertNotNil(fixture.monitor.process(boundary))
+
+        XCTAssertEqual(fixture.focus.recoveryContexts, [panel])
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord.token, "akuo")
+    }
+
     func testKnownEventTargetWithoutFocusNeverFallsBackToActivatedProcess() {
         let fixture = makeFixture()
         fixture.decoder.event = .text("akuo", marker: 0)
@@ -1955,6 +2075,24 @@ final class KeyboardEventMonitorTests: XCTestCase {
         keyCode: CGKeyCode
     ) -> CGEvent {
         let event = nativeKeyEvent(keyCode: keyCode, flags: [])
+        event.setIntegerValueField(
+            .eventTargetUnixProcessID,
+            value: Int64(processIdentifier)
+        )
+        return event
+    }
+
+    private func targetedNativeShiftEvent(
+        processIdentifier: Int32,
+        keyCode: CGKeyCode,
+        flags: CGEventFlags,
+        timestamp: TimeInterval
+    ) -> CGEvent {
+        let event = nativeShiftEvent(
+            keyCode: keyCode,
+            flags: flags,
+            timestamp: timestamp
+        )
         event.setIntegerValueField(
             .eventTargetUnixProcessID,
             value: Int64(processIdentifier)

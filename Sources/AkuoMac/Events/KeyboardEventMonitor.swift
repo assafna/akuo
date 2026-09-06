@@ -412,6 +412,12 @@ public final class KeyboardEventMonitor {
         let armedAt: TimeInterval
     }
 
+    private struct FallbackPrefixProvenance {
+        let activationOwnerProcessIdentifier: Int32
+        let inputSourceIdentifier: String
+        let startedAt: TimeInterval
+    }
+
     private enum FocusOwner {
         case eventTarget(Int32)
         case frontmostApplication
@@ -436,6 +442,7 @@ public final class KeyboardEventMonitor {
     private var lastObservedProcessIdentifier: Int32?
     private var unconsumedProcessTransitionIdentifier: Int32?
     private var lastInputSourceIdentifier: String?
+    private var fallbackPrefixProvenance: FallbackPrefixProvenance?
     private var suppressCorrectionUntilBoundary = false
     private var pendingTextRecovery: PendingTextRecovery?
     private var shiftGestureRecognizer = ShiftGestureRecognizer(activationInterval: 0.4)
@@ -599,11 +606,12 @@ public final class KeyboardEventMonitor {
             unconsumedProcessTransitionIdentifier = nil
             return event
         }
+        let fallbackPrefix = fallbackPrefixProvenance
         let isActivationOwnerFallbackTransition: Bool
         switch focusOwner {
         case let .eventTarget(activationOwner):
             isActivationOwnerFallbackTransition =
-                previousObservedProcessIdentifier == activationOwner
+                fallbackPrefix?.activationOwnerProcessIdentifier == activationOwner
                 && context.processIdentifier != activationOwner
         case .frontmostApplication:
             isActivationOwnerFallbackTransition = false
@@ -620,7 +628,8 @@ public final class KeyboardEventMonitor {
                 for: event,
                 eventType: eventType,
                 context: context,
-                observedProcessTransition: true
+                observedProcessTransition: true,
+                fallbackPrefixProvenance: fallbackPrefix
             )
             return event
         }
@@ -737,6 +746,12 @@ public final class KeyboardEventMonitor {
                 return event
             }
             if isBufferedTokenText {
+                recordFallbackPrefixProvenanceIfNeeded(
+                    context: context,
+                    owner: focusOwner,
+                    inputSource: sourceAfterDecoding,
+                    timestamp: TimeInterval(event.timestamp) / 1_000_000_000
+                )
                 if let keyCode {
                     var modifiers = ObservedKeyModifiers()
                     if event.flags.contains(.maskShift) {
@@ -925,7 +940,8 @@ public final class KeyboardEventMonitor {
         for event: CGEvent,
         eventType: CGEventType,
         context: FocusContext,
-        observedProcessTransition: Bool
+        observedProcessTransition: Bool,
+        fallbackPrefixProvenance: FallbackPrefixProvenance? = nil
     ) {
         if suppressCorrectionUntilBoundary {
             clearTransientState()
@@ -975,8 +991,23 @@ public final class KeyboardEventMonitor {
                 suppressCorrectionUntilBoundary = true
                 return
             }
-            missingLength = bufferedLength + 1
-            armedAt = TimeInterval(event.timestamp) / 1_000_000_000
+            if let fallbackPrefixProvenance {
+                let elapsed = TimeInterval(event.timestamp) / 1_000_000_000
+                    - fallbackPrefixProvenance.startedAt
+                guard fallbackPrefixProvenance.inputSourceIdentifier
+                    == inputSource.identifier,
+                      elapsed >= 0,
+                      elapsed <= Self.maximumRecoveryInterval else {
+                    clearTransientState()
+                    unconsumedProcessTransitionIdentifier = nil
+                    return
+                }
+                missingLength = bufferedLength + 1
+                armedAt = fallbackPrefixProvenance.startedAt
+            } else {
+                missingLength = bufferedLength + 1
+                armedAt = TimeInterval(event.timestamp) / 1_000_000_000
+            }
         }
 
         clearTransientState()
@@ -990,6 +1021,24 @@ public final class KeyboardEventMonitor {
             inputSourceIdentifier: inputSource.identifier,
             missingUTF16Length: missingLength,
             armedAt: armedAt
+        )
+    }
+
+    private func recordFallbackPrefixProvenanceIfNeeded(
+        context: FocusContext,
+        owner: FocusOwner,
+        inputSource: InputSourceSnapshot,
+        timestamp: TimeInterval
+    ) {
+        guard wordBuffer.currentToken.isEmpty,
+              case let .eventTarget(activationOwner) = owner,
+              context.processIdentifier == activationOwner else {
+            return
+        }
+        fallbackPrefixProvenance = FallbackPrefixProvenance(
+            activationOwnerProcessIdentifier: activationOwner,
+            inputSourceIdentifier: inputSource.identifier,
+            startedAt: timestamp
         )
     }
 
@@ -1031,6 +1080,7 @@ public final class KeyboardEventMonitor {
         wordBuffer.reset()
         lastFocusContext = nil
         lastInputSourceIdentifier = nil
+        fallbackPrefixProvenance = nil
         suppressCorrectionUntilBoundary = false
         pendingTextRecovery = nil
         shiftGestureRecognizer.reset()
