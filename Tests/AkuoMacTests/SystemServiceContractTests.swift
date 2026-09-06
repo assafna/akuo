@@ -170,6 +170,30 @@ final class SystemServiceContractTests: XCTestCase {
         )
     }
 
+    func testInteractionContextFallsBackToActivationOwnerForSuccessfulEmptyOrdering() {
+        let accessibility = PerProcessAccessibilityFocusProvider(elements: [
+            42: focusElement(identifier: "owner-field")
+        ])
+        let ordering = FakeWindowProcessOrderingProvider(processIdentifiers: [])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: ordering
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 42,
+                elementIdentifier: "owner-field",
+                isSecureField: false,
+                isEditableTextInput: true
+            )
+        )
+        XCTAssertEqual(ordering.activationOwnerRequests, [42])
+        XCTAssertEqual(accessibility.requestedProcessIdentifiers, [42])
+    }
+
     func testInteractionContextReturnsNilForTwoFocusedProcessesAheadOfActivationOwner() {
         let accessibility = PerProcessAccessibilityFocusProvider(elements: [
             70: focusElement(identifier: "panel-search"),
@@ -235,31 +259,94 @@ final class SystemServiceContractTests: XCTestCase {
     }
 
     func testInteractionContextReturnsNilWhenWindowOrderingFails() {
+        let accessibility = PerProcessAccessibilityFocusProvider(elements: [
+            42: focusElement(identifier: "owner-field")
+        ])
+        let ordering = FakeWindowProcessOrderingProvider(processIdentifiers: nil)
         let provider = FocusContextProvider(
             frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
-            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
-                42: focusElement(identifier: "owner-field")
-            ]),
-            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
-                processIdentifiers: nil
-            )
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: ordering
         )
 
         XCTAssertNil(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42))
+        XCTAssertEqual(ordering.activationOwnerRequests, [42])
+        XCTAssertTrue(accessibility.requestedProcessIdentifiers.isEmpty)
     }
 
-    func testInteractionContextRejectsFrontmostProcessChangeDuringResolution() {
+    func testInteractionContextUsesStableFrontmostAfterExplicitResolution() {
+        let timeline = ResolutionTimeline()
+        let frontmost = TimelineFrontmostProcessProvider(
+            processIdentifier: 42,
+            timeline: timeline
+        )
+        let accessibility = PerProcessAccessibilityFocusProvider(
+            elements: [42: focusElement(identifier: "owner-field")],
+            onFocusedElementRequest: { processIdentifier in
+                timeline.record("accessibility:\(processIdentifier)")
+            }
+        )
+        let ordering = FakeWindowProcessOrderingProvider(
+            processIdentifiers: [],
+            onRequest: { processIdentifier in
+                timeline.record("ordering:\(processIdentifier)")
+            }
+        )
         let provider = FocusContextProvider(
-            frontmostProcessProvider: ScriptedFrontmostProcessProvider([42, 43]),
-            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
-                42: focusElement(identifier: "owner-field")
-            ]),
-            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
-                processIdentifiers: []
+            frontmostProcessProvider: frontmost,
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: ordering
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(),
+            FocusContext(
+                processIdentifier: 42,
+                elementIdentifier: "owner-field",
+                isSecureField: false,
+                isEditableTextInput: true
             )
+        )
+        XCTAssertEqual(timeline.events, [
+            "frontmost:42",
+            "ordering:42",
+            "accessibility:42",
+            "frontmost:42",
+        ])
+    }
+
+    func testInteractionContextRejectsFrontmostProcessChangeAfterExplicitResolution() {
+        let timeline = ResolutionTimeline()
+        let frontmost = TimelineFrontmostProcessProvider(
+            processIdentifier: 42,
+            timeline: timeline
+        )
+        let accessibility = PerProcessAccessibilityFocusProvider(
+            elements: [42: focusElement(identifier: "owner-field")],
+            onFocusedElementRequest: { processIdentifier in
+                timeline.record("accessibility:\(processIdentifier)")
+            }
+        )
+        let ordering = FakeWindowProcessOrderingProvider(
+            processIdentifiers: [],
+            onRequest: { processIdentifier in
+                timeline.record("ordering:\(processIdentifier)")
+                frontmost.processIdentifier = 43
+            }
+        )
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: frontmost,
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: ordering
         )
 
         XCTAssertNil(provider.currentInteractionContext())
+        XCTAssertEqual(timeline.events, [
+            "frontmost:42",
+            "ordering:42",
+            "accessibility:42",
+            "frontmost:43",
+        ])
     }
 
     func testAccessibilityTextMatcherComputesOnlyRangeBeforeCollapsedCaret() {
@@ -1131,24 +1218,70 @@ private final class ScriptedFrontmostProcessProvider: FrontmostProcessProviding 
     }
 }
 
-private struct FakeWindowProcessOrderingProvider: WindowProcessOrderingProviding {
+private final class FakeWindowProcessOrderingProvider: WindowProcessOrderingProviding {
     let processIdentifiers: [Int32]?
+    let onRequest: ((Int32) -> Void)?
+    private(set) var activationOwnerRequests: [Int32] = []
+
+    init(
+        processIdentifiers: [Int32]?,
+        onRequest: ((Int32) -> Void)? = nil
+    ) {
+        self.processIdentifiers = processIdentifiers
+        self.onRequest = onRequest
+    }
 
     func processIdentifiersInFront(of activationOwner: Int32) -> [Int32]? {
-        processIdentifiers
+        activationOwnerRequests.append(activationOwner)
+        onRequest?(activationOwner)
+        return processIdentifiers
+    }
+}
+
+private final class ResolutionTimeline {
+    private(set) var events: [String] = []
+
+    func record(_ event: String) {
+        events.append(event)
+    }
+}
+
+private final class TimelineFrontmostProcessProvider: FrontmostProcessProviding {
+    private var currentProcessIdentifier: Int32?
+    private let timeline: ResolutionTimeline
+
+    init(processIdentifier: Int32?, timeline: ResolutionTimeline) {
+        currentProcessIdentifier = processIdentifier
+        self.timeline = timeline
+    }
+
+    var processIdentifier: Int32? {
+        get {
+            timeline.record("frontmost:\(currentProcessIdentifier.map(String.init) ?? "nil")")
+            return currentProcessIdentifier
+        }
+        set {
+            currentProcessIdentifier = newValue
+        }
     }
 }
 
 private final class PerProcessAccessibilityFocusProvider: AccessibilityFocusProviding {
     let elements: [Int32: AccessibilityFocusElement]
+    let onFocusedElementRequest: ((Int32) -> Void)?
     private(set) var requestedProcessIdentifiers: [Int32] = []
 
-    init(elements: [Int32: AccessibilityFocusElement]) {
+    init(
+        elements: [Int32: AccessibilityFocusElement],
+        onFocusedElementRequest: ((Int32) -> Void)? = nil
+    ) {
         self.elements = elements
+        self.onFocusedElementRequest = onFocusedElementRequest
     }
 
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
         requestedProcessIdentifiers.append(processIdentifier)
+        onFocusedElementRequest?(processIdentifier)
         return elements[processIdentifier]
     }
 
