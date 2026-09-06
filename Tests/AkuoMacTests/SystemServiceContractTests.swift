@@ -126,6 +126,142 @@ final class SystemServiceContractTests: XCTestCase {
         XCTAssertNil(provider.processIdentifiersInFront(of: 42))
     }
 
+    func testInteractionContextUsesUniqueFocusedProcessAheadOfActivationOwner() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
+                70: focusElement(identifier: "panel-search")
+            ]),
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70]
+            )
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 70,
+                elementIdentifier: "panel-search",
+                isSecureField: false,
+                isEditableTextInput: true
+            )
+        )
+    }
+
+    func testInteractionContextFallsBackWhenAheadProcessesHaveNoFocusedElement() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
+                42: focusElement(identifier: "owner-field")
+            ]),
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70]
+            )
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 42,
+                elementIdentifier: "owner-field",
+                isSecureField: false,
+                isEditableTextInput: true
+            )
+        )
+    }
+
+    func testInteractionContextReturnsNilForTwoFocusedProcessesAheadOfActivationOwner() {
+        let accessibility = PerProcessAccessibilityFocusProvider(elements: [
+            70: focusElement(identifier: "panel-search"),
+            71: focusElement(identifier: "modal-search"),
+            72: focusElement(identifier: "unexamined-search"),
+        ])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70, 71, 72]
+            )
+        )
+
+        XCTAssertNil(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42))
+        XCTAssertEqual(accessibility.requestedProcessIdentifiers, [70, 71])
+    }
+
+    func testInteractionContextReturnsSecureFocusedProcessAheadOfActivationOwner() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
+                42: focusElement(identifier: "owner-field"),
+                70: focusElement(identifier: "secure-field", role: "AXSecureTextField"),
+            ]),
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70]
+            )
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 70,
+                elementIdentifier: "secure-field",
+                isSecureField: true,
+                isEditableTextInput: false
+            )
+        )
+    }
+
+    func testInteractionContextReturnsReadOnlyFocusedProcessAheadOfActivationOwner() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
+                42: focusElement(identifier: "owner-field"),
+                70: focusElement(identifier: "read-only", isValueSettable: false),
+            ]),
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70]
+            )
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 70,
+                elementIdentifier: "read-only",
+                isSecureField: false,
+                isEditableTextInput: false
+            )
+        )
+    }
+
+    func testInteractionContextReturnsNilWhenWindowOrderingFails() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
+                42: focusElement(identifier: "owner-field")
+            ]),
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: nil
+            )
+        )
+
+        XCTAssertNil(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42))
+    }
+
+    func testInteractionContextRejectsFrontmostProcessChangeDuringResolution() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: ScriptedFrontmostProcessProvider([42, 43]),
+            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
+                42: focusElement(identifier: "owner-field")
+            ]),
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: []
+            )
+        )
+
+        XCTAssertNil(provider.currentInteractionContext())
+    }
+
     func testAccessibilityTextMatcherComputesOnlyRangeBeforeCollapsedCaret() {
         let value = "prefix 😀 שמג "
         let caretAtEnd = NSRange(
@@ -993,6 +1129,50 @@ private final class ScriptedFrontmostProcessProvider: FrontmostProcessProviding 
         }
         return processIdentifiers.removeFirst()
     }
+}
+
+private struct FakeWindowProcessOrderingProvider: WindowProcessOrderingProviding {
+    let processIdentifiers: [Int32]?
+
+    func processIdentifiersInFront(of activationOwner: Int32) -> [Int32]? {
+        processIdentifiers
+    }
+}
+
+private final class PerProcessAccessibilityFocusProvider: AccessibilityFocusProviding {
+    let elements: [Int32: AccessibilityFocusElement]
+    private(set) var requestedProcessIdentifiers: [Int32] = []
+
+    init(elements: [Int32: AccessibilityFocusElement]) {
+        self.elements = elements
+    }
+
+    func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
+        requestedProcessIdentifiers.append(processIdentifier)
+        return elements[processIdentifier]
+    }
+
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> Bool {
+        false
+    }
+}
+
+private func focusElement(
+    identifier: String,
+    role: String = "AXTextField",
+    isValueSettable: Bool? = true
+) -> AccessibilityFocusElement {
+    .init(
+        identifier: identifier,
+        role: role,
+        subrole: .absent,
+        isEnabled: .value(true),
+        isValueSettable: isValueSettable
+    )
 }
 
 private final class FakeAccessibilityFocusProvider: AccessibilityFocusProviding {

@@ -386,10 +386,12 @@ public struct FocusContextProvider {
 
     private let frontmostProcessProvider: any FrontmostProcessProviding
     private let accessibilityProvider: any AccessibilityFocusProviding
+    private let windowProcessOrderingProvider: any WindowProcessOrderingProviding
 
     public init() {
         frontmostProcessProvider = WorkspaceFrontmostProcessProvider()
         accessibilityProvider = SystemAccessibilityFocusProvider()
+        windowProcessOrderingProvider = SystemWindowProcessOrderingProvider()
     }
 
     init(
@@ -398,6 +400,17 @@ public struct FocusContextProvider {
     ) {
         self.frontmostProcessProvider = frontmostProcessProvider
         self.accessibilityProvider = accessibilityProvider
+        windowProcessOrderingProvider = SystemWindowProcessOrderingProvider()
+    }
+
+    init(
+        frontmostProcessProvider: some FrontmostProcessProviding,
+        accessibilityProvider: some AccessibilityFocusProviding,
+        windowProcessOrderingProvider: some WindowProcessOrderingProviding
+    ) {
+        self.frontmostProcessProvider = frontmostProcessProvider
+        self.accessibilityProvider = accessibilityProvider
+        self.windowProcessOrderingProvider = windowProcessOrderingProvider
     }
 
     public func current() -> FocusContext? {
@@ -433,6 +446,43 @@ public struct FocusContextProvider {
                 && element.isEnabled.permitsInteraction
                 && element.isValueSettable == true
         )
+    }
+
+    public func currentInteractionContext() -> FocusContext? {
+        guard let processIdentifier = frontmostProcessProvider.processIdentifier else {
+            return nil
+        }
+        let context = currentInteractionContext(
+            activationOwnerProcessIdentifier: processIdentifier
+        )
+        guard frontmostProcessProvider.processIdentifier == processIdentifier else {
+            return nil
+        }
+        return context
+    }
+
+    public func currentInteractionContext(
+        activationOwnerProcessIdentifier: Int32
+    ) -> FocusContext? {
+        guard let processIdentifiers = windowProcessOrderingProvider.processIdentifiersInFront(
+            of: activationOwnerProcessIdentifier
+        ) else {
+            return nil
+        }
+
+        var interactionContext: FocusContext?
+        for processIdentifier in processIdentifiers {
+            guard let context = current(processIdentifier: processIdentifier),
+                  context.elementIdentifier != nil else {
+                continue
+            }
+            guard interactionContext == nil else {
+                return nil
+            }
+            interactionContext = context
+        }
+
+        return interactionContext ?? current(processIdentifier: activationOwnerProcessIdentifier)
     }
 
     public func hasExactTextImmediatelyBeforeCaret(
