@@ -212,6 +212,10 @@ extension CorrectionCoordinator: CorrectionCoordinating {}
 protocol FocusContextProviding {
     func current() -> FocusContext?
     func current(processIdentifier: Int32) -> FocusContext?
+    func currentInteractionContext() -> FocusContext?
+    func currentInteractionContext(
+        activationOwnerProcessIdentifier: Int32
+    ) -> FocusContext?
     func textImmediatelyBeforeCaret(
         utf16Length: Int,
         context: FocusContext
@@ -225,6 +229,16 @@ extension FocusContextProviding {
             return nil
         }
         return context
+    }
+
+    func currentInteractionContext() -> FocusContext? {
+        current()
+    }
+
+    func currentInteractionContext(
+        activationOwnerProcessIdentifier: Int32
+    ) -> FocusContext? {
+        current(processIdentifier: activationOwnerProcessIdentifier)
     }
 
     func textImmediatelyBeforeCaret(
@@ -824,9 +838,11 @@ public final class KeyboardEventMonitor {
     private func currentFocusContext(for owner: FocusOwner) -> FocusContext? {
         switch owner {
         case let .eventTarget(processIdentifier):
-            focusContextProvider.current(processIdentifier: processIdentifier)
+            focusContextProvider.currentInteractionContext(
+                activationOwnerProcessIdentifier: processIdentifier
+            )
         case .frontmostApplication:
-            focusContextProvider.current()
+            focusContextProvider.currentInteractionContext()
         }
     }
 
@@ -836,12 +852,17 @@ public final class KeyboardEventMonitor {
     ) -> Bool {
         guard !secureInput.isSecureInputEnabled,
               let current = currentFocusContext(for: owner) else {
+            clearTransientState()
             return false
         }
-        return current == expected
+        guard current == expected
             && current.elementIdentifier != nil
             && !current.isSecureField
-            && current.isEditableTextInput
+            && current.isEditableTextInput else {
+            clearTransientState()
+            return false
+        }
+        return true
     }
 
     private var prerequisitesAreMet: Bool {
