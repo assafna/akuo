@@ -189,6 +189,20 @@ final class SystemServiceContractTests: XCTestCase {
         XCTAssertTrue(accessibility.requestedProcessIdentifiers.isEmpty)
     }
 
+    func testInteractionContextRejectsDuplicateOrderingOutputBeforeAXScanning() {
+        let accessibility = SnapshotAccessibilityFocusProvider(snapshots: [:])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70, 70, 70, 70, 70]
+            )
+        )
+
+        XCTAssertNil(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42))
+        XCTAssertTrue(accessibility.requestedProcessIdentifiers.isEmpty)
+    }
+
     func testInteractionContextFallsBackWhenAheadProcessesHaveNoFocusedElement() {
         let provider = FocusContextProvider(
             frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),

@@ -281,7 +281,7 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
 
     func focusSnapshot(for processIdentifier: Int32) -> AccessibilityFocusSnapshot {
         let application = AXUIElementCreateApplication(processIdentifier)
-        guard configureMessagingTimeout(application, Self.messagingTimeout) == .success else {
+        guard prepare(application) else {
             return .unavailable
         }
         let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
@@ -293,7 +293,7 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         }
         guard initialFocus.result == .success,
               let element = AccessibilityAttributeDecoder.element(from: initialFocus.value),
-              configureMessagingTimeout(element, Self.messagingTimeout) == .success else {
+              prepare(element) else {
             return .unavailable
         }
 
@@ -361,9 +361,11 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
     ) -> String? {
         guard utf16Length > 0 else { return nil }
         let application = AXUIElementCreateApplication(processIdentifier)
+        guard prepare(application) else { return nil }
         let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
         guard initialFocus.result == .success,
               let element = AccessibilityAttributeDecoder.element(from: initialFocus.value),
+              prepare(element),
               identityTracker.identifier(for: element) == elementIdentifier else {
             return nil
         }
@@ -407,6 +409,10 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         }
 
         return text
+    }
+
+    private func prepare(_ element: AXUIElement) -> Bool {
+        configureMessagingTimeout(element, Self.messagingTimeout) == .success
     }
 }
 
@@ -515,7 +521,8 @@ public struct FocusContextProvider {
     ) -> FocusContext? {
         guard let processIdentifiers = windowProcessOrderingProvider.processIdentifiersInFront(
             of: activationOwnerProcessIdentifier
-        ), Set(processIdentifiers).count <= Self.maximumAheadProcessIdentifiers else {
+        ), Set(processIdentifiers).count == processIdentifiers.count,
+           processIdentifiers.count <= Self.maximumAheadProcessIdentifiers else {
             return nil
         }
 
