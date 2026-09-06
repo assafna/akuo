@@ -792,6 +792,24 @@ final class SystemServiceContractTests: XCTestCase {
         XCTAssertEqual(timeout.focusSnapshot(for: 42), .unavailable)
     }
 
+    func testCallbackBudgetUsesOneMonotonicDeadlineAndShrinksPreparationTimeout() {
+        var now: TimeInterval = 0
+        var timeouts: [Float] = []
+        let provider = SystemAccessibilityFocusProvider(
+            reader: FocusSnapshotReader([]),
+            configureMessagingTimeout: { _, timeout in timeouts.append(timeout); return .success },
+            now: { now }
+        )
+        let end = provider.beginCallbackBudget()
+        now = 0.098
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .stablyAbsent)
+        now = 0.101
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        end()
+        XCTAssertEqual(timeouts.count, 1)
+        XCTAssertLessThan(timeouts[0], 0.005)
+    }
+
     func testSystemFocusProviderUsesStableOpaqueIdentityForEqualElements() {
         let first = AXUIElementCreateApplication(42)
         let second = AXUIElementCreateApplication(43)

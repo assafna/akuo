@@ -4,16 +4,16 @@ import AkuoCore
 
 private enum AccessibilityCallbackBudget {
     private static let key = "Akuo.accessibilityCallbackDeadline"
-    static func begin() -> () -> Void {
+    static func begin(now: TimeInterval) -> () -> Void {
         let dictionary = Thread.current.threadDictionary
         let previous = dictionary[key]
         guard previous == nil else { return {} }
-        dictionary[key] = ProcessInfo.processInfo.systemUptime + 0.100
+        dictionary[key] = now + 0.100
         return { dictionary[key] = previous }
     }
-    static var remaining: Float? {
+    static func remaining(now: TimeInterval) -> Float? {
         guard let deadline = Thread.current.threadDictionary[key] as? TimeInterval else { return nil }
-        return Float(deadline - ProcessInfo.processInfo.systemUptime)
+        return Float(deadline - now)
     }
 }
 
@@ -277,17 +277,20 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
     private static let messagingTimeout: Float = 0.005
     private let reader: any AccessibilityAttributeReading
     private let configureMessagingTimeout: (AXUIElement, Float) -> AXError
+    private let now: () -> TimeInterval
     private let identityTracker = AccessibilityFocusIdentityTracker()
 
     init(
         reader: any AccessibilityAttributeReading = SystemAccessibilityAttributeReader(),
-        configureMessagingTimeout: @escaping (AXUIElement, Float) -> AXError = AXUIElementSetMessagingTimeout
+        configureMessagingTimeout: @escaping (AXUIElement, Float) -> AXError = AXUIElementSetMessagingTimeout,
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.reader = reader
         self.configureMessagingTimeout = configureMessagingTimeout
+        self.now = now
     }
 
-    func beginCallbackBudget() -> () -> Void { AccessibilityCallbackBudget.begin() }
+    func beginCallbackBudget() -> () -> Void { AccessibilityCallbackBudget.begin(now: now()) }
 
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
         guard case let .focused(element) = focusSnapshot(for: processIdentifier) else {
@@ -430,7 +433,7 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
 
     private func prepare(_ element: AXUIElement) -> Bool {
         let timeout: Float
-        if let remaining = AccessibilityCallbackBudget.remaining {
+        if let remaining = AccessibilityCallbackBudget.remaining(now: now()) {
             guard remaining > 0 else { return false }
             timeout = min(Self.messagingTimeout, remaining)
         } else {
