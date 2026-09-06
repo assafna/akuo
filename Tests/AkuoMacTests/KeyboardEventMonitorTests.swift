@@ -11,13 +11,424 @@ final class KeyboardEventMonitorTests: XCTestCase {
         keyDown: true
     )!
 
+    func testEventTargetOwnsFocusForNonactivatingTextPanel() {
+        let fixture = makeFixture()
+        fixture.focus.context = .init(
+            processIdentifier: 7,
+            elementIdentifier: "activated-editor",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        let panelContext = FocusContext(
+            processIdentifier: 42,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = panelContext
+
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panelContext)
+        XCTAssertEqual(fixture.focus.requestedProcessIdentifiers, [42, 42, 42])
+        XCTAssertEqual(fixture.focus.currentCalls, 0)
+    }
+
+    func testFocusedPanelAheadOfActivationRoutedEventTargetOwnsCorrection() {
+        let fixture = makeFixture()
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.interactionContextsByActivationOwner[42] = panel
+
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panel)
+        XCTAssertEqual(fixture.focus.interactionOwnerRequests, [42, 42, 42])
+    }
+
+    func testAmbiguousInteractionContextFailsOpenAndClearsTransientState() {
+        let fixture = makeFixture()
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.focus.scriptedInteractionContexts[42] = [nil]
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+        XCTAssertEqual(fixture.focus.interactionOwnerRequests, [42, 42])
+    }
+
+    func testPanelDisappearsDuringBoundaryRevalidationFailsOpenAndClearsState() {
+        let fixture = makeFixture()
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.interactionContextsByActivationOwner[42] = panel
+        fixture.focus.scriptedInteractionContexts[42] = [panel, panel, nil]
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        let resetsBeforeBoundary = fixture.decoder.resetModifierStateCalls
+
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panel)
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+        XCTAssertEqual(
+            fixture.decoder.resetModifierStateCalls,
+            resetsBeforeBoundary + 1
+        )
+        XCTAssertEqual(fixture.focus.interactionOwnerRequests, [42, 42, 42])
+    }
+
+    func testImmediateUndoUsesInteractionContext() {
+        let fixture = makeFixture()
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.interactionContextsByActivationOwner[42] = panel
+        fixture.coordinator.undoResult = .handled
+        fixture.decoder.event = .commandZ(marker: 0)
+
+        XCTAssertNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        XCTAssertEqual(fixture.coordinator.undoContexts, [panel])
+        XCTAssertEqual(fixture.focus.interactionOwnerRequests, [42, 42])
+    }
+
+    func testForcedCorrectionUsesInteractionContext() {
+        let fixture = makeFixture()
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.interactionContextsByActivationOwner[42] = panel
+        fixture.coordinator.forcedResult = .handled
+
+        for event in [
+            DecodedKeyboardEvent.shiftChanged(
+                side: .left,
+                phase: .down,
+                timestamp: 1,
+                marker: 0
+            ),
+            .shiftChanged(side: .left, phase: .up, timestamp: 1.05, marker: 0),
+            .shiftChanged(side: .left, phase: .down, timestamp: 1.2, marker: 0),
+            .shiftChanged(side: .left, phase: .up, timestamp: 1.25, marker: 0),
+        ] {
+            fixture.decoder.event = event
+            XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        }
+
+        XCTAssertEqual(fixture.coordinator.forcedContexts, [panel])
+        XCTAssertEqual(fixture.focus.interactionOwnerRequests, [42, 42, 42, 42, 42])
+    }
+
+    func testActivationOwnerFallbackThenFocusedPanelUsesBoundedRecovery() {
+        let fixture = makeFixture()
+        let activationContext = fixture.focus.context!
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = activationContext
+        fixture.focus.unfocusedAheadProcessIdentifiersByActivationOwner.insert(42)
+        fixture.decoder.event = .unsupportedModifiers(marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        fixture.decoder.event = .text("a", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 0)
+        ))
+
+        fixture.focus.aheadFocusedContextsByActivationOwner[42] = panel
+        fixture.focus.recoveredText = "akuo"
+        fixture.decoder.event = .text("k", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 40)
+        ))
+        fixture.decoder.event = .text("u", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 32)
+        ))
+        fixture.decoder.event = .text("o", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 31)
+        ))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 49)
+        ))
+
+        XCTAssertEqual(fixture.focus.recoveryContexts, [panel])
+        XCTAssertEqual(fixture.focus.recoveryLengths, [4])
+        XCTAssertEqual(fixture.focus.requestedProcessIdentifiers, [42, 42])
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord.token, "akuo")
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panel)
+    }
+
+    func testFallbackPrefixSourceIdentifierChangeFailsOpenBeforeRecovery() {
+        let fixture = makeFixture()
+        let activationContext = fixture.focus.context!
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = activationContext
+        fixture.focus.unfocusedAheadProcessIdentifiersByActivationOwner.insert(42)
+        fixture.decoder.event = .text("a", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 0)
+        ))
+
+        fixture.inputSources.stableCurrentSource = .init(
+            identifier: "com.apple.keylayout.US",
+            language: .english
+        )
+        fixture.focus.aheadFocusedContextsByActivationOwner[42] = panel
+        fixture.focus.recoveredText = "ak"
+        fixture.decoder.event = .text("k", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 40)
+        ))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeKeyEvent(processIdentifier: 42, keyCode: 49)
+        ))
+
+        XCTAssertTrue(fixture.focus.recoveryContexts.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testExpiredFallbackPrefixFailsOpenBeforeRecovery() {
+        let fixture = makeFixture()
+        let activationContext = fixture.focus.context!
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = activationContext
+        fixture.focus.unfocusedAheadProcessIdentifiersByActivationOwner.insert(42)
+        fixture.decoder.event = .text("a", marker: 0)
+        let prefix = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 0)
+        prefix.timestamp = 1_000_000_000
+        XCTAssertNotNil(fixture.monitor.process(prefix))
+
+        fixture.focus.aheadFocusedContextsByActivationOwner[42] = panel
+        fixture.focus.recoveredText = "ak"
+        fixture.decoder.event = .text("k", marker: 0)
+        let resolved = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 40)
+        resolved.timestamp = 2_100_000_000
+        XCTAssertNotNil(fixture.monitor.process(resolved))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        let boundary = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 49)
+        boundary.timestamp = 2_200_000_000
+        XCTAssertNotNil(fixture.monitor.process(boundary))
+
+        XCTAssertTrue(fixture.focus.recoveryContexts.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testFallbackTransitionSurvivesShiftUntilPanelRecoveryCanArm() {
+        let fixture = makeFixture()
+        let activationContext = fixture.focus.context!
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = activationContext
+        fixture.focus.unfocusedAheadProcessIdentifiersByActivationOwner.insert(42)
+        fixture.decoder.event = .text("a", marker: 0)
+        let prefix = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 0)
+        prefix.timestamp = 1_000_000_000
+        XCTAssertNotNil(fixture.monitor.process(prefix))
+
+        fixture.focus.aheadFocusedContextsByActivationOwner[42] = panel
+        fixture.decoder.event = .shiftChanged(
+            side: .left,
+            phase: .down,
+            timestamp: 1.1,
+            marker: 0
+        )
+        XCTAssertNotNil(fixture.monitor.process(
+            targetedNativeShiftEvent(
+                processIdentifier: 42,
+                keyCode: 56,
+                flags: [.maskShift],
+                timestamp: 1.1
+            )
+        ))
+
+        fixture.focus.recoveredText = "akuo"
+        fixture.decoder.event = .text("k", marker: 0)
+        let k = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 40)
+        k.timestamp = 1_200_000_000
+        XCTAssertNotNil(fixture.monitor.process(k))
+        fixture.decoder.event = .text("u", marker: 0)
+        let u = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 32)
+        u.timestamp = 1_300_000_000
+        XCTAssertNotNil(fixture.monitor.process(u))
+        fixture.decoder.event = .text("o", marker: 0)
+        let o = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 31)
+        o.timestamp = 1_400_000_000
+        XCTAssertNotNil(fixture.monitor.process(o))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        let boundary = targetedNativeKeyEvent(processIdentifier: 42, keyCode: 49)
+        boundary.timestamp = 1_500_000_000
+        XCTAssertNotNil(fixture.monitor.process(boundary))
+
+        XCTAssertEqual(fixture.focus.recoveryContexts, [panel])
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.completedWord.token, "akuo")
+    }
+
+    func testKnownEventTargetWithoutFocusNeverFallsBackToActivatedProcess() {
+        let fixture = makeFixture()
+        fixture.decoder.event = .text("akuo", marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 99)))
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+        XCTAssertEqual(fixture.focus.requestedProcessIdentifiers, [99])
+        XCTAssertEqual(fixture.focus.currentCalls, 0)
+    }
+
+    func testInvalidEventTargetValuesUseStableFrontmostFallback() {
+        for rawProcessIdentifier in [
+            Int64(0),
+            Int64(-1),
+            Int64(Int32.max) + 1,
+        ] {
+            let fixture = makeFixture()
+            fixture.decoder.event = .text("a", marker: 0)
+
+            XCTAssertNotNil(fixture.monitor.process(
+                nativeEvent(targetProcessIdentifier: rawProcessIdentifier)
+            ))
+
+            XCTAssertEqual(fixture.monitor.currentTokenForTesting, "a")
+            XCTAssertEqual(fixture.focus.currentCalls, 1)
+            XCTAssertTrue(fixture.focus.requestedProcessIdentifiers.isEmpty)
+        }
+    }
+
+    func testFrontmostInteractionResolverOwnsAheadPanelAndRevalidates() {
+        let fixture = makeFixture()
+        let panel = FocusContext(
+            processIdentifier: 70,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.frontmostInteractionContext = panel
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeEvent(targetProcessIdentifier: 0)
+        ))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeEvent(targetProcessIdentifier: 0)
+        ))
+
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panel)
+        XCTAssertEqual(fixture.focus.frontmostInteractionCalls, 3)
+        XCTAssertEqual(fixture.focus.currentCalls, 0)
+    }
+
+    func testImmediateUndoRevalidatesEventTargetProcess() {
+        let fixture = makeFixture()
+        let panelContext = FocusContext(
+            processIdentifier: 42,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = panelContext
+        fixture.coordinator.undoResult = .handled
+        fixture.decoder.event = .commandZ(marker: 0)
+
+        XCTAssertNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        XCTAssertEqual(fixture.coordinator.undoContexts, [panelContext])
+        XCTAssertEqual(fixture.focus.requestedProcessIdentifiers, [42, 42])
+        XCTAssertEqual(fixture.focus.currentCalls, 0)
+    }
+
+    func testEventTargetChangeStartsANewToken() {
+        let fixture = makeFixture()
+        fixture.focus.contextsByProcessIdentifier = [
+            42: .init(
+                processIdentifier: 42,
+                elementIdentifier: "first-panel",
+                isSecureField: false,
+                isEditableTextInput: true
+            ),
+            43: .init(
+                processIdentifier: 43,
+                elementIdentifier: "second-panel",
+                isSecureField: false,
+                isEditableTextInput: true
+            ),
+        ]
+        fixture.decoder.event = .text("aku", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text("o", marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 43)))
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "o")
+    }
+
     func testSyntheticEventNeverEntersWordBuffer() {
         let fixture = makeFixture()
         fixture.decoder.event = .text("a", marker: KeyboardEventMonitor.syntheticMarker)
+        fakeNativeEvent.setIntegerValueField(
+            .eventSourceUserData,
+            value: KeyboardEventMonitor.syntheticMarker
+        )
 
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
         XCTAssertEqual(fixture.coordinator.noteOrdinaryInputCalls, 0)
+        XCTAssertTrue(fixture.focus.interactionOwnerRequests.isEmpty)
+        XCTAssertEqual(fixture.focus.frontmostInteractionCalls, 0)
+        XCTAssertEqual(fixture.focus.accessibilityBudgetStarts, 0)
+    }
+
+    func testNonSyntheticEventStartsOneAccessibilityBudget() {
+        let fixture = makeFixture()
+        fixture.decoder.event = .text("a", marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertEqual(fixture.focus.accessibilityBudgetStarts, 1)
     }
 
     func testTaggedNativeReplacementSkipsPayloadDecoder() {
@@ -312,6 +723,462 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.decoder.decodeCalls, 0)
     }
 
+    func testBoundaryRecoversTextMissedWhileLaunchingIntoSameProcess() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        fixture.decoder.resetDecodeCalls()
+        fixture.decoder.event = .text("a", keyCode: 0, marker: 0)
+
+        XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        XCTAssertEqual(fixture.decoder.decodeCalls, 0)
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "akuo"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertEqual(
+            fixture.coordinator.boundaryCalls.first?.completedWord,
+            .init(
+                token: "akuo",
+                boundary: CorrectionBoundary(text: " ", keyCode: 49),
+                physicalTraceIntegrity: .unavailable
+            )
+        )
+        XCTAssertEqual(fixture.focus.recoveryLengths, [4])
+    }
+
+    func testBoundaryRecoversWordWhenEveryCharacterArrivesBeforeFieldIsReady() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        for _ in "akuo" {
+            XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        }
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "akuo"
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertEqual(
+            fixture.coordinator.boundaryCalls.first?.completedWord.token,
+            "akuo"
+        )
+        XCTAssertEqual(fixture.focus.recoveryLengths, [4])
+    }
+
+    func testInputSourceChangeAfterLaunchGapSuppressesPartialToken() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        fixture.inputSources.stableCurrentSource = .init(
+            identifier: "com.apple.keylayout.US",
+            language: .english
+        )
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testInputSourceChangeDuringUnavailableFocusSuppressesPartialToken() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        fixture.inputSources.stableCurrentSource = .init(
+            identifier: "com.apple.keylayout.US",
+            language: .english
+        )
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "u"
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testProcessChangeAfterLaunchGapSuppressesPartialToken() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        fixture.focus.context = .init(
+            processIdentifier: 43,
+            elementIdentifier: "other-field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testMalformedRecoveredSpanSuppressesPartialToken() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "xakuo"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertEqual(fixture.focus.recoveryLengths, [4])
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testRecoveredSpanContainingBoundaryTextIsRejected() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "a ku"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertEqual(fixture.focus.recoveryLengths, [4])
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testRecoveryLimitSuppressesRemainderInsteadOfRestartingPartialToken() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        for _ in 0..<66 {
+            XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        }
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "a"
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testExpiredLaunchGapSuppressesPartialToken() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        let missedKey = nativeKeyEvent(keyCode: 0, flags: [])
+        missedKey.timestamp = 1_000_000_000
+        XCTAssertNotNil(fixture.monitor.process(missedKey))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "akuo"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        let boundary = nativeKeyEvent(keyCode: 49, flags: [])
+        boundary.timestamp = 3_000_000_000
+
+        XCTAssertNotNil(fixture.monitor.process(boundary))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testRecoveryWindowStartsAtFirstMissedKey() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        let firstMissedKey = nativeKeyEvent(keyCode: 0, flags: [])
+        firstMissedKey.timestamp = 1_000_000_000
+        XCTAssertNotNil(fixture.monitor.process(firstMissedKey))
+        let secondMissedKey = nativeKeyEvent(keyCode: 0, flags: [])
+        secondMissedKey.timestamp = 1_900_000_000
+        XCTAssertNotNil(fixture.monitor.process(secondMissedKey))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "au"
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        let boundary = nativeKeyEvent(keyCode: 49, flags: [])
+        boundary.timestamp = 2_500_000_000
+
+        XCTAssertNotNil(fixture.monitor.process(boundary))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testUnsafeKeyDuringPendingRecoverySuppressesPartialToken() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        let modifiedLetter = nativeKeyEvent(keyCode: 0, flags: [.maskAlternate])
+        XCTAssertNotNil(fixture.monitor.process(modifiedLetter))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "akuo"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testShiftReleasePreservesPendingRecoveryForMissedCapital() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeShiftEvent(keyCode: 56, flags: [.maskShift], timestamp: 1)
+        ))
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeKeyEvent(keyCode: 0, flags: [.maskShift])
+        ))
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeShiftEvent(keyCode: 56, flags: [], timestamp: 1.1)
+        ))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "Akuo"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertEqual(fixture.focus.recoveryLengths, [4])
+        XCTAssertEqual(
+            fixture.coordinator.boundaryCalls.first?.completedWord.token,
+            "Akuo"
+        )
+    }
+
+    func testBoundaryDuringUnavailableFocusDoesNotSuppressNextToken() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeKeyEvent(keyCode: 49, flags: [])
+        ))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        type("akuo", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertEqual(
+            fixture.coordinator.boundaryCalls.first?.completedWord.token,
+            "akuo"
+        )
+    }
+
+    func testModifiedBoundaryDuringPendingRecoverySuppressesPartialToken() {
+        let fixture = makeFixture()
+        moveToUnavailableNewProcess(in: fixture)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeKeyEvent(keyCode: 36, flags: [.maskCommand])
+        ))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "raycast-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        type("kuo", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testTransientMissingFocusInAlreadyFrontmostProcessDoesNotArmRecovery() {
+        let fixture = makeFixture()
+        fixture.decoder.event = .unsupportedModifiers(marker: 0)
+        let shortcut = nativeKeyEvent(keyCode: 0, flags: [.maskCommand])
+        XCTAssertNotNil(fixture.monitor.process(shortcut))
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: nil,
+            isSecureField: false,
+            isEditableTextInput: false
+        )
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "akuo"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+        XCTAssertTrue(fixture.coordinator.boundaryCalls.isEmpty)
+    }
+
+    func testKnownIneligibleControlNeverArmsTextRecovery() {
+        let fixture = makeFixture()
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "outline",
+            isSecureField: false,
+            isEditableTextInput: false
+        )
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "akuo"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+    }
+
+    func testSecureFieldNeverArmsTextRecovery() {
+        let fixture = makeFixture()
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "password",
+            isSecureField: true,
+            isEditableTextInput: false
+        )
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "akuo"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+    }
+
+    func testModifiedKeyWhileFocusIsUnavailableNeverArmsTextRecovery() {
+        let fixture = makeFixture()
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: nil,
+            isSecureField: false,
+            isEditableTextInput: false
+        )
+        let shortcut = nativeKeyEvent(keyCode: 0, flags: [.maskCommand])
+        XCTAssertNotNil(fixture.monitor.process(shortcut))
+
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: "field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.recoveredText = "akuo"
+        type("k", in: fixture)
+        type("u", in: fixture)
+        type("o", in: fixture)
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertTrue(fixture.focus.recoveryLengths.isEmpty)
+    }
+
     func testIneligibleFocusedControlClearsTransientStateWithoutDecoding() {
         let fixture = makeFixture()
         type("a", in: fixture)
@@ -468,6 +1335,98 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(replacer.callCount, 0)
     }
 
+    func testFinalRevalidationBudgetExpiryPreservesBoundaryWithoutMutation() {
+        var now: TimeInterval = 0
+        var preparationCalls = 0
+        var requestCalls = 0
+        let element = AXUIElementCreateApplication(43)
+        let accessibility = SystemAccessibilityFocusProvider(
+            reader: BudgetAccessibilityReader(
+                element: element,
+                text: "akuo",
+                onRequest: {
+                    requestCalls += 1
+                    // The boundary callback performs initial resolution, a
+                    // coordinator revalidation, exact-text validation, then
+                    // its final revalidation. Expire inside that last AX IPC.
+                    if requestCalls == 23 { now = 0.101 }
+                }
+            ),
+            configureMessagingTimeout: { _, _ in
+                preparationCalls += 1
+                return .success
+            },
+            now: { now }
+        )
+        let focusForMonitor = FocusContextProvider(
+            frontmostProcessProvider: BudgetFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: BudgetWindowOrderingProvider()
+        )
+        // This copied value is deliberately supplied to CorrectionCoordinator.
+        // It retains the same reference-backed AX provider and must therefore
+        // observe the monitor's original callback deadline.
+        let focusForValidator = focusForMonitor
+        let decoder = FakeNativeEventDecoder()
+        let inputSources = FakeInputSourceState(readiness: .init(
+            englishAvailable: true,
+            hebrewAvailable: true
+        ), currentLanguage: .english)
+        let replacer = MonitorRecordingTextReplacer()
+        let selector = BudgetInputSourceSelector()
+        let scorer = WordScorer(recognizer: MonitorRecognizer())
+        let coordinator = CorrectionCoordinator(
+            policy: CorrectionPolicy(
+                layoutMap: KeyboardLayoutMap(),
+                originalScorer: scorer,
+                candidateScorer: scorer,
+                excluder: TokenExcluder()
+            ),
+            textReplacer: replacer,
+            inputSourceSelector: selector,
+            counter: MonitorCorrectionCounter(),
+            clock: MonitorRuntimeClock(),
+            undoController: UndoController(),
+            previousTextValidator: focusForValidator
+        )
+        let monitor = KeyboardEventMonitor(
+            decoder: decoder,
+            coordinator: coordinator,
+            permission: FakePermissionChecker(isGranted: true),
+            secureInput: FakeSecureInputChecker(isSecureInputEnabled: false),
+            focusContextProvider: focusForMonitor,
+            inputSources: inputSources,
+            tapManager: FakeNativeEventTapManager(),
+            isAkuoEnabled: { true }
+        )
+
+        decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        preparationCalls = 0
+        requestCalls = 0
+        now = 0
+        decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertTrue(monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        XCTAssertEqual(preparationCalls, 23)
+        XCTAssertEqual(replacer.callCount, 0)
+        XCTAssertTrue(selector.selectedLanguages.isEmpty)
+        XCTAssertTrue(selector.exactIdentifiers.isEmpty)
+    }
+
+    func testFinalContextGateRejectsExpiredAccessibilityBudget() {
+        let fixture = makeFixture()
+        fixture.coordinator.boundaryResult = .handled
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        fixture.focus.accessibilityBudgetRemaining = false
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.count, 1)
+    }
+
     func testStableSourceChangeBetweenEventsStartsANewToken() {
         let fixture = makeFixture()
         type("a", in: fixture)
@@ -509,6 +1468,39 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
 
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+    }
+
+    func testNavigationResetDoesNotCorrectTrackedSuffixJoinedToVisiblePrefix() {
+        let fixture = makeRealValidationFixture(visibleText: "xakuo")
+        fixture.decoder.event = .navigation(marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        XCTAssertEqual(fixture.replacer.callCount, 0)
+        XCTAssertTrue(fixture.selector.selectedLanguages.isEmpty)
+        XCTAssertTrue(fixture.selector.exactIdentifiers.isEmpty)
+    }
+
+    func testNavigationResetStillCorrectsStandaloneTrackedToken() {
+        for visibleText in ["akuo", " akuo"] {
+            let fixture = makeRealValidationFixture(visibleText: visibleText)
+            fixture.decoder.event = .navigation(marker: 0)
+            XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+            fixture.decoder.event = .text("akuo", marker: 0)
+            XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+            fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+            XCTAssertNil(
+                fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)),
+                "visibleText=\(visibleText.debugDescription)"
+            )
+            XCTAssertEqual(fixture.replacer.callCount, 1)
+            XCTAssertEqual(fixture.selector.selectedLanguages, [.hebrew])
+            XCTAssertTrue(fixture.selector.exactIdentifiers.isEmpty)
+        }
     }
 
     func testTabNavigationPreservesModifiersAndDisarmsImmediateUndo() {
@@ -1165,6 +2157,25 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
     }
 
+    private func moveToUnavailableNewProcess(in fixture: MonitorFixture) {
+        fixture.focus.context = .init(
+            processIdentifier: 41,
+            elementIdentifier: "previous-field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.decoder.event = .unsupportedModifiers(marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(
+            nativeKeyEvent(keyCode: 0, flags: [.maskCommand])
+        ))
+        fixture.focus.context = .init(
+            processIdentifier: 42,
+            elementIdentifier: nil,
+            isSecureField: false,
+            isEditableTextInput: false
+        )
+    }
+
     private func nativeUnicodeEvent(_ text: String) -> CGEvent {
         let event = CGEvent(
             keyboardEventSource: nil,
@@ -1192,6 +2203,49 @@ final class KeyboardEventMonitorTests: XCTestCase {
             keyDown: true
         )!
         event.flags = flags
+        return event
+    }
+
+    private func targetedNativeEvent(processIdentifier: Int32) -> CGEvent {
+        nativeEvent(targetProcessIdentifier: Int64(processIdentifier))
+    }
+
+    private func targetedNativeKeyEvent(
+        processIdentifier: Int32,
+        keyCode: CGKeyCode
+    ) -> CGEvent {
+        let event = nativeKeyEvent(keyCode: keyCode, flags: [])
+        event.setIntegerValueField(
+            .eventTargetUnixProcessID,
+            value: Int64(processIdentifier)
+        )
+        return event
+    }
+
+    private func targetedNativeShiftEvent(
+        processIdentifier: Int32,
+        keyCode: CGKeyCode,
+        flags: CGEventFlags,
+        timestamp: TimeInterval
+    ) -> CGEvent {
+        let event = nativeShiftEvent(
+            keyCode: keyCode,
+            flags: flags,
+            timestamp: timestamp
+        )
+        event.setIntegerValueField(
+            .eventTargetUnixProcessID,
+            value: Int64(processIdentifier)
+        )
+        return event
+    }
+
+    private func nativeEvent(targetProcessIdentifier: Int64) -> CGEvent {
+        let event = nativeKeyEvent(keyCode: 0, flags: [])
+        event.setIntegerValueField(
+            .eventTargetUnixProcessID,
+            value: targetProcessIdentifier
+        )
         return event
     }
 
@@ -1275,6 +2329,147 @@ private struct MonitorCorrectionCounter: CorrectionCounting {
 
 private struct MonitorRuntimeClock: RuntimeClock {
     var now: Date { Date(timeIntervalSince1970: 0) }
+}
+
+private struct BudgetFrontmostProcessProvider: FrontmostProcessProviding {
+    let processIdentifier: Int32?
+}
+
+private struct BudgetWindowOrderingProvider: WindowProcessOrderingProviding {
+    func processIdentifiersInFront(of activationOwner: Int32) -> [Int32]? { [] }
+}
+
+private final class BudgetAccessibilityReader: AccessibilityAttributeReading {
+    private let element: AXUIElement
+    private let text: String
+    private let caretRange: AXValue
+    private let onRequest: () -> Void
+
+    init(
+        element: AXUIElement,
+        text: String,
+        onRequest: @escaping () -> Void = {}
+    ) {
+        self.element = element
+        self.text = text
+        self.onRequest = onRequest
+        var range = CFRange(location: (text as NSString).length, length: 0)
+        caretRange = AXValueCreate(.cfRange, &range)!
+    }
+
+    func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead {
+        onRequest()
+        return switch attribute {
+        case kAXFocusedUIElementAttribute:
+            .init(result: .success, value: self.element)
+        case kAXRoleAttribute:
+            .init(result: .success, value: "AXTextArea" as CFString)
+        case kAXSubroleAttribute, kAXEnabledAttribute:
+            .init(result: .attributeUnsupported, value: nil)
+        case kAXSelectedTextRangeAttribute:
+            .init(result: .success, value: caretRange)
+        default:
+            .init(result: .attributeUnsupported, value: nil)
+        }
+    }
+
+    func parameterizedAttribute(
+        _ attribute: String,
+        parameter: CFTypeRef,
+        of element: AXUIElement
+    ) -> AccessibilityAttributeRead {
+        onRequest()
+        guard attribute == kAXStringForRangeParameterizedAttribute,
+              let range = AccessibilityAttributeDecoder.range(from: parameter),
+              range.location >= 0,
+              range.length >= 0,
+              range.location + range.length <= (text as NSString).length else {
+            return .init(result: .parameterizedAttributeUnsupported, value: nil)
+        }
+        return .init(
+            result: .success,
+            value: (text as NSString).substring(with: range) as CFString
+        )
+    }
+
+    func isAttributeSettable(_ attribute: String, of element: AXUIElement) -> Bool? {
+        onRequest()
+        return attribute == kAXValueAttribute ? true : nil
+    }
+}
+
+private struct RealValidationMonitorFixture {
+    let monitor: KeyboardEventMonitor
+    let decoder: FakeNativeEventDecoder
+    let replacer: MonitorRecordingTextReplacer
+    let selector: BudgetInputSourceSelector
+}
+
+private func makeRealValidationFixture(
+    visibleText: String
+) -> RealValidationMonitorFixture {
+    let element = AXUIElementCreateApplication(43)
+    let accessibility = SystemAccessibilityFocusProvider(
+        reader: BudgetAccessibilityReader(element: element, text: visibleText)
+    )
+    let focus = FocusContextProvider(
+        frontmostProcessProvider: BudgetFrontmostProcessProvider(processIdentifier: 42),
+        accessibilityProvider: accessibility,
+        windowProcessOrderingProvider: BudgetWindowOrderingProvider()
+    )
+    let decoder = FakeNativeEventDecoder()
+    let inputSources = FakeInputSourceState(readiness: .init(
+        englishAvailable: true,
+        hebrewAvailable: true
+    ), currentLanguage: .english)
+    let replacer = MonitorRecordingTextReplacer()
+    let selector = BudgetInputSourceSelector()
+    let scorer = WordScorer(recognizer: MonitorRecognizer())
+    let coordinator = CorrectionCoordinator(
+        policy: CorrectionPolicy(
+            layoutMap: KeyboardLayoutMap(),
+            originalScorer: scorer,
+            candidateScorer: scorer,
+            excluder: TokenExcluder()
+        ),
+        textReplacer: replacer,
+        inputSourceSelector: selector,
+        counter: MonitorCorrectionCounter(),
+        clock: MonitorRuntimeClock(),
+        undoController: UndoController(),
+        previousTextValidator: focus
+    )
+    let monitor = KeyboardEventMonitor(
+        decoder: decoder,
+        coordinator: coordinator,
+        permission: FakePermissionChecker(isGranted: true),
+        secureInput: FakeSecureInputChecker(isSecureInputEnabled: false),
+        focusContextProvider: focus,
+        inputSources: inputSources,
+        tapManager: FakeNativeEventTapManager(),
+        isAkuoEnabled: { true }
+    )
+    return .init(
+        monitor: monitor,
+        decoder: decoder,
+        replacer: replacer,
+        selector: selector
+    )
+}
+
+private final class BudgetInputSourceSelector: InputSourceSelecting {
+    private(set) var selectedLanguages: [Language] = []
+    private(set) var exactIdentifiers: [String] = []
+
+    func select(_ language: Language) -> Bool {
+        selectedLanguages.append(language)
+        return true
+    }
+
+    func selectExact(identifier: String) -> Bool {
+        exactIdentifiers.append(identifier)
+        return true
+    }
 }
 
 private final class FakeNativeEventDecoder: NativeEventDecoding {
@@ -1444,11 +2639,34 @@ private final class FakeSecureInputChecker: SecureInputChecking {
 
 private final class FakeFocusContextProvider: FocusContextProviding {
     var context: FocusContext?
+    var contextsByProcessIdentifier: [Int32: FocusContext] = [:]
+    var interactionContextsByActivationOwner: [Int32: FocusContext] = [:]
+    var aheadFocusedContextsByActivationOwner: [Int32: FocusContext] = [:]
+    var unfocusedAheadProcessIdentifiersByActivationOwner: Set<Int32> = []
+    var frontmostInteractionContext: FocusContext?
+    var scriptedInteractionContexts: [Int32: [FocusContext?]] = [:]
     var scriptedContexts: [FocusContext?] = []
+    var recoveredText: String?
     private(set) var currentCalls = 0
+    private(set) var requestedProcessIdentifiers: [Int32] = []
+    private(set) var interactionOwnerRequests: [Int32] = []
+    private(set) var frontmostInteractionCalls = 0
+    private(set) var recoveryLengths: [Int] = []
+    private(set) var recoveryContexts: [FocusContext] = []
+    private(set) var accessibilityBudgetStarts = 0
+    var accessibilityBudgetRemaining = true
 
     init(context: FocusContext?) {
         self.context = context
+    }
+
+    func beginAccessibilityCallbackBudget() -> () -> Void {
+        accessibilityBudgetStarts += 1
+        return {}
+    }
+
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool {
+        accessibilityBudgetRemaining
     }
 
     func current() -> FocusContext? {
@@ -1457,6 +2675,56 @@ private final class FakeFocusContextProvider: FocusContextProviding {
             return scriptedContexts.removeFirst()
         }
         return context
+    }
+
+    func current(processIdentifier: Int32) -> FocusContext? {
+        requestedProcessIdentifiers.append(processIdentifier)
+        return contextsByProcessIdentifier[processIdentifier]
+    }
+
+    func currentInteractionContext() -> FocusContext? {
+        frontmostInteractionCalls += 1
+        return frontmostInteractionContext ?? current()
+    }
+
+    func currentInteractionContext(
+        activationOwnerProcessIdentifier: Int32
+    ) -> FocusContext? {
+        interactionOwnerRequests.append(activationOwnerProcessIdentifier)
+        if var scripted = scriptedInteractionContexts[activationOwnerProcessIdentifier],
+           !scripted.isEmpty {
+            let next = scripted.removeFirst()
+            scriptedInteractionContexts[activationOwnerProcessIdentifier] = scripted
+            return next
+        }
+        if let context = interactionContextsByActivationOwner[
+            activationOwnerProcessIdentifier
+        ] {
+            return context
+        }
+        if let context = aheadFocusedContextsByActivationOwner[
+            activationOwnerProcessIdentifier
+        ] {
+            return context
+        }
+        // Match Task 2 semantics: an ahead process without a focused AX
+        // element does not become an interaction owner, so resolution falls
+        // back to the activation owner's context.
+        if unfocusedAheadProcessIdentifiersByActivationOwner.contains(
+            activationOwnerProcessIdentifier
+        ) {
+            return current(processIdentifier: activationOwnerProcessIdentifier)
+        }
+        return current(processIdentifier: activationOwnerProcessIdentifier)
+    }
+
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        context: FocusContext
+    ) -> String? {
+        recoveryLengths.append(utf16Length)
+        recoveryContexts.append(context)
+        return recoveredText
     }
 
     func resetCurrentCalls() {

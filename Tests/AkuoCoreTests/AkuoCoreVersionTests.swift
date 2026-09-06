@@ -4,8 +4,8 @@ import XCTest
 final class AkuoCoreVersionTests: XCTestCase {
     // Production mutation caught: changing the authoritative candidate version
     // or build identity away from the approved Unreleased values.
-    func testCurrentCandidateIdentityIsPointFourBuildTwentyFour() {
+    func testCurrentCandidateIdentityIsPointFourBuildThirty() {
         XCTAssertEqual(AkuoCoreVersion.current, "0.4.0")
-        XCTAssertEqual(AkuoCoreVersion.build, "24")
+        XCTAssertEqual(AkuoCoreVersion.build, "30")
     }
 }

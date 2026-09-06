@@ -211,6 +211,48 @@ extension CorrectionCoordinator: CorrectionCoordinating {}
 
 protocol FocusContextProviding {
     func current() -> FocusContext?
+    func current(processIdentifier: Int32) -> FocusContext?
+    func currentInteractionContext() -> FocusContext?
+    func currentInteractionContext(
+        activationOwnerProcessIdentifier: Int32
+    ) -> FocusContext?
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        context: FocusContext
+    ) -> String?
+    func beginAccessibilityCallbackBudget() -> () -> Void
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool
+}
+
+extension FocusContextProviding {
+    func beginAccessibilityCallbackBudget() -> () -> Void { {} }
+    // Non-system implementations must opt in explicitly. Treating an
+    // unobservable budget as expired preserves the monitor's fail-open gate.
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool { false }
+    func current(processIdentifier: Int32) -> FocusContext? {
+        guard let context = current(),
+              context.processIdentifier == processIdentifier else {
+            return nil
+        }
+        return context
+    }
+
+    func currentInteractionContext() -> FocusContext? {
+        current()
+    }
+
+    func currentInteractionContext(
+        activationOwnerProcessIdentifier: Int32
+    ) -> FocusContext? {
+        current(processIdentifier: activationOwnerProcessIdentifier)
+    }
+
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        context: FocusContext
+    ) -> String? {
+        nil
+    }
 }
 
 extension FocusContextProvider: FocusContextProviding {}
@@ -349,6 +391,43 @@ public final class KeyboardEventMonitor {
         .maskSecondaryFn,
         .maskHelp,
     ]
+    private static let recoveryDisallowedModifiers: CGEventFlags = [
+        .maskCommand,
+        .maskControl,
+        .maskAlternate,
+        .maskSecondaryFn,
+        .maskHelp,
+    ]
+    private static let unavailableBoundaryDisallowedModifiers: CGEventFlags = [
+        .maskCommand,
+        .maskControl,
+        .maskAlternate,
+        .maskShift,
+        .maskSecondaryFn,
+        .maskHelp,
+    ]
+    private static let maximumRecoveredUTF16Length = 64
+    private static let maximumRecoveryInterval: TimeInterval = 1
+    private static let recoveryBoundaryKeyCodes: Set<CGKeyCode> = [49, 36, 76]
+    private static let shiftKeyCodes: Set<CGKeyCode> = [56, 60]
+
+    private struct PendingTextRecovery {
+        let processIdentifier: Int32
+        let inputSourceIdentifier: String
+        var missingUTF16Length: Int
+        let armedAt: TimeInterval
+    }
+
+    private struct FallbackPrefixProvenance {
+        let activationOwnerProcessIdentifier: Int32
+        let inputSourceIdentifier: String
+        let startedAt: TimeInterval
+    }
+
+    private enum FocusOwner {
+        case eventTarget(Int32)
+        case frontmostApplication
+    }
 
     public weak var delegate: (any KeyboardEventMonitorDelegate)?
     public private(set) var state: State = .stopped
@@ -366,8 +445,12 @@ public final class KeyboardEventMonitor {
 
     private var wordBuffer = WordBuffer()
     private var lastFocusContext: FocusContext?
+    private var lastObservedProcessIdentifier: Int32?
+    private var unconsumedProcessTransitionIdentifier: Int32?
     private var lastInputSourceIdentifier: String?
+    private var fallbackPrefixProvenance: FallbackPrefixProvenance?
     private var suppressCorrectionUntilBoundary = false
+    private var pendingTextRecovery: PendingTextRecovery?
     private var shiftGestureRecognizer = ShiftGestureRecognizer(activationInterval: 0.4)
 
     public convenience init(
@@ -446,6 +529,8 @@ public final class KeyboardEventMonitor {
 
     public func stop() {
         clearTransientState()
+        lastObservedProcessIdentifier = nil
+        unconsumedProcessTransitionIdentifier = nil
         tapManager.remove()
         setState(.stopped)
     }
@@ -487,22 +572,76 @@ public final class KeyboardEventMonitor {
         if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticMarker {
             return event
         }
+        let endAccessibilityBudget = focusContextProvider.beginAccessibilityCallbackBudget()
+        defer { endAccessibilityBudget() }
 
         switch eventType {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             clearTransientState()
+            unconsumedProcessTransitionIdentifier = nil
             return event
         default:
             break
         }
 
-        guard let context = focusContextProvider.current(),
+        let focusOwner = focusOwner(for: event)
+        let observedContext = currentFocusContext(for: focusOwner)
+        let previousObservedProcessIdentifier = lastObservedProcessIdentifier
+        if let observedProcessIdentifier = observedContext?.processIdentifier {
+            if let previousObservedProcessIdentifier,
+               previousObservedProcessIdentifier != observedProcessIdentifier {
+                unconsumedProcessTransitionIdentifier = observedProcessIdentifier
+            }
+            lastObservedProcessIdentifier = observedProcessIdentifier
+        }
+        guard let context = observedContext,
               context.elementIdentifier != nil,
               !context.isSecureField,
               context.isEditableTextInput else {
+            if let context = observedContext,
+               context.elementIdentifier == nil,
+               !context.isSecureField {
+                beginPotentialTextRecovery(
+                    for: event,
+                    eventType: eventType,
+                    context: context,
+                    observedProcessTransition:
+                        unconsumedProcessTransitionIdentifier == context.processIdentifier
+                )
+                return event
+            }
             clearTransientState()
+            unconsumedProcessTransitionIdentifier = nil
             return event
         }
+        let fallbackPrefix = fallbackPrefixProvenance
+        let isActivationOwnerFallbackTransition: Bool
+        switch focusOwner {
+        case let .eventTarget(activationOwner):
+            isActivationOwnerFallbackTransition =
+                fallbackPrefix?.activationOwnerProcessIdentifier == activationOwner
+                && context.processIdentifier != activationOwner
+        case .frontmostApplication:
+            isActivationOwnerFallbackTransition = false
+        }
+        if isActivationOwnerFallbackTransition,
+           unconsumedProcessTransitionIdentifier == context.processIdentifier,
+           !wordBuffer.currentToken.isEmpty {
+            // An ahead panel can expose a window before its focused element is
+            // available. Until it is resolvable, Task 2 conservatively falls
+            // back to the activation owner. When a distinct eligible context
+            // later appears, recover only a bounded visible span; do not carry
+            // the activation owner's buffered token into the panel.
+            beginPotentialTextRecovery(
+                for: event,
+                eventType: eventType,
+                context: context,
+                observedProcessTransition: true,
+                fallbackPrefixProvenance: fallbackPrefix
+            )
+            return event
+        }
+        unconsumedProcessTransitionIdentifier = nil
 
         if let lastFocusContext, lastFocusContext != context {
             clearTransientState()
@@ -552,7 +691,7 @@ public final class KeyboardEventMonitor {
                 priorInputLanguage: sourceAtGesture?.language,
                 currentInputSourceIdentifier: sourceAtGesture?.identifier,
                 isContextStillEligible: {
-                    self.isContextStillEligible(context)
+                    self.isContextStillEligible(context, owner: focusOwner)
                         && self.inputSources.currentSource == sourceAtGesture
                 }
             )
@@ -580,6 +719,14 @@ public final class KeyboardEventMonitor {
                 lastFocusContext = context
             }
             lastInputSourceIdentifier = sourceAfterDecoding.identifier
+            if let pendingTextRecovery,
+               pendingTextRecovery.processIdentifier != context.processIdentifier
+                || pendingTextRecovery.inputSourceIdentifier
+                    != sourceAfterDecoding.identifier {
+                self.pendingTextRecovery = nil
+                wordBuffer.reset()
+                suppressCorrectionUntilBoundary = true
+            }
             let language = sourceAfterDecoding.language
             let correctionBoundary = keyCode.flatMap {
                 CorrectionBoundary(text: text, keyCode: Int($0))
@@ -607,6 +754,12 @@ public final class KeyboardEventMonitor {
                 return event
             }
             if isBufferedTokenText {
+                recordFallbackPrefixProvenanceIfNeeded(
+                    context: context,
+                    owner: focusOwner,
+                    inputSource: sourceAfterDecoding,
+                    timestamp: TimeInterval(event.timestamp) / 1_000_000_000
+                )
                 if let keyCode {
                     var modifiers = ObservedKeyModifiers()
                     if event.flags.contains(.maskShift) {
@@ -648,6 +801,16 @@ public final class KeyboardEventMonitor {
                 return event
             }
 
+            guard recoverPendingTextIfNeeded(
+                context: context,
+                inputSource: sourceAfterDecoding,
+                language: language,
+                boundaryTimestamp: TimeInterval(event.timestamp) / 1_000_000_000
+            ) else {
+                clearTransientState()
+                return event
+            }
+
             switch wordBuffer.consume(.boundary(correctionBoundary)) {
             case let .completed(completedWord):
                 let result = coordinator.handleBoundary(
@@ -656,7 +819,7 @@ public final class KeyboardEventMonitor {
                     priorInputLanguage: language,
                     priorInputSourceIdentifier: sourceAfterDecoding.identifier,
                     isContextStillEligible: {
-                        self.isContextStillEligible(context)
+                        self.isContextStillEligible(context, owner: focusOwner)
                             && self.inputSources.currentSource == sourceAfterDecoding
                     }
                 )
@@ -685,7 +848,7 @@ public final class KeyboardEventMonitor {
             let result = coordinator.handleImmediateUndo(
                 context: context,
                 isContextStillEligible: {
-                    self.isContextStillEligible(context)
+                    self.isContextStillEligible(context, owner: focusOwner)
                 }
             )
             if case let .handledWithInputSourceSelectionFailure(expectedLanguage) = result {
@@ -709,15 +872,46 @@ public final class KeyboardEventMonitor {
         wordBuffer.currentToken
     }
 
-    private func isContextStillEligible(_ expected: FocusContext) -> Bool {
+    private func focusOwner(for event: CGEvent) -> FocusOwner {
+        let rawProcessIdentifier = event.getIntegerValueField(
+            .eventTargetUnixProcessID
+        )
+        guard rawProcessIdentifier > 0,
+              rawProcessIdentifier <= Int64(Int32.max) else {
+            return .frontmostApplication
+        }
+        return .eventTarget(Int32(rawProcessIdentifier))
+    }
+
+    private func currentFocusContext(for owner: FocusOwner) -> FocusContext? {
+        switch owner {
+        case let .eventTarget(processIdentifier):
+            focusContextProvider.currentInteractionContext(
+                activationOwnerProcessIdentifier: processIdentifier
+            )
+        case .frontmostApplication:
+            focusContextProvider.currentInteractionContext()
+        }
+    }
+
+    private func isContextStillEligible(
+        _ expected: FocusContext,
+        owner: FocusOwner
+    ) -> Bool {
         guard !secureInput.isSecureInputEnabled,
-              let current = focusContextProvider.current() else {
+              let current = currentFocusContext(for: owner) else {
+            clearTransientState()
             return false
         }
-        return current == expected
+        guard current == expected
             && current.elementIdentifier != nil
             && !current.isSecureField
             && current.isEditableTextInput
+            && focusContextProvider.hasAccessibilityCallbackBudgetRemaining() else {
+            clearTransientState()
+            return false
+        }
+        return true
     }
 
     private var prerequisitesAreMet: Bool {
@@ -751,11 +945,153 @@ public final class KeyboardEventMonitor {
         resetInputContext(invalidateImmediateUndo: true)
     }
 
+    private func beginPotentialTextRecovery(
+        for event: CGEvent,
+        eventType: CGEventType,
+        context: FocusContext,
+        observedProcessTransition: Bool,
+        fallbackPrefixProvenance: FallbackPrefixProvenance? = nil
+    ) {
+        if suppressCorrectionUntilBoundary {
+            clearTransientState()
+            suppressCorrectionUntilBoundary = true
+            return
+        }
+
+        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        let wasPendingRecovery = pendingTextRecovery != nil
+        if eventType == .flagsChanged,
+           Self.shiftKeyCodes.contains(keyCode) {
+            return
+        }
+        guard eventType == .keyDown,
+              KeyboardLayoutMap.isAlphabeticKeyCode(Int(keyCode)),
+              event.flags.intersection(Self.recoveryDisallowedModifiers).isEmpty,
+              let inputSource = inputSources.currentSource else {
+            clearTransientState()
+            unconsumedProcessTransitionIdentifier = nil
+            if wasPendingRecovery,
+               !(eventType == .keyDown
+                   && Self.recoveryBoundaryKeyCodes.contains(keyCode)
+                   && event.flags.intersection(
+                       Self.unavailableBoundaryDisallowedModifiers
+                   ).isEmpty) {
+                suppressCorrectionUntilBoundary = true
+            }
+            return
+        }
+
+        let bufferedLength = wordBuffer.currentToken.utf16.count
+        let missingLength: Int
+        let armedAt: TimeInterval
+        if let pendingTextRecovery {
+            guard pendingTextRecovery.processIdentifier == context.processIdentifier,
+                  pendingTextRecovery.inputSourceIdentifier == inputSource.identifier else {
+                clearTransientState()
+                suppressCorrectionUntilBoundary = true
+                return
+            }
+            missingLength = pendingTextRecovery.missingUTF16Length + bufferedLength + 1
+            armedAt = pendingTextRecovery.armedAt
+        } else {
+            guard observedProcessTransition else {
+                clearTransientState()
+                unconsumedProcessTransitionIdentifier = nil
+                suppressCorrectionUntilBoundary = true
+                return
+            }
+            if let fallbackPrefixProvenance {
+                let elapsed = TimeInterval(event.timestamp) / 1_000_000_000
+                    - fallbackPrefixProvenance.startedAt
+                guard fallbackPrefixProvenance.inputSourceIdentifier
+                    == inputSource.identifier,
+                      elapsed >= 0,
+                      elapsed <= Self.maximumRecoveryInterval else {
+                    clearTransientState()
+                    unconsumedProcessTransitionIdentifier = nil
+                    return
+                }
+                missingLength = bufferedLength + 1
+                armedAt = fallbackPrefixProvenance.startedAt
+            } else {
+                missingLength = bufferedLength + 1
+                armedAt = TimeInterval(event.timestamp) / 1_000_000_000
+            }
+        }
+
+        clearTransientState()
+        unconsumedProcessTransitionIdentifier = nil
+        guard missingLength <= Self.maximumRecoveredUTF16Length else {
+            suppressCorrectionUntilBoundary = true
+            return
+        }
+        pendingTextRecovery = PendingTextRecovery(
+            processIdentifier: context.processIdentifier,
+            inputSourceIdentifier: inputSource.identifier,
+            missingUTF16Length: missingLength,
+            armedAt: armedAt
+        )
+    }
+
+    private func recordFallbackPrefixProvenanceIfNeeded(
+        context: FocusContext,
+        owner: FocusOwner,
+        inputSource: InputSourceSnapshot,
+        timestamp: TimeInterval
+    ) {
+        guard wordBuffer.currentToken.isEmpty,
+              case let .eventTarget(activationOwner) = owner,
+              context.processIdentifier == activationOwner else {
+            return
+        }
+        fallbackPrefixProvenance = FallbackPrefixProvenance(
+            activationOwnerProcessIdentifier: activationOwner,
+            inputSourceIdentifier: inputSource.identifier,
+            startedAt: timestamp
+        )
+    }
+
+    private func recoverPendingTextIfNeeded(
+        context: FocusContext,
+        inputSource: InputSourceSnapshot,
+        language: Language,
+        boundaryTimestamp: TimeInterval
+    ) -> Bool {
+        guard let pendingTextRecovery else { return true }
+        self.pendingTextRecovery = nil
+
+        let bufferedToken = wordBuffer.currentToken
+        let requestedLength = pendingTextRecovery.missingUTF16Length
+            + bufferedToken.utf16.count
+        let elapsed = boundaryTimestamp - pendingTextRecovery.armedAt
+        guard pendingTextRecovery.processIdentifier == context.processIdentifier,
+              pendingTextRecovery.inputSourceIdentifier == inputSource.identifier,
+              elapsed >= 0,
+              elapsed <= Self.maximumRecoveryInterval,
+              requestedLength <= Self.maximumRecoveredUTF16Length,
+              let recoveredText = focusContextProvider.textImmediatelyBeforeCaret(
+                  utf16Length: requestedLength,
+                  context: context
+              ),
+              recoveredText.utf16.count == requestedLength,
+              recoveredText.hasSuffix(bufferedToken),
+              isTokenText(recoveredText, keyCode: nil, language: language),
+              inputSources.currentSource == inputSource else {
+            return false
+        }
+
+        wordBuffer.reset()
+        _ = wordBuffer.consume(.text(recoveredText))
+        return true
+    }
+
     private func resetInputContext(invalidateImmediateUndo: Bool) {
         wordBuffer.reset()
         lastFocusContext = nil
         lastInputSourceIdentifier = nil
+        fallbackPrefixProvenance = nil
         suppressCorrectionUntilBoundary = false
+        pendingTextRecovery = nil
         shiftGestureRecognizer.reset()
         decoder.resetModifierState()
         if invalidateImmediateUndo {

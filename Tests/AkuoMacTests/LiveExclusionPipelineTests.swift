@@ -250,6 +250,8 @@ private final class LiveExclusionEventDecoder: NativeEventDecoding {
 }
 
 private struct LiveExclusionFocusProvider: FocusContextProviding {
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool { true }
+
     func current() -> FocusContext? {
         .init(
             processIdentifier: 42,

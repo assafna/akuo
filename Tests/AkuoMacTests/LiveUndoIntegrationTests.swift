@@ -162,6 +162,8 @@ private final class LiveUndoEventDecoder: NativeEventDecoding {
 }
 
 private struct LiveUndoFocusProvider: FocusContextProviding {
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool { true }
+
     func current() -> FocusContext? {
         .init(
             processIdentifier: 42,

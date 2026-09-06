@@ -2,6 +2,21 @@ import AppKit
 import ApplicationServices
 import AkuoCore
 
+private enum AccessibilityCallbackBudget {
+    private static let key = "Akuo.accessibilityCallbackDeadline"
+    static func begin(now: TimeInterval) -> () -> Void {
+        let dictionary = Thread.current.threadDictionary
+        let previous = dictionary[key]
+        guard previous == nil else { return {} }
+        dictionary[key] = now + 0.100
+        return { dictionary[key] = previous }
+    }
+    static func remaining(now: TimeInterval) -> Float? {
+        guard let deadline = Thread.current.threadDictionary[key] as? TimeInterval else { return nil }
+        return Float(deadline - now)
+    }
+}
+
 protocol FrontmostProcessProviding {
     var processIdentifier: Int32? { get }
 }
@@ -117,23 +132,67 @@ enum AccessibilityAttributeDecoder {
 }
 
 enum AccessibilityTextMatcher {
+    static func standaloneValidationRange(
+        selectedRange: NSRange,
+        expectedText: String
+    ) -> NSRange? {
+        guard let suffixRange = precedingRange(
+            selectedRange: selectedRange,
+            expectedText: expectedText
+        ) else {
+            return nil
+        }
+        guard suffixRange.location > 0 else { return suffixRange }
+        return NSRange(
+            location: suffixRange.location - 1,
+            length: suffixRange.length + 1
+        )
+    }
+
+    static func isStandaloneTokenEvidence(
+        _ evidence: String,
+        expectedText: String,
+        expectedStart: Int
+    ) -> Bool {
+        guard expectedStart > 0 else { return evidence == expectedText }
+
+        let nsEvidence = evidence as NSString
+        let expectedUTF16Length = (expectedText as NSString).length
+        guard nsEvidence.length == expectedUTF16Length + 1,
+              nsEvidence.substring(from: 1) == expectedText,
+              let prefix = UnicodeScalar(UInt32(nsEvidence.character(at: 0))) else {
+            return false
+        }
+        return CharacterSet.whitespacesAndNewlines.contains(prefix)
+            || prefix.properties.generalCategory == .control
+    }
+
     static func precedingRange(
         selectedRange: NSRange,
         expectedText: String
     ) -> NSRange? {
-        guard !expectedText.isEmpty,
+        precedingRange(
+            selectedRange: selectedRange,
+            utf16Length: (expectedText as NSString).length
+        )
+    }
+
+    static func precedingRange(
+        selectedRange: NSRange,
+        utf16Length: Int
+    ) -> NSRange? {
+        guard utf16Length > 0,
               selectedRange.location != NSNotFound,
               selectedRange.length == 0 else {
             return nil
         }
 
-        let expectedLength = (expectedText as NSString).length
-        guard selectedRange.location >= expectedLength else {
+        guard selectedRange.location >= utf16Length else {
             return nil
         }
         return NSRange(
-            location: selectedRange.location - expectedLength,
-            length: expectedLength
+            location: selectedRange.location - utf16Length,
+            length: utf16Length
         )
     }
 }
@@ -146,18 +205,50 @@ struct AccessibilityFocusElement: Equatable {
     let isValueSettable: Bool?
 }
 
+enum AccessibilityFocusSnapshot: Equatable {
+    case focused(AccessibilityFocusElement)
+    case stablyAbsent
+    case unavailable
+}
+
 protocol AccessibilityFocusProviding {
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement?
+    func focusSnapshot(for processIdentifier: Int32) -> AccessibilityFocusSnapshot
     func hasExactTextImmediatelyBeforeCaret(
         _ expectedText: String,
         processIdentifier: Int32,
         elementIdentifier: String
     ) -> Bool
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> String?
+}
+
+extension AccessibilityFocusProviding {
+    func focusSnapshot(for processIdentifier: Int32) -> AccessibilityFocusSnapshot {
+        guard let element = focusedElement(for: processIdentifier) else {
+            return .stablyAbsent
+        }
+        return .focused(element)
+    }
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> String? {
+        nil
+    }
 }
 
 struct AccessibilityAttributeRead {
     let result: AXError
     let value: CFTypeRef?
+}
+
+private struct AccessibilitySettableValue {
+    let value: Bool?
 }
 
 protocol AccessibilityAttributeReading {
@@ -222,34 +313,80 @@ private final class AccessibilityFocusIdentityTracker {
 }
 
 final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
+    private static let messagingTimeout: Float = 0.005
     private let reader: any AccessibilityAttributeReading
+    private let configureMessagingTimeout: (AXUIElement, Float) -> AXError
+    private let now: () -> TimeInterval
     private let identityTracker = AccessibilityFocusIdentityTracker()
 
-    init(reader: any AccessibilityAttributeReading = SystemAccessibilityAttributeReader()) {
+    init(
+        reader: any AccessibilityAttributeReading = SystemAccessibilityAttributeReader(),
+        configureMessagingTimeout: @escaping (AXUIElement, Float) -> AXError = AXUIElementSetMessagingTimeout,
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
         self.reader = reader
+        self.configureMessagingTimeout = configureMessagingTimeout
+        self.now = now
+    }
+
+    func beginCallbackBudget() -> () -> Void { AccessibilityCallbackBudget.begin(now: now()) }
+
+    func hasCallbackBudgetRemaining() -> Bool {
+        guard let remaining = AccessibilityCallbackBudget.remaining(now: now()) else {
+            return false
+        }
+        return remaining > 0
     }
 
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
-        let application = AXUIElementCreateApplication(processIdentifier)
-        let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
-        guard initialFocus.result == .success,
-              let element = AccessibilityAttributeDecoder.element(from: initialFocus.value) else {
+        guard case let .focused(element) = focusSnapshot(for: processIdentifier) else {
             return nil
         }
+        return element
+    }
 
-        let role = reader.attribute(kAXRoleAttribute, of: element)
-        let subrole = reader.attribute(kAXSubroleAttribute, of: element)
-        let isEnabled = reader.attribute(kAXEnabledAttribute, of: element)
-        let isValueSettable = reader.isAttributeSettable(kAXValueAttribute, of: element)
+    func focusSnapshot(for processIdentifier: Int32) -> AccessibilityFocusSnapshot {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        guard let initialFocus = attribute(
+            kAXFocusedUIElementAttribute,
+            of: application
+        ) else {
+            return .unavailable
+        }
+        if initialFocus.result == .noValue, initialFocus.value == nil {
+            guard let finalFocus = attribute(
+                kAXFocusedUIElementAttribute,
+                of: application
+            ) else {
+                return .unavailable
+            }
+            return finalFocus.result == .noValue && finalFocus.value == nil
+                ? .stablyAbsent
+                : .unavailable
+        }
+        guard initialFocus.result == .success,
+              let element = AccessibilityAttributeDecoder.element(from: initialFocus.value) else {
+            return .unavailable
+        }
 
-        let finalFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+        guard let role = attribute(kAXRoleAttribute, of: element),
+              let subrole = attribute(kAXSubroleAttribute, of: element),
+              let isEnabled = attribute(kAXEnabledAttribute, of: element),
+              let settable = isAttributeSettable(kAXValueAttribute, of: element),
+              let finalFocus = attribute(
+                  kAXFocusedUIElementAttribute,
+                  of: application
+              ) else {
+            return .unavailable
+        }
+
         guard finalFocus.result == .success,
               let confirmedElement = AccessibilityAttributeDecoder.element(from: finalFocus.value),
               CFEqual(element, confirmedElement) else {
-            return nil
+            return .unavailable
         }
 
-        return AccessibilityFocusElement(
+        return .focused(AccessibilityFocusElement(
             identifier: identityTracker.identifier(for: element),
             role: role.result == .success
                 ? AccessibilityAttributeDecoder.string(from: role.value)
@@ -262,8 +399,8 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
                 result: isEnabled.result,
                 value: isEnabled.value
             ),
-            isValueSettable: isValueSettable
-        )
+            isValueSettable: settable.value
+        ))
     }
 
     func hasExactTextImmediatelyBeforeCaret(
@@ -271,56 +408,182 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         processIdentifier: Int32,
         elementIdentifier: String
     ) -> Bool {
+        guard !expectedText.isEmpty else { return false }
+        guard let evidence = readTextImmediatelyBeforeCaret(
+            expectedText: expectedText,
+            processIdentifier: processIdentifier,
+            elementIdentifier: elementIdentifier,
+            requiresDocumentStart: false
+        ) else {
+            return false
+        }
+        return AccessibilityTextMatcher.isStandaloneTokenEvidence(
+            evidence.text,
+            expectedText: expectedText,
+            expectedStart: evidence.expectedStart
+        )
+    }
+
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> String? {
+        readTextImmediatelyBeforeCaret(
+            expectedText: nil,
+            utf16Length: utf16Length,
+            processIdentifier: processIdentifier,
+            elementIdentifier: elementIdentifier,
+            requiresDocumentStart: true
+        )?.text
+    }
+
+    private struct TextEvidence {
+        let text: String
+        let expectedStart: Int
+    }
+
+    private func readTextImmediatelyBeforeCaret(
+        expectedText: String?,
+        utf16Length: Int? = nil,
+        processIdentifier: Int32,
+        elementIdentifier: String,
+        requiresDocumentStart: Bool
+    ) -> TextEvidence? {
+        let utf16Length = expectedText.map { ($0 as NSString).length } ?? utf16Length ?? 0
+        guard utf16Length > 0 else { return nil }
         let application = AXUIElementCreateApplication(processIdentifier)
-        let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+        guard let initialFocus = attribute(
+            kAXFocusedUIElementAttribute,
+            of: application
+        ) else { return nil }
         guard initialFocus.result == .success,
               let element = AccessibilityAttributeDecoder.element(from: initialFocus.value),
               identityTracker.identifier(for: element) == elementIdentifier else {
-            return false
+            return nil
         }
 
-        let selectedRange = reader.attribute(kAXSelectedTextRangeAttribute, of: element)
+        guard let selectedRange = attribute(kAXSelectedTextRangeAttribute, of: element) else {
+            return nil
+        }
         guard selectedRange.result == .success,
               let caretRange = AccessibilityAttributeDecoder.range(
                   from: selectedRange.value
               ),
-              let precedingRange = AccessibilityTextMatcher.precedingRange(
-                  selectedRange: caretRange,
-                  expectedText: expectedText
-              ) else {
-            return false
+              let suffixRange = AccessibilityTextMatcher.precedingRange(
+                  selectedRange: caretRange, utf16Length: utf16Length
+              ), !requiresDocumentStart || suffixRange.location == 0 else {
+            return nil
+        }
+        let requestedTextRange: NSRange
+        if let expectedText {
+            guard let validationRange = AccessibilityTextMatcher.standaloneValidationRange(
+                selectedRange: caretRange,
+                expectedText: expectedText
+            ) else { return nil }
+            requestedTextRange = validationRange
+        } else {
+            requestedTextRange = suffixRange
         }
         var requestedRange = CFRange(
-            location: precedingRange.location,
-            length: precedingRange.length
+            location: requestedTextRange.location,
+            length: requestedTextRange.length
         )
         guard let requestedRangeValue = AXValueCreate(.cfRange, &requestedRange) else {
-            return false
+            return nil
         }
-        let previousText = reader.parameterizedAttribute(
+        guard let previousText = parameterizedAttribute(
             kAXStringForRangeParameterizedAttribute,
             parameter: requestedRangeValue,
             of: element
-        )
-        let finalSelectedRange = reader.attribute(kAXSelectedTextRangeAttribute, of: element)
-        let finalFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+        ), let finalSelectedRange = attribute(
+            kAXSelectedTextRangeAttribute,
+            of: element
+        ), let finalFocus = attribute(
+            kAXFocusedUIElementAttribute,
+            of: application
+        ) else {
+            return nil
+        }
         guard previousText.result == .success,
-              AccessibilityAttributeDecoder.string(from: previousText.value)
-                  == expectedText,
+              let text = AccessibilityAttributeDecoder.string(from: previousText.value),
+              (text as NSString).length == requestedTextRange.length,
               finalSelectedRange.result == .success,
               AccessibilityAttributeDecoder.range(from: finalSelectedRange.value)
                   == caretRange,
               finalFocus.result == .success,
               let confirmedElement = AccessibilityAttributeDecoder.element(from: finalFocus.value),
               CFEqual(element, confirmedElement) else {
-            return false
+            return nil
         }
 
-        return true
+        return TextEvidence(text: text, expectedStart: suffixRange.location)
+    }
+
+    private func attribute(
+        _ attribute: String,
+        of element: AXUIElement
+    ) -> AccessibilityAttributeRead? {
+        request(on: element) { reader.attribute(attribute, of: element) }
+    }
+
+    private func parameterizedAttribute(
+        _ attribute: String,
+        parameter: CFTypeRef,
+        of element: AXUIElement
+    ) -> AccessibilityAttributeRead? {
+        request(on: element) {
+            reader.parameterizedAttribute(attribute, parameter: parameter, of: element)
+        }
+    }
+
+    private func isAttributeSettable(
+        _ attribute: String,
+        of element: AXUIElement
+    ) -> AccessibilitySettableValue? {
+        request(on: element) {
+            AccessibilitySettableValue(
+                value: reader.isAttributeSettable(attribute, of: element)
+            )
+        }
+    }
+
+    private func request<T>(
+        on element: AXUIElement,
+        operation: () -> T
+    ) -> T? {
+        guard prepare(element) else { return nil }
+        let result = operation()
+        guard isWithinCallbackBudget else { return nil }
+        return result
+    }
+
+    private var isWithinCallbackBudget: Bool {
+        guard let remaining = AccessibilityCallbackBudget.remaining(now: now()) else {
+            return true
+        }
+        return remaining > 0
+    }
+
+    private func prepare(_ element: AXUIElement) -> Bool {
+        let timeout: Float
+        if let remaining = AccessibilityCallbackBudget.remaining(now: now()) {
+            guard remaining > 0 else { return false }
+            timeout = min(Self.messagingTimeout, remaining)
+        } else {
+            timeout = Self.messagingTimeout
+        }
+        return configureMessagingTimeout(element, timeout) == .success
     }
 }
 
 public struct FocusContextProvider {
+    // Four ahead processes cover the observed panel-plus-overlay topology.
+    // One callback-wide 100 ms deadline covers every resolver, recovery, and
+    // validation read. Each AX IPC is reconfigured to min(5 ms, remaining),
+    // and evidence is rejected after the request if that one in-flight request
+    // crosses the deadline.
+    private static let maximumAheadProcessIdentifiers = 4
     private static let secureTextField = "AXSecureTextField"
     // Akuo supports only standard editable text roles that are
     // consistently exposed by the supported macOS 13+ application contexts.
@@ -332,10 +595,24 @@ public struct FocusContextProvider {
 
     private let frontmostProcessProvider: any FrontmostProcessProviding
     private let accessibilityProvider: any AccessibilityFocusProviding
+    private let windowProcessOrderingProvider: any WindowProcessOrderingProviding
 
     public init() {
         frontmostProcessProvider = WorkspaceFrontmostProcessProvider()
         accessibilityProvider = SystemAccessibilityFocusProvider()
+        windowProcessOrderingProvider = SystemWindowProcessOrderingProvider()
+    }
+
+    func beginAccessibilityCallbackBudget() -> () -> Void {
+        guard let provider = accessibilityProvider as? SystemAccessibilityFocusProvider else { return {} }
+        return provider.beginCallbackBudget()
+    }
+
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool {
+        guard let provider = accessibilityProvider as? SystemAccessibilityFocusProvider else {
+            return false
+        }
+        return provider.hasCallbackBudgetRemaining()
     }
 
     init(
@@ -344,16 +621,34 @@ public struct FocusContextProvider {
     ) {
         self.frontmostProcessProvider = frontmostProcessProvider
         self.accessibilityProvider = accessibilityProvider
+        windowProcessOrderingProvider = SystemWindowProcessOrderingProvider()
+    }
+
+    init(
+        frontmostProcessProvider: some FrontmostProcessProviding,
+        accessibilityProvider: some AccessibilityFocusProviding,
+        windowProcessOrderingProvider: some WindowProcessOrderingProviding
+    ) {
+        self.frontmostProcessProvider = frontmostProcessProvider
+        self.accessibilityProvider = accessibilityProvider
+        self.windowProcessOrderingProvider = windowProcessOrderingProvider
     }
 
     public func current() -> FocusContext? {
         guard let processIdentifier = frontmostProcessProvider.processIdentifier else {
             return nil
         }
-        guard let element = accessibilityProvider.focusedElement(for: processIdentifier) else {
-            guard frontmostProcessProvider.processIdentifier == processIdentifier else {
-                return nil
-            }
+        let context = current(processIdentifier: processIdentifier)
+        guard frontmostProcessProvider.processIdentifier == processIdentifier else {
+            return nil
+        }
+        return context
+    }
+
+    public func current(processIdentifier: Int32) -> FocusContext? {
+        guard case let .focused(element) = accessibilityProvider.focusSnapshot(
+            for: processIdentifier
+        ) else {
             return FocusContext(
                 processIdentifier: processIdentifier,
                 elementIdentifier: nil,
@@ -362,10 +657,13 @@ public struct FocusContextProvider {
             )
         }
 
-        guard frontmostProcessProvider.processIdentifier == processIdentifier else {
-            return nil
-        }
+        return context(processIdentifier: processIdentifier, element: element)
+    }
 
+    private func context(
+        processIdentifier: Int32,
+        element: AccessibilityFocusElement
+    ) -> FocusContext {
         let isSecureField = element.role == Self.secureTextField
             || element.subrole.value == Self.secureTextField
         return FocusContext(
@@ -380,6 +678,48 @@ public struct FocusContextProvider {
         )
     }
 
+    public func currentInteractionContext() -> FocusContext? {
+        guard let processIdentifier = frontmostProcessProvider.processIdentifier else {
+            return nil
+        }
+        let context = currentInteractionContext(
+            activationOwnerProcessIdentifier: processIdentifier
+        )
+        guard frontmostProcessProvider.processIdentifier == processIdentifier else {
+            return nil
+        }
+        return context
+    }
+
+    public func currentInteractionContext(
+        activationOwnerProcessIdentifier: Int32
+    ) -> FocusContext? {
+        guard let processIdentifiers = windowProcessOrderingProvider.processIdentifiersInFront(
+            of: activationOwnerProcessIdentifier
+        ), Set(processIdentifiers).count == processIdentifiers.count,
+           processIdentifiers.count <= Self.maximumAheadProcessIdentifiers else {
+            return nil
+        }
+
+        var interactionContext: FocusContext?
+        for processIdentifier in processIdentifiers {
+            switch accessibilityProvider.focusSnapshot(for: processIdentifier) {
+            case .stablyAbsent:
+                continue
+            case .unavailable:
+                return nil
+            case let .focused(element):
+                let context = context(processIdentifier: processIdentifier, element: element)
+                guard interactionContext == nil else {
+                    return nil
+                }
+                interactionContext = context
+            }
+        }
+
+        return interactionContext ?? current(processIdentifier: activationOwnerProcessIdentifier)
+    }
+
     public func hasExactTextImmediatelyBeforeCaret(
         _ expectedText: String,
         context: FocusContext
@@ -388,16 +728,34 @@ public struct FocusContextProvider {
               !context.isSecureField,
               context.isEditableTextInput,
               let elementIdentifier = context.elementIdentifier,
-              frontmostProcessProvider.processIdentifier == context.processIdentifier,
               accessibilityProvider.hasExactTextImmediatelyBeforeCaret(
                   expectedText,
                   processIdentifier: context.processIdentifier,
                   elementIdentifier: elementIdentifier
-              ),
-              frontmostProcessProvider.processIdentifier == context.processIdentifier else {
+              ) else {
             return false
         }
         return true
+    }
+
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        context: FocusContext
+    ) -> String? {
+        guard utf16Length > 0,
+              context.elementIdentifier != nil,
+              !context.isSecureField,
+              context.isEditableTextInput,
+              let elementIdentifier = context.elementIdentifier,
+              let text = accessibilityProvider.textImmediatelyBeforeCaret(
+                  utf16Length: utf16Length,
+                  processIdentifier: context.processIdentifier,
+                  elementIdentifier: elementIdentifier
+              ),
+              (text as NSString).length == utf16Length else {
+            return nil
+        }
+        return text
     }
 }
 

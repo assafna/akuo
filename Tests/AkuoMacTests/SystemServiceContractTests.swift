@@ -1,9 +1,466 @@
 import Foundation
+import CoreGraphics
 import XCTest
 import AkuoCore
 @testable import AkuoMac
 
 final class SystemServiceContractTests: XCTestCase {
+    func testWindowOrderingReturnsDistinctProcessesAheadOfActivationOwner() {
+        let windows = [
+            WindowProcessSnapshot(processIdentifier: 70, layer: 8, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 70, layer: 8, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 71, layer: 5, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 42, layer: 0, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 99, layer: 0, alpha: 1),
+        ]
+
+        XCTAssertEqual(
+            WindowProcessOrdering.processIdentifiersInFront(
+                of: 42,
+                excluding: 265,
+                windows: windows,
+                acceptedLevels: 0 ... 8
+            ),
+            [70, 71]
+        )
+    }
+
+    func testWindowOrderingSkipsInvalidAlphaLevelsAndAkuoProcess() {
+        let windows = [
+            WindowProcessSnapshot(processIdentifier: 70, layer: 8, alpha: 0),
+            WindowProcessSnapshot(processIdentifier: 71, layer: 8, alpha: .nan),
+            WindowProcessSnapshot(processIdentifier: 72, layer: 9, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 265, layer: 8, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 73, layer: 8, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 42, layer: 0, alpha: 1),
+        ]
+
+        XCTAssertEqual(
+            WindowProcessOrdering.processIdentifiersInFront(
+                of: 42,
+                excluding: 265,
+                windows: windows,
+                acceptedLevels: 0 ... 8
+            ),
+            [73]
+        )
+    }
+
+    func testWindowOrderingRejectsNonpositiveProcessIdentifiers() {
+        XCTAssertEqual(WindowProcessOrdering.processIdentifiersInFront(
+            of: 42, excluding: 265,
+            windows: [
+                .init(processIdentifier: 0, layer: 8, alpha: 1),
+                .init(processIdentifier: -1, layer: 8, alpha: 1),
+                .init(processIdentifier: 42, layer: 0, alpha: 1),
+            ], acceptedLevels: 0 ... 8
+        ), [])
+    }
+
+    func testWindowOrderingSystemProviderUsesExactAcceptedLevelBoundsOnce() {
+        let normal = Int(CGWindowLevelForKey(.normalWindow))
+        let modal = Int(CGWindowLevelForKey(.modalPanelWindow))
+        let bounds = min(normal, modal) ... max(normal, modal)
+        var calls = 0
+        let provider = SystemWindowProcessOrderingProvider(
+            selfProcessIdentifier: 265,
+            windowList: {
+                calls += 1
+                return [
+                    windowMetadata(pid: 70, layer: bounds.lowerBound - 1, alpha: 1),
+                    windowMetadata(pid: 71, layer: bounds.lowerBound, alpha: 1),
+                    windowMetadata(pid: 72, layer: bounds.upperBound, alpha: 1),
+                    windowMetadata(pid: 73, layer: bounds.upperBound + 1, alpha: 1),
+                    windowMetadata(pid: 42, layer: bounds.lowerBound, alpha: 1),
+                ]
+            }
+        )
+        XCTAssertEqual(provider.processIdentifiersInFront(of: 42), [71, 72])
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testWindowOrderingReturnsNilWhenActivationOwnerHasNoAcceptedWindow() {
+        XCTAssertNil(
+            WindowProcessOrdering.processIdentifiersInFront(
+                of: 42,
+                excluding: 265,
+                windows: [
+                    WindowProcessSnapshot(processIdentifier: 70, layer: 8, alpha: 1),
+                    WindowProcessSnapshot(processIdentifier: 42, layer: 9, alpha: 1),
+                ],
+                acceptedLevels: 0 ... 8
+            )
+        )
+    }
+
+    func testWindowOrderingReturnsEmptyListWhenActivationOwnerIsFirstAcceptedWindow() {
+        XCTAssertEqual(
+            WindowProcessOrdering.processIdentifiersInFront(
+                of: 42,
+                excluding: 265,
+                windows: [
+                    WindowProcessSnapshot(processIdentifier: 42, layer: 0, alpha: 1),
+                ],
+                acceptedLevels: 0 ... 8
+            ),
+            []
+        )
+    }
+
+    func testWindowOrderingSystemProviderRejectsMalformedNumericMetadata() {
+        let provider = SystemWindowProcessOrderingProvider(
+            selfProcessIdentifier: 265,
+            windowList: {
+                [
+                    windowMetadata(pid: true, layer: 8, alpha: 1),
+                    windowMetadata(pid: Int64(Int32.max) + 1, layer: 8, alpha: 1),
+                    windowMetadata(pid: 70, layer: 8.5, alpha: 1),
+                    windowMetadata(pid: 71, layer: 8, alpha: Double.infinity),
+                    windowMetadata(pid: 72, layer: 8, alpha: 1),
+                    windowMetadata(pid: 42, layer: 0, alpha: 1),
+                ]
+            }
+        )
+
+        XCTAssertEqual(provider.processIdentifiersInFront(of: 42), [72])
+    }
+
+    func testWindowOrderingSystemProviderRejectsHighPrecisionFractionalIntegers() {
+        let provider = SystemWindowProcessOrderingProvider(
+            selfProcessIdentifier: 265,
+            windowList: {
+                [
+                    windowMetadata(
+                        pid: NSDecimalNumber(string: "42.0000000000000000001"),
+                        layer: 8,
+                        alpha: 1
+                    ),
+                    windowMetadata(
+                        pid: 70,
+                        layer: NSDecimalNumber(string: "8.0000000000000000001"),
+                        alpha: 1
+                    ),
+                    windowMetadata(pid: 71, layer: 8, alpha: true),
+                    windowMetadata(pid: 72, layer: 8, alpha: 1),
+                    windowMetadata(pid: 42, layer: 0, alpha: 1),
+                ]
+            }
+        )
+
+        XCTAssertEqual(provider.processIdentifiersInFront(of: 42), [72])
+    }
+
+    func testWindowOrderingSystemProviderReturnsNilWhenWindowListIsUnavailable() {
+        let provider = SystemWindowProcessOrderingProvider(
+            selfProcessIdentifier: 265,
+            windowList: { nil }
+        )
+
+        XCTAssertNil(provider.processIdentifiersInFront(of: 42))
+    }
+
+    func testInteractionContextUsesUniqueFocusedProcessAheadOfActivationOwner() {
+        let accessibility = PerProcessAccessibilityFocusProvider(elements: [
+            70: focusElement(identifier: "panel-search")
+        ])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70]
+            )
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 70,
+                elementIdentifier: "panel-search",
+                isSecureField: false,
+                isEditableTextInput: true
+            )
+        )
+        XCTAssertEqual(accessibility.requestedProcessIdentifiers, [70])
+    }
+
+    func testInteractionContextSkipsStableAbsenceBeforeLaterFocusedCandidate() {
+        let accessibility = SnapshotAccessibilityFocusProvider(snapshots: [
+            70: .stablyAbsent,
+            71: .focused(focusElement(identifier: "panel-search")),
+        ])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(processIdentifiers: [70, 71])
+        )
+
+        XCTAssertEqual(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42)?.processIdentifier, 71)
+        XCTAssertEqual(accessibility.requestedProcessIdentifiers, [70, 71])
+    }
+
+    func testInteractionContextFailsClosedForUnavailableAheadFocus() {
+        let accessibility = SnapshotAccessibilityFocusProvider(snapshots: [70: .unavailable])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(processIdentifiers: [70])
+        )
+
+        XCTAssertNil(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42))
+        XCTAssertEqual(accessibility.requestedProcessIdentifiers, [70])
+    }
+
+    func testInteractionContextRejectsAheadProcessBudgetOverflowBeforeAXScanning() {
+        let accessibility = SnapshotAccessibilityFocusProvider(snapshots: [:])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70, 71, 72, 73, 74]
+            )
+        )
+
+        XCTAssertNil(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42))
+        XCTAssertTrue(accessibility.requestedProcessIdentifiers.isEmpty)
+    }
+
+    func testInteractionContextAcceptsExactlyFourAheadProcesses() {
+        let accessibility = SnapshotAccessibilityFocusProvider(snapshots: [
+            70: .stablyAbsent,
+            71: .stablyAbsent,
+            72: .stablyAbsent,
+            73: .stablyAbsent,
+            42: .focused(focusElement(identifier: "owner-field")),
+        ])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70, 71, 72, 73]
+            )
+        )
+
+        XCTAssertEqual(provider.currentInteractionContext(
+            activationOwnerProcessIdentifier: 42
+        )?.processIdentifier, 42)
+        XCTAssertEqual(accessibility.requestedProcessIdentifiers, [70, 71, 72, 73, 42])
+    }
+
+    func testInteractionContextRejectsDuplicateOrderingOutputBeforeAXScanning() {
+        let accessibility = SnapshotAccessibilityFocusProvider(snapshots: [:])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70, 70, 70, 70, 70]
+            )
+        )
+
+        XCTAssertNil(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42))
+        XCTAssertTrue(accessibility.requestedProcessIdentifiers.isEmpty)
+    }
+
+    func testInteractionContextFallsBackWhenAheadProcessesHaveNoFocusedElement() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
+                42: focusElement(identifier: "owner-field")
+            ]),
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70]
+            )
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 42,
+                elementIdentifier: "owner-field",
+                isSecureField: false,
+                isEditableTextInput: true
+            )
+        )
+    }
+
+    func testInteractionContextFallsBackToActivationOwnerForSuccessfulEmptyOrdering() {
+        let accessibility = PerProcessAccessibilityFocusProvider(elements: [
+            42: focusElement(identifier: "owner-field")
+        ])
+        let ordering = FakeWindowProcessOrderingProvider(processIdentifiers: [])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: ordering
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 42,
+                elementIdentifier: "owner-field",
+                isSecureField: false,
+                isEditableTextInput: true
+            )
+        )
+        XCTAssertEqual(ordering.activationOwnerRequests, [42])
+        XCTAssertEqual(accessibility.requestedProcessIdentifiers, [42])
+    }
+
+    func testInteractionContextReturnsNilForTwoFocusedProcessesAheadOfActivationOwner() {
+        let accessibility = PerProcessAccessibilityFocusProvider(elements: [
+            70: focusElement(identifier: "panel-search"),
+            71: focusElement(identifier: "modal-search"),
+            72: focusElement(identifier: "unexamined-search"),
+        ])
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70, 71, 72]
+            )
+        )
+
+        XCTAssertNil(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42))
+        XCTAssertEqual(accessibility.requestedProcessIdentifiers, [70, 71])
+    }
+
+    func testInteractionContextReturnsSecureFocusedProcessAheadOfActivationOwner() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
+                42: focusElement(identifier: "owner-field"),
+                70: focusElement(identifier: "secure-field", role: "AXSecureTextField"),
+            ]),
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70]
+            )
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 70,
+                elementIdentifier: "secure-field",
+                isSecureField: true,
+                isEditableTextInput: false
+            )
+        )
+    }
+
+    func testInteractionContextReturnsReadOnlyFocusedProcessAheadOfActivationOwner() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
+                42: focusElement(identifier: "owner-field"),
+                70: focusElement(identifier: "read-only", isValueSettable: false),
+            ]),
+            windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
+                processIdentifiers: [70]
+            )
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(activationOwnerProcessIdentifier: 42),
+            FocusContext(
+                processIdentifier: 70,
+                elementIdentifier: "read-only",
+                isSecureField: false,
+                isEditableTextInput: false
+            )
+        )
+    }
+
+    func testInteractionContextReturnsNilWhenWindowOrderingFails() {
+        let accessibility = PerProcessAccessibilityFocusProvider(elements: [
+            42: focusElement(identifier: "owner-field")
+        ])
+        let ordering = FakeWindowProcessOrderingProvider(processIdentifiers: nil)
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: ordering
+        )
+
+        XCTAssertNil(provider.currentInteractionContext(activationOwnerProcessIdentifier: 42))
+        XCTAssertEqual(ordering.activationOwnerRequests, [42])
+        XCTAssertTrue(accessibility.requestedProcessIdentifiers.isEmpty)
+    }
+
+    func testInteractionContextUsesStableFrontmostAfterExplicitResolution() {
+        let timeline = ResolutionTimeline()
+        let frontmost = TimelineFrontmostProcessProvider(
+            processIdentifier: 42,
+            timeline: timeline
+        )
+        let accessibility = PerProcessAccessibilityFocusProvider(
+            elements: [42: focusElement(identifier: "owner-field")],
+            onFocusedElementRequest: { processIdentifier in
+                timeline.record("accessibility:\(processIdentifier)")
+            }
+        )
+        let ordering = FakeWindowProcessOrderingProvider(
+            processIdentifiers: [],
+            onRequest: { processIdentifier in
+                timeline.record("ordering:\(processIdentifier)")
+            }
+        )
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: frontmost,
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: ordering
+        )
+
+        XCTAssertEqual(
+            provider.currentInteractionContext(),
+            FocusContext(
+                processIdentifier: 42,
+                elementIdentifier: "owner-field",
+                isSecureField: false,
+                isEditableTextInput: true
+            )
+        )
+        XCTAssertEqual(timeline.events, [
+            "frontmost:42",
+            "ordering:42",
+            "accessibility:42",
+            "frontmost:42",
+        ])
+    }
+
+    func testInteractionContextRejectsFrontmostProcessChangeAfterExplicitResolution() {
+        let timeline = ResolutionTimeline()
+        let frontmost = TimelineFrontmostProcessProvider(
+            processIdentifier: 42,
+            timeline: timeline
+        )
+        let accessibility = PerProcessAccessibilityFocusProvider(
+            elements: [42: focusElement(identifier: "owner-field")],
+            onFocusedElementRequest: { processIdentifier in
+                timeline.record("accessibility:\(processIdentifier)")
+            }
+        )
+        let ordering = FakeWindowProcessOrderingProvider(
+            processIdentifiers: [],
+            onRequest: { processIdentifier in
+                timeline.record("ordering:\(processIdentifier)")
+                frontmost.processIdentifier = 43
+            }
+        )
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: frontmost,
+            accessibilityProvider: accessibility,
+            windowProcessOrderingProvider: ordering
+        )
+
+        XCTAssertNil(provider.currentInteractionContext())
+        XCTAssertEqual(timeline.events, [
+            "frontmost:42",
+            "ordering:42",
+            "accessibility:42",
+            "frontmost:43",
+        ])
+    }
+
     func testAccessibilityTextMatcherComputesOnlyRangeBeforeCollapsedCaret() {
         let value = "prefix 😀 שמג "
         let caretAtEnd = NSRange(
@@ -50,6 +507,33 @@ final class SystemServiceContractTests: XCTestCase {
             "שמג\r",
             context: context
         ))
+    }
+
+    func testFocusContextReturnsOnlyRequestedTextBeforeStableEditableCaret() {
+        let context = FocusContext(
+            processIdentifier: 42,
+            elementIdentifier: "field",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: FakeAccessibilityFocusProvider(
+                element: .init(
+                    identifier: "field",
+                    role: "AXTextField",
+                    subrole: .absent,
+                    isEnabled: .value(true),
+                    isValueSettable: true
+                ),
+                precedingText: "akuo"
+            )
+        )
+
+        XCTAssertEqual(
+            provider.textImmediatelyBeforeCaret(utf16Length: 4, context: context),
+            "akuo"
+        )
     }
 
     func testSpellCheckerUsesEnglishLocale() {
@@ -285,7 +769,7 @@ final class SystemServiceContractTests: XCTestCase {
         ])
         let provider = SystemAccessibilityFocusProvider(reader: reader)
 
-        XCTAssertNil(provider.focusedElement(for: 42))
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
     }
 
     func testSystemFocusProviderRejectsFocusChangeDuringEvidenceCollection() {
@@ -294,7 +778,7 @@ final class SystemServiceContractTests: XCTestCase {
         let reader = ScriptedAccessibilityAttributeReader(focusedElementValues: [first, second])
         let provider = SystemAccessibilityFocusProvider(reader: reader)
 
-        XCTAssertNil(provider.focusedElement(for: 42))
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
     }
 
     func testSystemFocusProviderRejectsMalformedFinalFocusSnapshot() {
@@ -305,7 +789,245 @@ final class SystemServiceContractTests: XCTestCase {
         ])
         let provider = SystemAccessibilityFocusProvider(reader: reader)
 
-        XCTAssertNil(provider.focusedElement(for: 42))
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+    }
+
+    func testSystemFocusProviderRequiresTwoDefinitiveAbsenceReads() {
+        let reader = FocusSnapshotReader([
+            .init(result: .noValue, value: nil),
+            .init(result: .noValue, value: nil),
+        ])
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .stablyAbsent)
+        XCTAssertEqual(reader.focusedElementReadCount, 2)
+    }
+
+    func testSystemFocusProviderRejectsNondefinitiveSecondAbsenceRead() {
+        let element = AXUIElementCreateApplication(43)
+        let scenarios: [[AccessibilityAttributeRead]] = [
+            [
+                .init(result: .noValue, value: nil),
+                .init(result: .cannotComplete, value: nil),
+            ],
+            [
+                .init(result: .noValue, value: nil),
+                .init(result: .noValue, value: kCFBooleanTrue),
+            ],
+            [
+                .init(result: .noValue, value: nil),
+                .init(result: .success, value: element),
+            ],
+        ]
+
+        for reads in scenarios {
+            let provider = SystemAccessibilityFocusProvider(reader: FocusSnapshotReader(reads))
+            XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        }
+    }
+
+    func testSystemFocusProviderRejectsBudgetExpiryDuringSecondAbsenceIPC() {
+        var now: TimeInterval = 0
+        let reader = FocusSnapshotReader([
+            .init(result: .noValue, value: nil),
+            .init(result: .noValue, value: nil),
+        ], onFocusedElementRead: { count in
+            if count == 2 { now = 0.101 }
+        })
+        let provider = SystemAccessibilityFocusProvider(reader: reader, now: { now })
+        let end = provider.beginCallbackBudget()
+        defer { end() }
+
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        XCTAssertEqual(reader.focusedElementReadCount, 2)
+    }
+
+    func testSystemFocusProviderRejectsBudgetExpiryDuringSettableIPC() {
+        var now: TimeInterval = 0
+        let element = AXUIElementCreateApplication(43)
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element],
+            onRead: { attribute, _ in
+                if attribute == kAXValueAttribute { now = 0.101 }
+            }
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader, now: { now })
+        let end = provider.beginCallbackBudget()
+        defer { end() }
+
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+    }
+
+    func testSystemFocusProviderRejectsBudgetExpiryDuringFinalFocusIPC() {
+        var now: TimeInterval = 0
+        var focusReadCount = 0
+        let element = AXUIElementCreateApplication(43)
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element],
+            onRead: { attribute, _ in
+                guard attribute == kAXFocusedUIElementAttribute else { return }
+                focusReadCount += 1
+                if focusReadCount == 2 { now = 0.101 }
+            }
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader, now: { now })
+        let end = provider.beginCallbackBudget()
+        defer { end() }
+
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+    }
+
+    func testSystemFocusProviderRejectsBudgetExpiryDuringParameterizedTextIPC() {
+        var now: TimeInterval = 0
+        let element = AXUIElementCreateApplication(43)
+        var caret = CFRange(location: 4, length: 0)
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, element],
+            parameterizedTextValue: "akuo" as CFString,
+            selectedTextRangeValues: [
+                AXValueCreate(.cfRange, &caret)!,
+                AXValueCreate(.cfRange, &caret)!,
+            ],
+            onRead: { attribute, _ in
+                if attribute == kAXStringForRangeParameterizedAttribute { now = 0.101 }
+            }
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader, now: { now })
+        guard let snapshot = provider.focusedElement(for: 42) else {
+            return XCTFail("Expected initial focused element")
+        }
+        let end = provider.beginCallbackBudget()
+        defer { end() }
+
+        XCTAssertFalse(provider.hasExactTextImmediatelyBeforeCaret(
+            "akuo", processIdentifier: 42, elementIdentifier: snapshot.identifier
+        ))
+    }
+
+    func testSystemFocusProviderTreatsCannotCompleteAndTimeoutAsUnavailable() {
+        let cannotComplete = SystemAccessibilityFocusProvider(reader: FocusSnapshotReader([
+            .init(result: .cannotComplete, value: nil),
+        ]))
+        let timeout = SystemAccessibilityFocusProvider(
+            reader: FocusSnapshotReader([]),
+            configureMessagingTimeout: { _, _ in .cannotComplete }
+        )
+
+        XCTAssertEqual(cannotComplete.focusSnapshot(for: 42), .unavailable)
+        XCTAssertEqual(timeout.focusSnapshot(for: 42), .unavailable)
+    }
+
+    func testCallbackBudgetUsesOneMonotonicDeadlineAndShrinksPreparationTimeout() {
+        var now: TimeInterval = 0
+        var timeouts: [Float] = []
+        let provider = SystemAccessibilityFocusProvider(
+            reader: FocusSnapshotReader([]),
+            configureMessagingTimeout: { _, timeout in timeouts.append(timeout); return .success },
+            now: { now }
+        )
+        let end = provider.beginCallbackBudget()
+        now = 0.098
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .stablyAbsent)
+        now = 0.101
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        end()
+        XCTAssertEqual(timeouts.count, 2)
+        XCTAssertEqual(timeouts[0], 0.002, accuracy: 0.0001)
+        XCTAssertEqual(timeouts[1], 0.002, accuracy: 0.0001)
+    }
+
+    func testCopiedFocusContextProviderUsesCallbackDeadlineForRecoveryRead() {
+        var now: TimeInterval = 0
+        let element = AXUIElementCreateApplication(43)
+        var caret = CFRange(location: 4, length: 0)
+        let provider = SystemAccessibilityFocusProvider(
+            reader: ScriptedAccessibilityAttributeReader(
+                focusedElementValues: [element, element],
+                parameterizedTextValue: "akuo" as CFString,
+                selectedTextRangeValues: [AXValueCreate(.cfRange, &caret)!]
+            ),
+            now: { now }
+        )
+        let resolutionProvider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
+            accessibilityProvider: provider
+        )
+        let recoveryProvider = resolutionProvider
+        let end = resolutionProvider.beginAccessibilityCallbackBudget()
+        guard let context = resolutionProvider.current(processIdentifier: 42) else {
+            return XCTFail("Expected initial focus context")
+        }
+
+        now = 0.101
+
+        XCTAssertNil(recoveryProvider.textImmediatelyBeforeCaret(
+            utf16Length: 4,
+            context: context
+        ))
+        end()
+    }
+
+    func testNestedCallbackBudgetRetainsOuterDeadlineAndCleansUpAfterEarlyReturn() {
+        var now: TimeInterval = 0
+        var timeouts: [Float] = []
+        let provider = SystemAccessibilityFocusProvider(
+            reader: FocusSnapshotReader([]),
+            configureMessagingTimeout: { _, timeout in
+                timeouts.append(timeout)
+                return .success
+            },
+            now: { now }
+        )
+        let outerEnd = provider.beginCallbackBudget()
+        now = 0.050
+        let innerEnd = provider.beginCallbackBudget()
+        now = 0.101
+
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        innerEnd()
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        outerEnd()
+
+        func returnFromCallbackScope() {
+            let end = provider.beginCallbackBudget()
+            defer { end() }
+            XCTAssertEqual(provider.focusSnapshot(for: 42), .stablyAbsent)
+        }
+
+        now = 1
+        returnFromCallbackScope()
+        now = 1.101
+
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .stablyAbsent)
+        XCTAssertEqual(timeouts, [0.005, 0.005, 0.005, 0.005])
+    }
+
+    func testNextCallbackStartsAFreshHundredMillisecondBudget() {
+        var now: TimeInterval = 0
+        var timeouts: [Float] = []
+        let provider = SystemAccessibilityFocusProvider(
+            reader: FocusSnapshotReader([]),
+            configureMessagingTimeout: { _, timeout in
+                timeouts.append(timeout)
+                return .success
+            },
+            now: { now }
+        )
+
+        let firstEnd = provider.beginCallbackBudget()
+        now = 0.101
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .unavailable)
+        firstEnd()
+
+        now = 1
+        let secondEnd = provider.beginCallbackBudget()
+        now = 1.098
+        XCTAssertEqual(provider.focusSnapshot(for: 42), .stablyAbsent)
+        secondEnd()
+
+        XCTAssertEqual(timeouts.count, 2)
+        XCTAssertEqual(timeouts[0], 0.002, accuracy: 0.0001)
+        XCTAssertEqual(timeouts[1], 0.002, accuracy: 0.0001)
     }
 
     func testSystemFocusProviderUsesStableOpaqueIdentityForEqualElements() {
@@ -327,6 +1049,32 @@ final class SystemServiceContractTests: XCTestCase {
         XCTAssertNotEqual(firstSnapshot?.identifier, changedSnapshot?.identifier)
     }
 
+    func testFocusSnapshotRefreshesTimeoutBeforeEveryAXIPC() {
+        let element = AXUIElementCreateApplication(43)
+        let timeline = AccessibilityTimeline()
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element],
+            onRead: { timeline.record(readEvent($0, $1)) }
+        )
+        let provider = SystemAccessibilityFocusProvider(
+            reader: reader,
+            configureMessagingTimeout: { element, _ in
+                timeline.record("prepare:\(elementPID(element))")
+                return .success
+            }
+        )
+
+        XCTAssertNotNil(provider.focusedElement(for: 42))
+        XCTAssertEqual(timeline.events, [
+            "prepare:42", "focused:42",
+            "prepare:43", "other:43",
+            "prepare:43", "other:43",
+            "prepare:43", "other:43",
+            "prepare:43", "other:43",
+            "prepare:42", "focused:42",
+        ])
+    }
+
     func testSystemFocusProviderValidatesExactTextAgainstStableElementAndCaret() {
         let element = AXUIElementCreateApplication(42)
         let value = "prefix go "
@@ -336,7 +1084,7 @@ final class SystemServiceContractTests: XCTestCase {
         }
         let reader = ScriptedAccessibilityAttributeReader(
             focusedElementValues: [element, element, element, element],
-            parameterizedTextValue: "go " as CFString,
+            parameterizedTextValue: " go " as CFString,
             selectedTextRangeValues: [caretValue, caretValue]
         )
         let provider = SystemAccessibilityFocusProvider(reader: reader)
@@ -350,8 +1098,221 @@ final class SystemServiceContractTests: XCTestCase {
             elementIdentifier: snapshot.identifier
         ))
         XCTAssertEqual(reader.parameterizedRanges, [
-            NSRange(location: 7, length: 3),
+            NSRange(location: 6, length: 4),
         ])
+    }
+
+    func testExactTextValidationAcceptsTokenAtDocumentStartWithoutPrefixRead() {
+        let fixture = exactTextFixture(visibleText: "akuo", returnedText: "akuo")
+
+        XCTAssertTrue(fixture.provider.hasExactTextImmediatelyBeforeCaret(
+            "akuo", processIdentifier: 42, elementIdentifier: fixture.identifier
+        ))
+        XCTAssertEqual(fixture.reader.parameterizedRanges, [
+            NSRange(location: 0, length: 4),
+        ])
+    }
+
+    func testExactTextValidationAcceptsOnlyPositiveSeparatorEvidence() {
+        for (separator, literalText) in [
+            (" ", " akuo"),
+            ("\n", "\nakuo"),
+            ("\t", "\takuo"),
+            ("\u{0001}", "\u{0001}akuo"),
+        ] {
+            let fixture = exactTextFixture(
+                visibleText: literalText,
+                returnedText: literalText
+            )
+
+            XCTAssertTrue(
+                fixture.provider.hasExactTextImmediatelyBeforeCaret(
+                    "akuo", processIdentifier: 42,
+                    elementIdentifier: fixture.identifier
+                ),
+                "separator=\(separator.debugDescription)"
+            )
+            XCTAssertEqual(fixture.reader.parameterizedRanges, [
+                NSRange(location: 0, length: 5),
+            ], "separator=\(separator.debugDescription)")
+        }
+    }
+
+    func testExactTextValidationRejectsAdjacentPrintablePrefix() {
+        let fixture = exactTextFixture(visibleText: "xakuo", returnedText: "xakuo")
+
+        XCTAssertFalse(fixture.provider.hasExactTextImmediatelyBeforeCaret(
+            "akuo", processIdentifier: 42, elementIdentifier: fixture.identifier
+        ))
+        XCTAssertEqual(fixture.reader.parameterizedRanges, [
+            NSRange(location: 0, length: 5),
+        ])
+    }
+
+    func testExactTextValidationRejectsPunctuationAndUncertainUnicodePrefixes() {
+        for literalText in [".akuo", "\u{0301}akuo", "\u{1F642}akuo", "\u{200D}akuo"] {
+            let nsText = literalText as NSString
+            let requestedLocation = nsText.length - 5
+            let returnedText = nsText.substring(
+                with: NSRange(location: requestedLocation, length: 5)
+            )
+            let fixture = exactTextFixture(
+                visibleText: literalText,
+                returnedText: returnedText
+            )
+
+            XCTAssertFalse(
+                fixture.provider.hasExactTextImmediatelyBeforeCaret(
+                    "akuo", processIdentifier: 42,
+                    elementIdentifier: fixture.identifier
+                ),
+                "prefix fixture=\(literalText.debugDescription)"
+            )
+            XCTAssertEqual(fixture.reader.parameterizedRanges, [
+                NSRange(location: requestedLocation, length: 5),
+            ], "prefix fixture=\(literalText.debugDescription)")
+        }
+    }
+
+    func testExactTextValidationRejectsMalformedExpandedSpan() {
+        for returnedText in ["akuo", "  akuo", " xaku"] {
+            let fixture = exactTextFixture(
+                visibleText: " akuo",
+                returnedText: returnedText
+            )
+
+            XCTAssertFalse(fixture.provider.hasExactTextImmediatelyBeforeCaret(
+                "akuo", processIdentifier: 42,
+                elementIdentifier: fixture.identifier
+            ), "returnedText=\(returnedText.debugDescription)")
+        }
+    }
+
+    func testExactSuffixTextReadPreparesApplicationAndFocusedElementBeforeIPC() {
+        let element = AXUIElementCreateApplication(43)
+        var caret = CFRange(location: 3, length: 0)
+        let caretValue = AXValueCreate(.cfRange, &caret)!
+        let timeline = AccessibilityTimeline()
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, element],
+            parameterizedTextValue: "go " as CFString,
+            selectedTextRangeValues: [caretValue, caretValue],
+            onRead: { timeline.record(readEvent($0, $1)) }
+        )
+        let provider = SystemAccessibilityFocusProvider(
+            reader: reader,
+            configureMessagingTimeout: { element, _ in
+                timeline.record("prepare:\(elementPID(element))")
+                return .success
+            }
+        )
+        let identifier = provider.focusedElement(for: 42)!.identifier
+        timeline.reset()
+
+        XCTAssertTrue(provider.hasExactTextImmediatelyBeforeCaret(
+            "go ", processIdentifier: 42, elementIdentifier: identifier
+        ))
+        XCTAssertEqual(timeline.events, [
+            "prepare:42", "focused:42", "prepare:43", "selected:43",
+            "prepare:43", "parameterized:43", "prepare:43", "selected:43",
+            "prepare:42", "focused:42",
+        ])
+    }
+
+    func testRecoveryTextReadPreparesApplicationAndFocusedElementBeforeIPC() {
+        let element = AXUIElementCreateApplication(43)
+        var caret = CFRange(location: 3, length: 0)
+        let caretValue = AXValueCreate(.cfRange, &caret)!
+        let timeline = AccessibilityTimeline()
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, element],
+            parameterizedTextValue: "go " as CFString,
+            selectedTextRangeValues: [caretValue, caretValue],
+            onRead: { timeline.record(readEvent($0, $1)) }
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader, configureMessagingTimeout: { element, _ in
+            timeline.record("prepare:\(elementPID(element))"); return .success
+        })
+        let identifier = provider.focusedElement(for: 42)!.identifier
+        timeline.reset()
+
+        XCTAssertEqual(provider.textImmediatelyBeforeCaret(
+            utf16Length: 3, processIdentifier: 42, elementIdentifier: identifier
+        ), "go ")
+        XCTAssertEqual(timeline.events, [
+            "prepare:42", "focused:42", "prepare:43", "selected:43",
+            "prepare:43", "parameterized:43", "prepare:43", "selected:43",
+            "prepare:42", "focused:42",
+        ])
+    }
+
+    func testTextReadPreparationFailureStopsBeforeIPC() {
+        let timeline = AccessibilityTimeline()
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [],
+            onRead: { timeline.record(readEvent($0, $1)) }
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader, configureMessagingTimeout: { _, _ in .cannotComplete })
+
+        XCTAssertFalse(provider.hasExactTextImmediatelyBeforeCaret(
+            "go ", processIdentifier: 42, elementIdentifier: "field"
+        ))
+        XCTAssertNil(provider.textImmediatelyBeforeCaret(
+            utf16Length: 3, processIdentifier: 42, elementIdentifier: "field"
+        ))
+        XCTAssertTrue(timeline.events.isEmpty)
+    }
+
+    func testSystemFocusProviderReturnsRequestedRecoverySpanAtDocumentStart() {
+        let element = AXUIElementCreateApplication(42)
+        let value = "akuo"
+        var caret = CFRange(location: (value as NSString).length, length: 0)
+        guard let caretValue = AXValueCreate(.cfRange, &caret) else {
+            return XCTFail("Expected AX caret range")
+        }
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, element],
+            parameterizedTextValue: "akuo" as CFString,
+            selectedTextRangeValues: [caretValue, caretValue]
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+        guard let snapshot = provider.focusedElement(for: 42) else {
+            return XCTFail("Expected focused element snapshot")
+        }
+
+        XCTAssertEqual(provider.textImmediatelyBeforeCaret(
+            utf16Length: 4,
+            processIdentifier: 42,
+            elementIdentifier: snapshot.identifier
+        ), "akuo")
+        XCTAssertEqual(reader.parameterizedRanges, [
+            NSRange(location: 0, length: 4),
+        ])
+    }
+
+    func testSystemFocusProviderRejectsRecoverySpanInsideLargerToken() {
+        let element = AXUIElementCreateApplication(42)
+        let value = "xakuo"
+        var caret = CFRange(location: (value as NSString).length, length: 0)
+        guard let caretValue = AXValueCreate(.cfRange, &caret) else {
+            return XCTFail("Expected AX caret range")
+        }
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, element],
+            parameterizedTextValue: "akuo" as CFString,
+            selectedTextRangeValues: [caretValue, caretValue]
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+        guard let snapshot = provider.focusedElement(for: 42) else {
+            return XCTFail("Expected focused element snapshot")
+        }
+
+        XCTAssertNil(provider.textImmediatelyBeforeCaret(
+            utf16Length: 4,
+            processIdentifier: 42,
+            elementIdentifier: snapshot.identifier
+        ))
+        XCTAssertTrue(reader.parameterizedRanges.isEmpty)
     }
 
     func testSystemFocusProviderRejectsCaretMovementDuringTextValidation() {
@@ -364,7 +1325,7 @@ final class SystemServiceContractTests: XCTestCase {
         }
         let reader = ScriptedAccessibilityAttributeReader(
             focusedElementValues: [element, element, element, element],
-            parameterizedTextValue: "go " as CFString,
+            parameterizedTextValue: " go " as CFString,
             selectedTextRangeValues: [initialCaretValue, movedCaretValue]
         )
         let provider = SystemAccessibilityFocusProvider(reader: reader)
@@ -376,6 +1337,24 @@ final class SystemServiceContractTests: XCTestCase {
             "go ",
             processIdentifier: 42,
             elementIdentifier: snapshot.identifier
+        ))
+    }
+
+    func testSystemFocusProviderRejectsFocusChangeDuringExpandedTextValidation() {
+        let element = AXUIElementCreateApplication(42)
+        let changedElement = AXUIElementCreateApplication(43)
+        var caret = CFRange(location: 5, length: 0)
+        let caretValue = AXValueCreate(.cfRange, &caret)!
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, changedElement],
+            parameterizedTextValue: " akuo" as CFString,
+            selectedTextRangeValues: [caretValue, caretValue]
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+        let identifier = provider.focusedElement(for: 42)!.identifier
+
+        XCTAssertFalse(provider.hasExactTextImmediatelyBeforeCaret(
+            "akuo", processIdentifier: 42, elementIdentifier: identifier
         ))
     }
 
@@ -422,6 +1401,54 @@ final class SystemServiceContractTests: XCTestCase {
                 isEditableTextInput: true
             )
         )
+    }
+
+    func testFocusContextCanInspectEventTargetProcessWithoutActivation() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 7),
+            accessibilityProvider: FakeAccessibilityFocusProvider(
+                element: .init(
+                    identifier: "panel-search",
+                    role: "AXTextField",
+                    subrole: .value("raycast_searchField"),
+                    isEnabled: .value(true),
+                    isValueSettable: true
+                )
+            )
+        )
+
+        XCTAssertEqual(
+            provider.current(processIdentifier: 42),
+            .init(
+                processIdentifier: 42,
+                elementIdentifier: "panel-search",
+                isSecureField: false,
+                isEditableTextInput: true
+            )
+        )
+    }
+
+    func testExactTextValidationUsesContextProcessRatherThanActivatedProcess() {
+        let accessibility = FakeAccessibilityFocusProvider(
+            element: nil,
+            previousTextMatches: true
+        )
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 7),
+            accessibilityProvider: accessibility
+        )
+        let context = FocusContext(
+            processIdentifier: 42,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+
+        XCTAssertTrue(provider.hasExactTextImmediatelyBeforeCaret(
+            "akuo ",
+            context: context
+        ))
+        XCTAssertEqual(accessibility.exactTextProcessIdentifiers, [42])
     }
 
     func testFrontmostProcessChangeDuringInspectionReturnsNoFocusContext() {
@@ -672,6 +1699,14 @@ final class SystemServiceContractTests: XCTestCase {
     }
 }
 
+private func windowMetadata(pid: Any, layer: Any, alpha: Any) -> [String: Any] {
+    [
+        kCGWindowOwnerPID as String: pid,
+        kCGWindowLayer as String: layer,
+        kCGWindowAlpha as String: alpha,
+    ]
+}
+
 private struct LocaleSpellCheckerBackend: SpellCheckerBackend {
     let availableLanguages: Set<String>
     let recognized: Set<String>
@@ -738,9 +1773,140 @@ private final class ScriptedFrontmostProcessProvider: FrontmostProcessProviding 
     }
 }
 
-private struct FakeAccessibilityFocusProvider: AccessibilityFocusProviding {
+private final class FakeWindowProcessOrderingProvider: WindowProcessOrderingProviding {
+    let processIdentifiers: [Int32]?
+    let onRequest: ((Int32) -> Void)?
+    private(set) var activationOwnerRequests: [Int32] = []
+
+    init(
+        processIdentifiers: [Int32]?,
+        onRequest: ((Int32) -> Void)? = nil
+    ) {
+        self.processIdentifiers = processIdentifiers
+        self.onRequest = onRequest
+    }
+
+    func processIdentifiersInFront(of activationOwner: Int32) -> [Int32]? {
+        activationOwnerRequests.append(activationOwner)
+        onRequest?(activationOwner)
+        return processIdentifiers
+    }
+}
+
+private final class ResolutionTimeline {
+    private(set) var events: [String] = []
+
+    func record(_ event: String) {
+        events.append(event)
+    }
+}
+
+private final class TimelineFrontmostProcessProvider: FrontmostProcessProviding {
+    private var currentProcessIdentifier: Int32?
+    private let timeline: ResolutionTimeline
+
+    init(processIdentifier: Int32?, timeline: ResolutionTimeline) {
+        currentProcessIdentifier = processIdentifier
+        self.timeline = timeline
+    }
+
+    var processIdentifier: Int32? {
+        get {
+            timeline.record("frontmost:\(currentProcessIdentifier.map(String.init) ?? "nil")")
+            return currentProcessIdentifier
+        }
+        set {
+            currentProcessIdentifier = newValue
+        }
+    }
+}
+
+private final class PerProcessAccessibilityFocusProvider: AccessibilityFocusProviding {
+    let elements: [Int32: AccessibilityFocusElement]
+    let onFocusedElementRequest: ((Int32) -> Void)?
+    private(set) var requestedProcessIdentifiers: [Int32] = []
+
+    init(
+        elements: [Int32: AccessibilityFocusElement],
+        onFocusedElementRequest: ((Int32) -> Void)? = nil
+    ) {
+        self.elements = elements
+        self.onFocusedElementRequest = onFocusedElementRequest
+    }
+
+    func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
+        requestedProcessIdentifiers.append(processIdentifier)
+        onFocusedElementRequest?(processIdentifier)
+        return elements[processIdentifier]
+    }
+
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> Bool {
+        false
+    }
+}
+
+private final class SnapshotAccessibilityFocusProvider: AccessibilityFocusProviding {
+    let snapshots: [Int32: AccessibilityFocusSnapshot]
+    private(set) var requestedProcessIdentifiers: [Int32] = []
+
+    init(snapshots: [Int32: AccessibilityFocusSnapshot]) {
+        self.snapshots = snapshots
+    }
+
+    func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
+        guard case let .focused(element) = focusSnapshot(for: processIdentifier) else {
+            return nil
+        }
+        return element
+    }
+
+    func focusSnapshot(for processIdentifier: Int32) -> AccessibilityFocusSnapshot {
+        requestedProcessIdentifiers.append(processIdentifier)
+        return snapshots[processIdentifier] ?? .stablyAbsent
+    }
+
+    func hasExactTextImmediatelyBeforeCaret(
+        _ expectedText: String,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> Bool {
+        false
+    }
+}
+
+private func focusElement(
+    identifier: String,
+    role: String = "AXTextField",
+    isValueSettable: Bool? = true
+) -> AccessibilityFocusElement {
+    .init(
+        identifier: identifier,
+        role: role,
+        subrole: .absent,
+        isEnabled: .value(true),
+        isValueSettable: isValueSettable
+    )
+}
+
+private final class FakeAccessibilityFocusProvider: AccessibilityFocusProviding {
     let element: AccessibilityFocusElement?
     var previousTextMatches = false
+    var precedingText: String?
+    private(set) var exactTextProcessIdentifiers: [Int32] = []
+
+    init(
+        element: AccessibilityFocusElement?,
+        previousTextMatches: Bool = false,
+        precedingText: String? = nil
+    ) {
+        self.element = element
+        self.previousTextMatches = previousTextMatches
+        self.precedingText = precedingText
+    }
 
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
         element
@@ -751,7 +1917,52 @@ private struct FakeAccessibilityFocusProvider: AccessibilityFocusProviding {
         processIdentifier: Int32,
         elementIdentifier: String
     ) -> Bool {
-        previousTextMatches
+        exactTextProcessIdentifiers.append(processIdentifier)
+        return previousTextMatches
+    }
+
+    func textImmediatelyBeforeCaret(
+        utf16Length: Int,
+        processIdentifier: Int32,
+        elementIdentifier: String
+    ) -> String? {
+        precedingText
+    }
+}
+
+private final class FocusSnapshotReader: AccessibilityAttributeReading {
+    private var focusReads: [AccessibilityAttributeRead]
+    private let onFocusedElementRead: ((Int) -> Void)?
+    private(set) var focusedElementReadCount = 0
+
+    init(
+        _ focusReads: [AccessibilityAttributeRead],
+        onFocusedElementRead: ((Int) -> Void)? = nil
+    ) {
+        self.focusReads = focusReads
+        self.onFocusedElementRead = onFocusedElementRead
+    }
+
+    func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead {
+        if attribute == kAXFocusedUIElementAttribute {
+            focusedElementReadCount += 1
+            onFocusedElementRead?(focusedElementReadCount)
+            guard !focusReads.isEmpty else { return .init(result: .noValue, value: nil) }
+            return focusReads.removeFirst()
+        }
+        return .init(result: .attributeUnsupported, value: nil)
+    }
+
+    func parameterizedAttribute(
+        _ attribute: String,
+        parameter: CFTypeRef,
+        of element: AXUIElement
+    ) -> AccessibilityAttributeRead {
+        .init(result: .attributeUnsupported, value: nil)
+    }
+
+    func isAttributeSettable(_ attribute: String, of element: AXUIElement) -> Bool? {
+        nil
     }
 }
 
@@ -759,19 +1970,23 @@ private final class ScriptedAccessibilityAttributeReader: AccessibilityAttribute
     private var focusedElementValues: [CFTypeRef?]
     private let parameterizedTextValue: CFTypeRef?
     private var selectedTextRangeValues: [CFTypeRef?]
+    private let onRead: ((String, AXUIElement) -> Void)?
     private(set) var parameterizedRanges: [NSRange] = []
 
     init(
         focusedElementValues: [CFTypeRef?],
         parameterizedTextValue: CFTypeRef? = nil,
-        selectedTextRangeValues: [CFTypeRef?] = []
+        selectedTextRangeValues: [CFTypeRef?] = [],
+        onRead: ((String, AXUIElement) -> Void)? = nil
     ) {
         self.focusedElementValues = focusedElementValues
         self.parameterizedTextValue = parameterizedTextValue
         self.selectedTextRangeValues = selectedTextRangeValues
+        self.onRead = onRead
     }
 
     func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead {
+        onRead?(attribute, element)
         switch attribute {
         case kAXFocusedUIElementAttribute:
             guard !focusedElementValues.isEmpty else {
@@ -797,6 +2012,7 @@ private final class ScriptedAccessibilityAttributeReader: AccessibilityAttribute
         parameter: CFTypeRef,
         of element: AXUIElement
     ) -> AccessibilityAttributeRead {
+        onRead?(attribute, element)
         guard attribute == kAXStringForRangeParameterizedAttribute,
               let range = AccessibilityAttributeDecoder.range(from: parameter) else {
             return .init(result: .parameterizedAttributeUnsupported, value: nil)
@@ -809,8 +2025,55 @@ private final class ScriptedAccessibilityAttributeReader: AccessibilityAttribute
     }
 
     func isAttributeSettable(_ attribute: String, of element: AXUIElement) -> Bool? {
-        attribute == kAXValueAttribute ? true : nil
+        onRead?(attribute, element)
+        return attribute == kAXValueAttribute ? true : nil
     }
+}
+
+private struct ExactTextFixture {
+    let provider: SystemAccessibilityFocusProvider
+    let reader: ScriptedAccessibilityAttributeReader
+    let identifier: String
+}
+
+private func exactTextFixture(
+    visibleText: String,
+    returnedText: String
+) -> ExactTextFixture {
+    let element = AXUIElementCreateApplication(42)
+    var caret = CFRange(location: (visibleText as NSString).length, length: 0)
+    let caretValue = AXValueCreate(.cfRange, &caret)!
+    let reader = ScriptedAccessibilityAttributeReader(
+        focusedElementValues: [element, element, element, element],
+        parameterizedTextValue: returnedText as CFString,
+        selectedTextRangeValues: [caretValue, caretValue]
+    )
+    let provider = SystemAccessibilityFocusProvider(reader: reader)
+    let identifier = provider.focusedElement(for: 42)!.identifier
+    return ExactTextFixture(provider: provider, reader: reader, identifier: identifier)
+}
+
+private final class AccessibilityTimeline {
+    private(set) var events: [String] = []
+    func record(_ event: String) { events.append(event) }
+    func reset() { events.removeAll() }
+}
+
+private func elementPID(_ element: AXUIElement) -> Int32 {
+    var pid: pid_t = 0
+    _ = AXUIElementGetPid(element, &pid)
+    return Int32(pid)
+}
+
+private func readEvent(_ attribute: String, _ element: AXUIElement) -> String {
+    let name: String
+    switch attribute {
+    case kAXFocusedUIElementAttribute: name = "focused"
+    case kAXSelectedTextRangeAttribute: name = "selected"
+    case kAXStringForRangeParameterizedAttribute: name = "parameterized"
+    default: name = "other"
+    }
+    return "\(name):\(elementPID(element))"
 }
 
 private struct LiteralRecognizer: WordRecognizing {

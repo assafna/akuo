@@ -392,7 +392,18 @@ Use recognizable test data that contains no real credentials or personal informa
   **Evidence:**
 - [ ] **Leading mapped punctuation remains eligible.** In a new empty TextEdit document, select standard Hebrew and type the physical keys that produce `/וןבל `. Confirm the visible result is exactly `quick ` with one space and the active input source changes to English. **Result:**
   **Evidence:**
-- [ ] **Navigation unchanged.** While partway through a token, use Left/Right arrows and Home/End where supported; confirm navigation is preserved and no stale token is later corrected. **Result:**
+- [ ] **Navigation and adjacent suffixes unchanged.** With English selected,
+  run each scenario in a fresh TextEdit document. **Right:** create `x`, place
+  the caret immediately before it (for example, with Home), press Right once
+  to move after the existing `x`, then type `akuo `. Confirm the text remains
+  exactly `xakuo `, with no correction or source switch. **Left:** create
+  `xy`, place the caret after `y`, press Left once to move between `x` and
+  `y`, then type `akuo `. Confirm the text remains exactly `xakuo y`, with no
+  correction or source switch. **Standalone after reset:** create `x`, press
+  Home to move to document start, then type `akuo `. Confirm the text becomes
+  exactly `שלום x` and the input source changes to standard Hebrew. Also use
+  Home/End where supported and confirm navigation is preserved and no stale
+  token is later corrected. **Result:**
   **Evidence:**
 - [ ] **Same-editor mouse relocation clears partial input.** In a TextEdit document containing harmless marker text on two lines, type only `a` at the first marker, click after the second marker in the same editor, then type `kuo `. Confirm no correction occurs, neither marker nor the earlier `a` is deleted, and the second location contains exactly `kuo `. **Result:**
   **Evidence:**
@@ -416,6 +427,29 @@ In every row, test both correction directions, one correct word, one excluded to
 | [ ] | Messages | New unsent message | | |
 | [ ] | Terminal | Harmless local prompt/input; do not execute test text | | |
 | [ ] | Electron editor | Name: | | |
+
+- [ ] **Non-activating launcher ownership and launch recovery.** Select English.
+  Complete five **cold** attempts: quit Raycast completely, invoke it with its
+  configured keyboard shortcut, and immediately type `akuo ` as soon as its
+  search bar appears. For every attempt, confirm the query becomes exactly
+  `שלום ` with one space and the input source changes to standard Hebrew. Then,
+  without quitting Raycast, clear the query and complete five **warm** `akuo `
+  attempts with the same expected result. No attempt may leave a partial token,
+  duplicate text, or insert text outside the search field. This exercises the
+  generalized activation-owner hint, visible-window ordering, and stable
+  Accessibility-focus corroboration; it does not depend on product-specific
+  recognition. **Result:**
+  **Evidence:**
+- [ ] **Launcher recovery rejects an adjacent prefix.** Put `x` in Raycast's
+  search field, dismiss and immediately reopen Raycast, then append `akuo `.
+  Confirm Akuo leaves `xakuo ` unchanged rather than correcting only the
+  `akuo` suffix. **Result:**
+  **Evidence:**
+- [ ] **Same-app focus gaps fail open.** With Raycast already frontmost, move
+  focus between its controls while immediately typing `akuo `. Confirm Akuo
+  never reconstructs text from the transient focus gap and never corrects a
+  partial suffix. **Result:**
+  **Evidence:**
 
 ### Native Return identity
 
