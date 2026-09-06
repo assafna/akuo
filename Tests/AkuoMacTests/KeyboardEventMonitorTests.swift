@@ -1335,20 +1335,25 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(replacer.callCount, 0)
     }
 
-    func testCopiedSystemFocusProvidersShareBoundaryCallbackBudgetThroughValidation() {
+    func testFinalRevalidationBudgetExpiryPreservesBoundaryWithoutMutation() {
         var now: TimeInterval = 0
         var preparationCalls = 0
+        var requestCalls = 0
         let element = AXUIElementCreateApplication(43)
         let accessibility = SystemAccessibilityFocusProvider(
-            reader: BudgetAccessibilityReader(element: element, text: "akuo"),
+            reader: BudgetAccessibilityReader(
+                element: element,
+                text: "akuo",
+                onRequest: {
+                    requestCalls += 1
+                    // The boundary callback performs initial resolution, a
+                    // coordinator revalidation, exact-text validation, then
+                    // its final revalidation. Expire inside that last AX IPC.
+                    if requestCalls == 23 { now = 0.101 }
+                }
+            ),
             configureMessagingTimeout: { _, _ in
                 preparationCalls += 1
-                // Resolution uses two preparations and the first coordinator
-                // revalidation uses two more.  Expire the one callback-wide
-                // scope only after that revalidation has obtained its context.
-                if preparationCalls == 4 {
-                    now = 0.101
-                }
                 return .success
             },
             now: { now }
@@ -1399,14 +1404,27 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertNotNil(monitor.process(targetedNativeEvent(processIdentifier: 42)))
 
         preparationCalls = 0
+        requestCalls = 0
         now = 0
         decoder.event = .text(" ", keyCode: 49, marker: 0)
 
         XCTAssertTrue(monitor.process(fakeNativeEvent) === fakeNativeEvent)
-        XCTAssertEqual(preparationCalls, 4)
+        XCTAssertEqual(preparationCalls, 23)
         XCTAssertEqual(replacer.callCount, 0)
         XCTAssertTrue(selector.selectedLanguages.isEmpty)
         XCTAssertTrue(selector.exactIdentifiers.isEmpty)
+    }
+
+    func testFinalContextGateRejectsExpiredAccessibilityBudget() {
+        let fixture = makeFixture()
+        fixture.coordinator.boundaryResult = .handled
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        fixture.focus.accessibilityBudgetRemaining = false
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertTrue(fixture.monitor.process(fakeNativeEvent) === fakeNativeEvent)
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.count, 1)
     }
 
     func testStableSourceChangeBetweenEventsStartsANewToken() {
@@ -2292,16 +2310,23 @@ private final class BudgetAccessibilityReader: AccessibilityAttributeReading {
     private let element: AXUIElement
     private let text: String
     private let caretRange: AXValue
+    private let onRequest: () -> Void
 
-    init(element: AXUIElement, text: String) {
+    init(
+        element: AXUIElement,
+        text: String,
+        onRequest: @escaping () -> Void = {}
+    ) {
         self.element = element
         self.text = text
+        self.onRequest = onRequest
         var range = CFRange(location: (text as NSString).length, length: 0)
         caretRange = AXValueCreate(.cfRange, &range)!
     }
 
     func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead {
-        switch attribute {
+        onRequest()
+        return switch attribute {
         case kAXFocusedUIElementAttribute:
             .init(result: .success, value: self.element)
         case kAXRoleAttribute:
@@ -2320,14 +2345,16 @@ private final class BudgetAccessibilityReader: AccessibilityAttributeReading {
         parameter: CFTypeRef,
         of element: AXUIElement
     ) -> AccessibilityAttributeRead {
-        .init(
+        onRequest()
+        return .init(
             result: attribute == kAXStringForRangeParameterizedAttribute ? .success : .parameterizedAttributeUnsupported,
             value: attribute == kAXStringForRangeParameterizedAttribute ? text as CFString : nil
         )
     }
 
     func isAttributeSettable(_ attribute: String, of element: AXUIElement) -> Bool? {
-        attribute == kAXValueAttribute ? true : nil
+        onRequest()
+        return attribute == kAXValueAttribute ? true : nil
     }
 }
 
@@ -2528,6 +2555,7 @@ private final class FakeFocusContextProvider: FocusContextProviding {
     private(set) var recoveryLengths: [Int] = []
     private(set) var recoveryContexts: [FocusContext] = []
     private(set) var accessibilityBudgetStarts = 0
+    var accessibilityBudgetRemaining = true
 
     init(context: FocusContext?) {
         self.context = context
@@ -2536,6 +2564,10 @@ private final class FakeFocusContextProvider: FocusContextProviding {
     func beginAccessibilityCallbackBudget() -> () -> Void {
         accessibilityBudgetStarts += 1
         return {}
+    }
+
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool {
+        accessibilityBudgetRemaining
     }
 
     func current() -> FocusContext? {

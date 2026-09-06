@@ -212,6 +212,10 @@ struct AccessibilityAttributeRead {
     let value: CFTypeRef?
 }
 
+private struct AccessibilitySettableValue {
+    let value: Bool?
+}
+
 protocol AccessibilityAttributeReading {
     func attribute(_ attribute: String, of element: AXUIElement) -> AccessibilityAttributeRead
     func parameterizedAttribute(
@@ -292,6 +296,13 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
 
     func beginCallbackBudget() -> () -> Void { AccessibilityCallbackBudget.begin(now: now()) }
 
+    func hasCallbackBudgetRemaining() -> Bool {
+        guard let remaining = AccessibilityCallbackBudget.remaining(now: now()) else {
+            return false
+        }
+        return remaining > 0
+    }
+
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
         guard case let .focused(element) = focusSnapshot(for: processIdentifier) else {
             return nil
@@ -301,28 +312,39 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
 
     func focusSnapshot(for processIdentifier: Int32) -> AccessibilityFocusSnapshot {
         let application = AXUIElementCreateApplication(processIdentifier)
-        guard prepare(application) else {
+        guard let initialFocus = attribute(
+            kAXFocusedUIElementAttribute,
+            of: application
+        ) else {
             return .unavailable
         }
-        let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
         if initialFocus.result == .noValue, initialFocus.value == nil {
-            let finalFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+            guard let finalFocus = attribute(
+                kAXFocusedUIElementAttribute,
+                of: application
+            ) else {
+                return .unavailable
+            }
             return finalFocus.result == .noValue && finalFocus.value == nil
                 ? .stablyAbsent
                 : .unavailable
         }
         guard initialFocus.result == .success,
-              let element = AccessibilityAttributeDecoder.element(from: initialFocus.value),
-              prepare(element) else {
+              let element = AccessibilityAttributeDecoder.element(from: initialFocus.value) else {
             return .unavailable
         }
 
-        let role = reader.attribute(kAXRoleAttribute, of: element)
-        let subrole = reader.attribute(kAXSubroleAttribute, of: element)
-        let isEnabled = reader.attribute(kAXEnabledAttribute, of: element)
-        let isValueSettable = reader.isAttributeSettable(kAXValueAttribute, of: element)
+        guard let role = attribute(kAXRoleAttribute, of: element),
+              let subrole = attribute(kAXSubroleAttribute, of: element),
+              let isEnabled = attribute(kAXEnabledAttribute, of: element),
+              let settable = isAttributeSettable(kAXValueAttribute, of: element),
+              let finalFocus = attribute(
+                  kAXFocusedUIElementAttribute,
+                  of: application
+              ) else {
+            return .unavailable
+        }
 
-        let finalFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
         guard finalFocus.result == .success,
               let confirmedElement = AccessibilityAttributeDecoder.element(from: finalFocus.value),
               CFEqual(element, confirmedElement) else {
@@ -342,7 +364,7 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
                 result: isEnabled.result,
                 value: isEnabled.value
             ),
-            isValueSettable: isValueSettable
+            isValueSettable: settable.value
         ))
     }
 
@@ -381,16 +403,19 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
     ) -> String? {
         guard utf16Length > 0 else { return nil }
         let application = AXUIElementCreateApplication(processIdentifier)
-        guard prepare(application) else { return nil }
-        let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+        guard let initialFocus = attribute(
+            kAXFocusedUIElementAttribute,
+            of: application
+        ) else { return nil }
         guard initialFocus.result == .success,
               let element = AccessibilityAttributeDecoder.element(from: initialFocus.value),
-              prepare(element),
               identityTracker.identifier(for: element) == elementIdentifier else {
             return nil
         }
 
-        let selectedRange = reader.attribute(kAXSelectedTextRangeAttribute, of: element)
+        guard let selectedRange = attribute(kAXSelectedTextRangeAttribute, of: element) else {
+            return nil
+        }
         guard selectedRange.result == .success,
               let caretRange = AccessibilityAttributeDecoder.range(
                   from: selectedRange.value
@@ -409,13 +434,19 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         guard let requestedRangeValue = AXValueCreate(.cfRange, &requestedRange) else {
             return nil
         }
-        let previousText = reader.parameterizedAttribute(
+        guard let previousText = parameterizedAttribute(
             kAXStringForRangeParameterizedAttribute,
             parameter: requestedRangeValue,
             of: element
-        )
-        let finalSelectedRange = reader.attribute(kAXSelectedTextRangeAttribute, of: element)
-        let finalFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+        ), let finalSelectedRange = attribute(
+            kAXSelectedTextRangeAttribute,
+            of: element
+        ), let finalFocus = attribute(
+            kAXFocusedUIElementAttribute,
+            of: application
+        ) else {
+            return nil
+        }
         guard previousText.result == .success,
               let text = AccessibilityAttributeDecoder.string(from: previousText.value),
               (text as NSString).length == utf16Length,
@@ -429,6 +460,51 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         }
 
         return text
+    }
+
+    private func attribute(
+        _ attribute: String,
+        of element: AXUIElement
+    ) -> AccessibilityAttributeRead? {
+        request(on: element) { reader.attribute(attribute, of: element) }
+    }
+
+    private func parameterizedAttribute(
+        _ attribute: String,
+        parameter: CFTypeRef,
+        of element: AXUIElement
+    ) -> AccessibilityAttributeRead? {
+        request(on: element) {
+            reader.parameterizedAttribute(attribute, parameter: parameter, of: element)
+        }
+    }
+
+    private func isAttributeSettable(
+        _ attribute: String,
+        of element: AXUIElement
+    ) -> AccessibilitySettableValue? {
+        request(on: element) {
+            AccessibilitySettableValue(
+                value: reader.isAttributeSettable(attribute, of: element)
+            )
+        }
+    }
+
+    private func request<T>(
+        on element: AXUIElement,
+        operation: () -> T
+    ) -> T? {
+        guard prepare(element) else { return nil }
+        let result = operation()
+        guard isWithinCallbackBudget else { return nil }
+        return result
+    }
+
+    private var isWithinCallbackBudget: Bool {
+        guard let remaining = AccessibilityCallbackBudget.remaining(now: now()) else {
+            return true
+        }
+        return remaining > 0
     }
 
     private func prepare(_ element: AXUIElement) -> Bool {
@@ -445,8 +521,10 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
 
 public struct FocusContextProvider {
     // Four ahead processes cover the observed panel-plus-overlay topology.
-    // At 5 ms per AX request, four scans (at most eight requests each) are
-    // bounded to 160 ms before any optional owner snapshot.
+    // One callback-wide 100 ms deadline covers every resolver, recovery, and
+    // validation read. Each AX IPC is reconfigured to min(5 ms, remaining),
+    // and evidence is rejected after the request if that one in-flight request
+    // crosses the deadline.
     private static let maximumAheadProcessIdentifiers = 4
     private static let secureTextField = "AXSecureTextField"
     // Akuo supports only standard editable text roles that are
@@ -470,6 +548,13 @@ public struct FocusContextProvider {
     func beginAccessibilityCallbackBudget() -> () -> Void {
         guard let provider = accessibilityProvider as? SystemAccessibilityFocusProvider else { return {} }
         return provider.beginCallbackBudget()
+    }
+
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool {
+        guard let provider = accessibilityProvider as? SystemAccessibilityFocusProvider else {
+            return false
+        }
+        return provider.hasCallbackBudgetRemaining()
     }
 
     init(

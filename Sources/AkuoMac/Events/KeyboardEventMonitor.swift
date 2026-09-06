@@ -221,10 +221,14 @@ protocol FocusContextProviding {
         context: FocusContext
     ) -> String?
     func beginAccessibilityCallbackBudget() -> () -> Void
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool
 }
 
 extension FocusContextProviding {
     func beginAccessibilityCallbackBudget() -> () -> Void { {} }
+    // Non-system implementations must opt in explicitly. Treating an
+    // unobservable budget as expired preserves the monitor's fail-open gate.
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool { false }
     func current(processIdentifier: Int32) -> FocusContext? {
         guard let context = current(),
               context.processIdentifier == processIdentifier else {
@@ -902,7 +906,8 @@ public final class KeyboardEventMonitor {
         guard current == expected
             && current.elementIdentifier != nil
             && !current.isSecureField
-            && current.isEditableTextInput else {
+            && current.isEditableTextInput
+            && focusContextProvider.hasAccessibilityCallbackBudgetRemaining() else {
             clearTransientState()
             return false
         }

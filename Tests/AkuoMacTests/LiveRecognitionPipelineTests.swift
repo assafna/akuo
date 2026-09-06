@@ -1311,6 +1311,8 @@ private final class ScriptedTargetLayoutTranslator: KeyboardLayoutTextTranslatin
 }
 
 private struct LiveRecognitionFocusProvider: FocusContextProviding {
+    func hasAccessibilityCallbackBudgetRemaining() -> Bool { true }
+
     func current() -> FocusContext? {
         .init(
             processIdentifier: 42,
