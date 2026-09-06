@@ -410,10 +410,16 @@ final class KeyboardEventMonitorTests: XCTestCase {
     func testSyntheticEventNeverEntersWordBuffer() {
         let fixture = makeFixture()
         fixture.decoder.event = .text("a", marker: KeyboardEventMonitor.syntheticMarker)
+        fakeNativeEvent.setIntegerValueField(
+            .eventSourceUserData,
+            value: KeyboardEventMonitor.syntheticMarker
+        )
 
         XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
         XCTAssertEqual(fixture.coordinator.noteOrdinaryInputCalls, 0)
+        XCTAssertTrue(fixture.focus.interactionOwnerRequests.isEmpty)
+        XCTAssertEqual(fixture.focus.frontmostInteractionCalls, 0)
     }
 
     func testTaggedNativeReplacementSkipsPayloadDecoder() {

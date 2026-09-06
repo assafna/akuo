@@ -57,11 +57,12 @@ final class SystemWindowProcessOrderingProvider: WindowProcessOrderingProviding 
 
     init(
         selfProcessIdentifier: Int32,
-        windowList: @escaping () -> [[String: Any]]?
+        windowList: @escaping () -> [[String: Any]]?,
+        acceptedLevels: ClosedRange<Int>? = nil
     ) {
         self.selfProcessIdentifier = selfProcessIdentifier
         self.windowList = windowList
-        acceptedLevels = Self.acceptedWindowLevels
+        self.acceptedLevels = acceptedLevels ?? Self.acceptedWindowLevels
     }
 
     func processIdentifiersInFront(of activationOwner: Int32) -> [Int32]? {

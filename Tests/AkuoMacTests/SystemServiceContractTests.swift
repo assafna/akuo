@@ -46,6 +46,39 @@ final class SystemServiceContractTests: XCTestCase {
         )
     }
 
+    func testWindowOrderingRejectsNonpositiveProcessIdentifiers() {
+        XCTAssertEqual(WindowProcessOrdering.processIdentifiersInFront(
+            of: 42, excluding: 265,
+            windows: [
+                .init(processIdentifier: 0, layer: 8, alpha: 1),
+                .init(processIdentifier: -1, layer: 8, alpha: 1),
+                .init(processIdentifier: 42, layer: 0, alpha: 1),
+            ], acceptedLevels: 0 ... 8
+        ), [])
+    }
+
+    func testWindowOrderingSystemProviderUsesExactAcceptedLevelBoundsOnce() {
+        let normal = Int(CGWindowLevelForKey(.normalWindow))
+        let modal = Int(CGWindowLevelForKey(.modalPanelWindow))
+        let bounds = min(normal, modal) ... max(normal, modal)
+        var calls = 0
+        let provider = SystemWindowProcessOrderingProvider(
+            selfProcessIdentifier: 265,
+            windowList: {
+                calls += 1
+                return [
+                    windowMetadata(pid: 70, layer: bounds.lowerBound - 1, alpha: 1),
+                    windowMetadata(pid: 71, layer: bounds.lowerBound, alpha: 1),
+                    windowMetadata(pid: 72, layer: bounds.upperBound, alpha: 1),
+                    windowMetadata(pid: 73, layer: bounds.upperBound + 1, alpha: 1),
+                    windowMetadata(pid: 42, layer: bounds.lowerBound, alpha: 1),
+                ]
+            }, acceptedLevels: bounds
+        )
+        XCTAssertEqual(provider.processIdentifiersInFront(of: 42), [71, 72])
+        XCTAssertEqual(calls, 1)
+    }
+
     func testWindowOrderingReturnsNilWhenActivationOwnerHasNoAcceptedWindow() {
         XCTAssertNil(
             WindowProcessOrdering.processIdentifiersInFront(
@@ -127,11 +160,12 @@ final class SystemServiceContractTests: XCTestCase {
     }
 
     func testInteractionContextUsesUniqueFocusedProcessAheadOfActivationOwner() {
+        let accessibility = PerProcessAccessibilityFocusProvider(elements: [
+            70: focusElement(identifier: "panel-search")
+        ])
         let provider = FocusContextProvider(
             frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 42),
-            accessibilityProvider: PerProcessAccessibilityFocusProvider(elements: [
-                70: focusElement(identifier: "panel-search")
-            ]),
+            accessibilityProvider: accessibility,
             windowProcessOrderingProvider: FakeWindowProcessOrderingProvider(
                 processIdentifiers: [70]
             )
@@ -146,6 +180,7 @@ final class SystemServiceContractTests: XCTestCase {
                 isEditableTextInput: true
             )
         )
+        XCTAssertEqual(accessibility.requestedProcessIdentifiers, [70])
     }
 
     func testInteractionContextSkipsStableAbsenceBeforeLaterFocusedCandidate() {
