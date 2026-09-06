@@ -397,7 +397,7 @@ Use recognizable test data that contains no real credentials or personal informa
   the caret immediately before it (for example, with Home), press Right once
   to move after the existing `x`, then type `akuo `. Confirm the text remains
   exactly `xakuo `, with no correction or source switch. **Left:** create
-  `xy`, place the caret after `x`, press Left once to move between `x` and
+  `xy`, place the caret after `y`, press Left once to move between `x` and
   `y`, then type `akuo `. Confirm the text remains exactly `xakuo y`, with no
   correction or source switch. **Standalone after reset:** create `x`, press
   Home to move to document start, then type `akuo `. Confirm the text becomes
