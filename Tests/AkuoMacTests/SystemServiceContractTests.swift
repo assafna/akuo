@@ -1,9 +1,92 @@
 import Foundation
+import CoreGraphics
 import XCTest
 import AkuoCore
 @testable import AkuoMac
 
 final class SystemServiceContractTests: XCTestCase {
+    func testWindowOrderingReturnsDistinctProcessesAheadOfActivationOwner() {
+        let windows = [
+            WindowProcessSnapshot(processIdentifier: 70, layer: 8, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 70, layer: 8, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 71, layer: 5, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 42, layer: 0, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 99, layer: 0, alpha: 1),
+        ]
+
+        XCTAssertEqual(
+            WindowProcessOrdering.processIdentifiersInFront(
+                of: 42,
+                excluding: 265,
+                windows: windows,
+                acceptedLevels: 0 ... 8
+            ),
+            [70, 71]
+        )
+    }
+
+    func testWindowOrderingSkipsInvalidAlphaLevelsAndAkuoProcess() {
+        let windows = [
+            WindowProcessSnapshot(processIdentifier: 70, layer: 8, alpha: 0),
+            WindowProcessSnapshot(processIdentifier: 71, layer: 8, alpha: .nan),
+            WindowProcessSnapshot(processIdentifier: 72, layer: 9, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 265, layer: 8, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 73, layer: 8, alpha: 1),
+            WindowProcessSnapshot(processIdentifier: 42, layer: 0, alpha: 1),
+        ]
+
+        XCTAssertEqual(
+            WindowProcessOrdering.processIdentifiersInFront(
+                of: 42,
+                excluding: 265,
+                windows: windows,
+                acceptedLevels: 0 ... 8
+            ),
+            [73]
+        )
+    }
+
+    func testWindowOrderingReturnsNilWhenActivationOwnerHasNoAcceptedWindow() {
+        XCTAssertNil(
+            WindowProcessOrdering.processIdentifiersInFront(
+                of: 42,
+                excluding: 265,
+                windows: [
+                    WindowProcessSnapshot(processIdentifier: 70, layer: 8, alpha: 1),
+                    WindowProcessSnapshot(processIdentifier: 42, layer: 9, alpha: 1),
+                ],
+                acceptedLevels: 0 ... 8
+            )
+        )
+    }
+
+    func testWindowOrderingSystemProviderRejectsMalformedNumericMetadata() {
+        let provider = SystemWindowProcessOrderingProvider(
+            selfProcessIdentifier: 265,
+            windowList: {
+                [
+                    windowMetadata(pid: true, layer: 8, alpha: 1),
+                    windowMetadata(pid: Int64(Int32.max) + 1, layer: 8, alpha: 1),
+                    windowMetadata(pid: 70, layer: 8.5, alpha: 1),
+                    windowMetadata(pid: 71, layer: 8, alpha: Double.infinity),
+                    windowMetadata(pid: 72, layer: 8, alpha: 1),
+                    windowMetadata(pid: 42, layer: 0, alpha: 1),
+                ]
+            }
+        )
+
+        XCTAssertEqual(provider.processIdentifiersInFront(of: 42), [72])
+    }
+
+    func testWindowOrderingSystemProviderReturnsNilWhenWindowListIsUnavailable() {
+        let provider = SystemWindowProcessOrderingProvider(
+            selfProcessIdentifier: 265,
+            windowList: { nil }
+        )
+
+        XCTAssertNil(provider.processIdentifiersInFront(of: 42))
+    }
+
     func testAccessibilityTextMatcherComputesOnlyRangeBeforeCollapsedCaret() {
         let value = "prefix 😀 שמג "
         let caretAtEnd = NSRange(
@@ -797,6 +880,14 @@ final class SystemServiceContractTests: XCTestCase {
             .unavailable
         )
     }
+}
+
+private func windowMetadata(pid: Any, layer: Any, alpha: Any) -> [String: Any] {
+    [
+        kCGWindowOwnerPID as String: pid,
+        kCGWindowLayer as String: layer,
+        kCGWindowAlpha as String: alpha,
+    ]
 }
 
 private struct LocaleSpellCheckerBackend: SpellCheckerBackend {
