@@ -503,6 +503,54 @@ final class SystemServiceContractTests: XCTestCase {
         )
     }
 
+    func testFocusContextCanInspectEventTargetProcessWithoutActivation() {
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 7),
+            accessibilityProvider: FakeAccessibilityFocusProvider(
+                element: .init(
+                    identifier: "panel-search",
+                    role: "AXTextField",
+                    subrole: .value("raycast_searchField"),
+                    isEnabled: .value(true),
+                    isValueSettable: true
+                )
+            )
+        )
+
+        XCTAssertEqual(
+            provider.current(processIdentifier: 42),
+            .init(
+                processIdentifier: 42,
+                elementIdentifier: "panel-search",
+                isSecureField: false,
+                isEditableTextInput: true
+            )
+        )
+    }
+
+    func testExactTextValidationUsesContextProcessRatherThanActivatedProcess() {
+        let accessibility = FakeAccessibilityFocusProvider(
+            element: nil,
+            previousTextMatches: true
+        )
+        let provider = FocusContextProvider(
+            frontmostProcessProvider: FakeFrontmostProcessProvider(processIdentifier: 7),
+            accessibilityProvider: accessibility
+        )
+        let context = FocusContext(
+            processIdentifier: 42,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+
+        XCTAssertTrue(provider.hasExactTextImmediatelyBeforeCaret(
+            "akuo ",
+            context: context
+        ))
+        XCTAssertEqual(accessibility.exactTextProcessIdentifiers, [42])
+    }
+
     func testFrontmostProcessChangeDuringInspectionReturnsNoFocusContext() {
         let provider = FocusContextProvider(
             frontmostProcessProvider: ScriptedFrontmostProcessProvider([42, 43]),
@@ -817,10 +865,21 @@ private final class ScriptedFrontmostProcessProvider: FrontmostProcessProviding 
     }
 }
 
-private struct FakeAccessibilityFocusProvider: AccessibilityFocusProviding {
+private final class FakeAccessibilityFocusProvider: AccessibilityFocusProviding {
     let element: AccessibilityFocusElement?
     var previousTextMatches = false
     var precedingText: String?
+    private(set) var exactTextProcessIdentifiers: [Int32] = []
+
+    init(
+        element: AccessibilityFocusElement?,
+        previousTextMatches: Bool = false,
+        precedingText: String? = nil
+    ) {
+        self.element = element
+        self.previousTextMatches = previousTextMatches
+        self.precedingText = precedingText
+    }
 
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
         element
@@ -831,7 +890,8 @@ private struct FakeAccessibilityFocusProvider: AccessibilityFocusProviding {
         processIdentifier: Int32,
         elementIdentifier: String
     ) -> Bool {
-        previousTextMatches
+        exactTextProcessIdentifiers.append(processIdentifier)
+        return previousTextMatches
     }
 
     func textImmediatelyBeforeCaret(

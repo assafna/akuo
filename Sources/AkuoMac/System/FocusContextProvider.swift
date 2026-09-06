@@ -404,20 +404,21 @@ public struct FocusContextProvider {
         guard let processIdentifier = frontmostProcessProvider.processIdentifier else {
             return nil
         }
+        let context = current(processIdentifier: processIdentifier)
+        guard frontmostProcessProvider.processIdentifier == processIdentifier else {
+            return nil
+        }
+        return context
+    }
+
+    public func current(processIdentifier: Int32) -> FocusContext? {
         guard let element = accessibilityProvider.focusedElement(for: processIdentifier) else {
-            guard frontmostProcessProvider.processIdentifier == processIdentifier else {
-                return nil
-            }
             return FocusContext(
                 processIdentifier: processIdentifier,
                 elementIdentifier: nil,
                 isSecureField: false,
                 isEditableTextInput: false
             )
-        }
-
-        guard frontmostProcessProvider.processIdentifier == processIdentifier else {
-            return nil
         }
 
         let isSecureField = element.role == Self.secureTextField
@@ -442,13 +443,11 @@ public struct FocusContextProvider {
               !context.isSecureField,
               context.isEditableTextInput,
               let elementIdentifier = context.elementIdentifier,
-              frontmostProcessProvider.processIdentifier == context.processIdentifier,
               accessibilityProvider.hasExactTextImmediatelyBeforeCaret(
                   expectedText,
                   processIdentifier: context.processIdentifier,
                   elementIdentifier: elementIdentifier
-              ),
-              frontmostProcessProvider.processIdentifier == context.processIdentifier else {
+              ) else {
             return false
         }
         return true
@@ -463,14 +462,12 @@ public struct FocusContextProvider {
               !context.isSecureField,
               context.isEditableTextInput,
               let elementIdentifier = context.elementIdentifier,
-              frontmostProcessProvider.processIdentifier == context.processIdentifier,
               let text = accessibilityProvider.textImmediatelyBeforeCaret(
                   utf16Length: utf16Length,
                   processIdentifier: context.processIdentifier,
                   elementIdentifier: elementIdentifier
               ),
-              (text as NSString).length == utf16Length,
-              frontmostProcessProvider.processIdentifier == context.processIdentifier else {
+              (text as NSString).length == utf16Length else {
             return nil
         }
         return text

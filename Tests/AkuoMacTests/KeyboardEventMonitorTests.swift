@@ -11,6 +11,106 @@ final class KeyboardEventMonitorTests: XCTestCase {
         keyDown: true
     )!
 
+    func testEventTargetOwnsFocusForNonactivatingTextPanel() {
+        let fixture = makeFixture()
+        fixture.focus.context = .init(
+            processIdentifier: 7,
+            elementIdentifier: "activated-editor",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        let panelContext = FocusContext(
+            processIdentifier: 42,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = panelContext
+
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        XCTAssertEqual(fixture.coordinator.boundaryCalls.first?.context, panelContext)
+        XCTAssertEqual(fixture.focus.requestedProcessIdentifiers, [42, 42, 42])
+        XCTAssertEqual(fixture.focus.currentCalls, 0)
+    }
+
+    func testKnownEventTargetWithoutFocusNeverFallsBackToActivatedProcess() {
+        let fixture = makeFixture()
+        fixture.decoder.event = .text("akuo", marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 99)))
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
+        XCTAssertEqual(fixture.focus.requestedProcessIdentifiers, [99])
+        XCTAssertEqual(fixture.focus.currentCalls, 0)
+    }
+
+    func testInvalidEventTargetValuesUseStableFrontmostFallback() {
+        for rawProcessIdentifier in [
+            Int64(0),
+            Int64(-1),
+            Int64(Int32.max) + 1,
+        ] {
+            let fixture = makeFixture()
+            fixture.decoder.event = .text("a", marker: 0)
+
+            XCTAssertNotNil(fixture.monitor.process(
+                nativeEvent(targetProcessIdentifier: rawProcessIdentifier)
+            ))
+
+            XCTAssertEqual(fixture.monitor.currentTokenForTesting, "a")
+            XCTAssertEqual(fixture.focus.currentCalls, 1)
+            XCTAssertTrue(fixture.focus.requestedProcessIdentifiers.isEmpty)
+        }
+    }
+
+    func testImmediateUndoRevalidatesEventTargetProcess() {
+        let fixture = makeFixture()
+        let panelContext = FocusContext(
+            processIdentifier: 42,
+            elementIdentifier: "panel-search",
+            isSecureField: false,
+            isEditableTextInput: true
+        )
+        fixture.focus.contextsByProcessIdentifier[42] = panelContext
+        fixture.coordinator.undoResult = .handled
+        fixture.decoder.event = .commandZ(marker: 0)
+
+        XCTAssertNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+
+        XCTAssertEqual(fixture.coordinator.undoContexts, [panelContext])
+        XCTAssertEqual(fixture.focus.requestedProcessIdentifiers, [42, 42])
+        XCTAssertEqual(fixture.focus.currentCalls, 0)
+    }
+
+    func testEventTargetChangeStartsANewToken() {
+        let fixture = makeFixture()
+        fixture.focus.contextsByProcessIdentifier = [
+            42: .init(
+                processIdentifier: 42,
+                elementIdentifier: "first-panel",
+                isSecureField: false,
+                isEditableTextInput: true
+            ),
+            43: .init(
+                processIdentifier: 43,
+                elementIdentifier: "second-panel",
+                isSecureField: false,
+                isEditableTextInput: true
+            ),
+        ]
+        fixture.decoder.event = .text("aku", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text("o", marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 43)))
+
+        XCTAssertEqual(fixture.monitor.currentTokenForTesting, "o")
+    }
+
     func testSyntheticEventNeverEntersWordBuffer() {
         let fixture = makeFixture()
         fixture.decoder.event = .text("a", marker: KeyboardEventMonitor.syntheticMarker)
@@ -1670,6 +1770,19 @@ final class KeyboardEventMonitorTests: XCTestCase {
         return event
     }
 
+    private func targetedNativeEvent(processIdentifier: Int32) -> CGEvent {
+        nativeEvent(targetProcessIdentifier: Int64(processIdentifier))
+    }
+
+    private func nativeEvent(targetProcessIdentifier: Int64) -> CGEvent {
+        let event = nativeKeyEvent(keyCode: 0, flags: [])
+        event.setIntegerValueField(
+            .eventTargetUnixProcessID,
+            value: targetProcessIdentifier
+        )
+        return event
+    }
+
     private func nativeShiftEvent(
         keyCode: CGKeyCode,
         flags: CGEventFlags,
@@ -1919,9 +2032,11 @@ private final class FakeSecureInputChecker: SecureInputChecking {
 
 private final class FakeFocusContextProvider: FocusContextProviding {
     var context: FocusContext?
+    var contextsByProcessIdentifier: [Int32: FocusContext] = [:]
     var scriptedContexts: [FocusContext?] = []
     var recoveredText: String?
     private(set) var currentCalls = 0
+    private(set) var requestedProcessIdentifiers: [Int32] = []
     private(set) var recoveryLengths: [Int] = []
 
     init(context: FocusContext?) {
@@ -1934,6 +2049,11 @@ private final class FakeFocusContextProvider: FocusContextProviding {
             return scriptedContexts.removeFirst()
         }
         return context
+    }
+
+    func current(processIdentifier: Int32) -> FocusContext? {
+        requestedProcessIdentifiers.append(processIdentifier)
+        return contextsByProcessIdentifier[processIdentifier]
     }
 
     func textImmediatelyBeforeCaret(

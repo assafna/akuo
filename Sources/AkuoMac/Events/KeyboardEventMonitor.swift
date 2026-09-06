@@ -211,6 +211,7 @@ extension CorrectionCoordinator: CorrectionCoordinating {}
 
 protocol FocusContextProviding {
     func current() -> FocusContext?
+    func current(processIdentifier: Int32) -> FocusContext?
     func textImmediatelyBeforeCaret(
         utf16Length: Int,
         context: FocusContext
@@ -218,6 +219,14 @@ protocol FocusContextProviding {
 }
 
 extension FocusContextProviding {
+    func current(processIdentifier: Int32) -> FocusContext? {
+        guard let context = current(),
+              context.processIdentifier == processIdentifier else {
+            return nil
+        }
+        return context
+    }
+
     func textImmediatelyBeforeCaret(
         utf16Length: Int,
         context: FocusContext
@@ -389,6 +398,11 @@ public final class KeyboardEventMonitor {
         let armedAt: TimeInterval
     }
 
+    private enum FocusOwner {
+        case eventTarget(Int32)
+        case frontmostApplication
+    }
+
     public weak var delegate: (any KeyboardEventMonitorDelegate)?
     public private(set) var state: State = .stopped
 
@@ -541,7 +555,8 @@ public final class KeyboardEventMonitor {
             break
         }
 
-        let observedContext = focusContextProvider.current()
+        let focusOwner = focusOwner(for: event)
+        let observedContext = currentFocusContext(for: focusOwner)
         let previousObservedProcessIdentifier = lastObservedProcessIdentifier
         if let observedProcessIdentifier = observedContext?.processIdentifier {
             if let previousObservedProcessIdentifier,
@@ -620,7 +635,7 @@ public final class KeyboardEventMonitor {
                 priorInputLanguage: sourceAtGesture?.language,
                 currentInputSourceIdentifier: sourceAtGesture?.identifier,
                 isContextStillEligible: {
-                    self.isContextStillEligible(context)
+                    self.isContextStillEligible(context, owner: focusOwner)
                         && self.inputSources.currentSource == sourceAtGesture
                 }
             )
@@ -742,7 +757,7 @@ public final class KeyboardEventMonitor {
                     priorInputLanguage: language,
                     priorInputSourceIdentifier: sourceAfterDecoding.identifier,
                     isContextStillEligible: {
-                        self.isContextStillEligible(context)
+                        self.isContextStillEligible(context, owner: focusOwner)
                             && self.inputSources.currentSource == sourceAfterDecoding
                     }
                 )
@@ -771,7 +786,7 @@ public final class KeyboardEventMonitor {
             let result = coordinator.handleImmediateUndo(
                 context: context,
                 isContextStillEligible: {
-                    self.isContextStillEligible(context)
+                    self.isContextStillEligible(context, owner: focusOwner)
                 }
             )
             if case let .handledWithInputSourceSelectionFailure(expectedLanguage) = result {
@@ -795,9 +810,32 @@ public final class KeyboardEventMonitor {
         wordBuffer.currentToken
     }
 
-    private func isContextStillEligible(_ expected: FocusContext) -> Bool {
+    private func focusOwner(for event: CGEvent) -> FocusOwner {
+        let rawProcessIdentifier = event.getIntegerValueField(
+            .eventTargetUnixProcessID
+        )
+        guard rawProcessIdentifier > 0,
+              rawProcessIdentifier <= Int64(Int32.max) else {
+            return .frontmostApplication
+        }
+        return .eventTarget(Int32(rawProcessIdentifier))
+    }
+
+    private func currentFocusContext(for owner: FocusOwner) -> FocusContext? {
+        switch owner {
+        case let .eventTarget(processIdentifier):
+            focusContextProvider.current(processIdentifier: processIdentifier)
+        case .frontmostApplication:
+            focusContextProvider.current()
+        }
+    }
+
+    private func isContextStillEligible(
+        _ expected: FocusContext,
+        owner: FocusOwner
+    ) -> Bool {
         guard !secureInput.isSecureInputEnabled,
-              let current = focusContextProvider.current() else {
+              let current = currentFocusContext(for: owner) else {
             return false
         }
         return current == expected
