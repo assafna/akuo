@@ -37,7 +37,7 @@ All notable changes to Akuo are documented in this file.
 
 ### Changed
 
-- Advance the Unreleased candidate identity to `0.4.0 (26)` and harden build
+- Advance the Unreleased candidate identity to `0.4.0 (27)` and harden build
   manifest verification against duplicate JSON keys, invalid signatures,
   bundle-root aliasing or mode changes, and source mutation during generation.
 - Keep verification compatible with Xcode 16.4 and macOS Bash 3.2 when testing
@@ -69,14 +69,20 @@ All notable changes to Akuo are documented in this file.
 - Require the same frontmost application and focused Accessibility element
   throughout editability inspection and immediately before correction or undo,
   preserving the host boundary or Command-Z if focus changes.
+- Treat an event target, or a stable frontmost fallback when no target exists,
+  as an activation-owner hint. Corroborate visible windows ahead of that owner
+  with stable Accessibility focus: a unique focused candidate owns the
+  interaction, while ambiguity, malformed or unavailable evidence, or
+  ownership drift fails open. Ownership discovery reads no bundle identifiers,
+  application or window names, or window contents.
 
 ### Fixed
 
-- Resolve each keyboard event's Accessibility context from its target process,
-  allowing non-activating launchers, command palettes, and floating text panels
-  to receive correction even when macOS keeps another application activated.
-  Retain frontmost-application lookup only when the event exposes no target,
-  and fail open when a known target is unavailable or changes before mutation.
+- Resolve non-activating launchers, command palettes, and floating text panels
+  from application-neutral WindowServer ordering plus stable Accessibility
+  focus, even when activation ownership does not identify the text recipient.
+  Secure or ineligible focused candidates, and changed focus or window ordering
+  before mutation, leave text unchanged.
 - Recover a bounded unfinished token when initial alphabetic key events arrive
   after an observed application transition while the newly frontmost app's
   editable Accessibility element is still unavailable. Recovery reads only an

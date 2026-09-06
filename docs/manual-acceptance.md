@@ -417,15 +417,17 @@ In every row, test both correction directions, one correct word, one excluded to
 | [ ] | Terminal | Harmless local prompt/input; do not execute test text | | |
 | [ ] | Electron editor | Name: | | |
 
-- [ ] **Non-activating launcher ownership and launch recovery.** Quit Raycast completely, select English,
-  invoke Raycast with its configured keyboard shortcut, and immediately type
-  `akuo ` as soon as the search bar appears. Confirm the query becomes exactly
-  `שלום ` with one space and the input source changes to standard Hebrew.
-  Clear the query and repeat once with Raycast already warm. Repeat both cases
-  five times; no attempt may leave a partial token, duplicate text, or insert
-  text outside the search field. This verifies that the keyboard event's target
-  process owns focus even while macOS leaves the previously active application
-  frontmost. **Result:**
+- [ ] **Non-activating launcher ownership and launch recovery.** Select English.
+  Complete five **cold** attempts: quit Raycast completely, invoke it with its
+  configured keyboard shortcut, and immediately type `akuo ` as soon as its
+  search bar appears. For every attempt, confirm the query becomes exactly
+  `שלום ` with one space and the input source changes to standard Hebrew. Then,
+  without quitting Raycast, clear the query and complete five **warm** `akuo `
+  attempts with the same expected result. No attempt may leave a partial token,
+  duplicate text, or insert text outside the search field. This exercises the
+  generalized activation-owner hint, visible-window ordering, and stable
+  Accessibility-focus corroboration; it does not depend on product-specific
+  recognition. **Result:**
   **Evidence:**
 - [ ] **Launcher recovery rejects an adjacent prefix.** Put `x` in Raycast's
   search field, dismiss and immediately reopen Raycast, then append `akuo `.
