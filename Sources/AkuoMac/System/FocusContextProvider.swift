@@ -155,8 +155,15 @@ struct AccessibilityFocusElement: Equatable {
     let isValueSettable: Bool?
 }
 
+enum AccessibilityFocusSnapshot: Equatable {
+    case focused(AccessibilityFocusElement)
+    case stablyAbsent
+    case unavailable
+}
+
 protocol AccessibilityFocusProviding {
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement?
+    func focusSnapshot(for processIdentifier: Int32) -> AccessibilityFocusSnapshot
     func hasExactTextImmediatelyBeforeCaret(
         _ expectedText: String,
         processIdentifier: Int32,
@@ -170,6 +177,12 @@ protocol AccessibilityFocusProviding {
 }
 
 extension AccessibilityFocusProviding {
+    func focusSnapshot(for processIdentifier: Int32) -> AccessibilityFocusSnapshot {
+        guard let element = focusedElement(for: processIdentifier) else {
+            return .stablyAbsent
+        }
+        return .focused(element)
+    }
     func textImmediatelyBeforeCaret(
         utf16Length: Int,
         processIdentifier: Int32,
@@ -246,19 +259,42 @@ private final class AccessibilityFocusIdentityTracker {
 }
 
 final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
+    private static let messagingTimeout: Float = 0.005
     private let reader: any AccessibilityAttributeReading
+    private let configureMessagingTimeout: (AXUIElement, Float) -> AXError
     private let identityTracker = AccessibilityFocusIdentityTracker()
 
-    init(reader: any AccessibilityAttributeReading = SystemAccessibilityAttributeReader()) {
+    init(
+        reader: any AccessibilityAttributeReading = SystemAccessibilityAttributeReader(),
+        configureMessagingTimeout: @escaping (AXUIElement, Float) -> AXError = AXUIElementSetMessagingTimeout
+    ) {
         self.reader = reader
+        self.configureMessagingTimeout = configureMessagingTimeout
     }
 
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
-        let application = AXUIElementCreateApplication(processIdentifier)
-        let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
-        guard initialFocus.result == .success,
-              let element = AccessibilityAttributeDecoder.element(from: initialFocus.value) else {
+        guard case let .focused(element) = focusSnapshot(for: processIdentifier) else {
             return nil
+        }
+        return element
+    }
+
+    func focusSnapshot(for processIdentifier: Int32) -> AccessibilityFocusSnapshot {
+        let application = AXUIElementCreateApplication(processIdentifier)
+        guard configureMessagingTimeout(application, Self.messagingTimeout) == .success else {
+            return .unavailable
+        }
+        let initialFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+        if initialFocus.result == .noValue, initialFocus.value == nil {
+            let finalFocus = reader.attribute(kAXFocusedUIElementAttribute, of: application)
+            return finalFocus.result == .noValue && finalFocus.value == nil
+                ? .stablyAbsent
+                : .unavailable
+        }
+        guard initialFocus.result == .success,
+              let element = AccessibilityAttributeDecoder.element(from: initialFocus.value),
+              configureMessagingTimeout(element, Self.messagingTimeout) == .success else {
+            return .unavailable
         }
 
         let role = reader.attribute(kAXRoleAttribute, of: element)
@@ -270,10 +306,10 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         guard finalFocus.result == .success,
               let confirmedElement = AccessibilityAttributeDecoder.element(from: finalFocus.value),
               CFEqual(element, confirmedElement) else {
-            return nil
+            return .unavailable
         }
 
-        return AccessibilityFocusElement(
+        return .focused(AccessibilityFocusElement(
             identifier: identityTracker.identifier(for: element),
             role: role.result == .success
                 ? AccessibilityAttributeDecoder.string(from: role.value)
@@ -287,7 +323,7 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
                 value: isEnabled.value
             ),
             isValueSettable: isValueSettable
-        )
+        ))
     }
 
     func hasExactTextImmediatelyBeforeCaret(
@@ -375,6 +411,10 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
 }
 
 public struct FocusContextProvider {
+    // Four ahead processes cover the observed panel-plus-overlay topology.
+    // At 5 ms per AX request, four scans (at most eight requests each) are
+    // bounded to 160 ms before any optional owner snapshot.
+    private static let maximumAheadProcessIdentifiers = 4
     private static let secureTextField = "AXSecureTextField"
     // Akuo supports only standard editable text roles that are
     // consistently exposed by the supported macOS 13+ application contexts.
@@ -425,7 +465,9 @@ public struct FocusContextProvider {
     }
 
     public func current(processIdentifier: Int32) -> FocusContext? {
-        guard let element = accessibilityProvider.focusedElement(for: processIdentifier) else {
+        guard case let .focused(element) = accessibilityProvider.focusSnapshot(
+            for: processIdentifier
+        ) else {
             return FocusContext(
                 processIdentifier: processIdentifier,
                 elementIdentifier: nil,
@@ -434,6 +476,13 @@ public struct FocusContextProvider {
             )
         }
 
+        return context(processIdentifier: processIdentifier, element: element)
+    }
+
+    private func context(
+        processIdentifier: Int32,
+        element: AccessibilityFocusElement
+    ) -> FocusContext {
         let isSecureField = element.role == Self.secureTextField
             || element.subrole.value == Self.secureTextField
         return FocusContext(
@@ -466,20 +515,24 @@ public struct FocusContextProvider {
     ) -> FocusContext? {
         guard let processIdentifiers = windowProcessOrderingProvider.processIdentifiersInFront(
             of: activationOwnerProcessIdentifier
-        ) else {
+        ), Set(processIdentifiers).count <= Self.maximumAheadProcessIdentifiers else {
             return nil
         }
 
         var interactionContext: FocusContext?
         for processIdentifier in processIdentifiers {
-            guard let context = current(processIdentifier: processIdentifier),
-                  context.elementIdentifier != nil else {
+            switch accessibilityProvider.focusSnapshot(for: processIdentifier) {
+            case .stablyAbsent:
                 continue
-            }
-            guard interactionContext == nil else {
+            case .unavailable:
                 return nil
+            case let .focused(element):
+                let context = context(processIdentifier: processIdentifier, element: element)
+                guard interactionContext == nil else {
+                    return nil
+                }
+                interactionContext = context
             }
-            interactionContext = context
         }
 
         return interactionContext ?? current(processIdentifier: activationOwnerProcessIdentifier)
