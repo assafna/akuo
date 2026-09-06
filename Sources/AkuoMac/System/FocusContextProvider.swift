@@ -2,6 +2,21 @@ import AppKit
 import ApplicationServices
 import AkuoCore
 
+private enum AccessibilityCallbackBudget {
+    private static let key = "Akuo.accessibilityCallbackDeadline"
+    static func begin() -> () -> Void {
+        let dictionary = Thread.current.threadDictionary
+        let previous = dictionary[key]
+        guard previous == nil else { return {} }
+        dictionary[key] = ProcessInfo.processInfo.systemUptime + 0.100
+        return { dictionary[key] = previous }
+    }
+    static var remaining: Float? {
+        guard let deadline = Thread.current.threadDictionary[key] as? TimeInterval else { return nil }
+        return Float(deadline - ProcessInfo.processInfo.systemUptime)
+    }
+}
+
 protocol FrontmostProcessProviding {
     var processIdentifier: Int32? { get }
 }
@@ -272,6 +287,8 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         self.configureMessagingTimeout = configureMessagingTimeout
     }
 
+    func beginCallbackBudget() -> () -> Void { AccessibilityCallbackBudget.begin() }
+
     func focusedElement(for processIdentifier: Int32) -> AccessibilityFocusElement? {
         guard case let .focused(element) = focusSnapshot(for: processIdentifier) else {
             return nil
@@ -412,7 +429,14 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
     }
 
     private func prepare(_ element: AXUIElement) -> Bool {
-        configureMessagingTimeout(element, Self.messagingTimeout) == .success
+        let timeout: Float
+        if let remaining = AccessibilityCallbackBudget.remaining {
+            guard remaining > 0 else { return false }
+            timeout = min(Self.messagingTimeout, remaining)
+        } else {
+            timeout = Self.messagingTimeout
+        }
+        return configureMessagingTimeout(element, timeout) == .success
     }
 }
 
@@ -438,6 +462,11 @@ public struct FocusContextProvider {
         frontmostProcessProvider = WorkspaceFrontmostProcessProvider()
         accessibilityProvider = SystemAccessibilityFocusProvider()
         windowProcessOrderingProvider = SystemWindowProcessOrderingProvider()
+    }
+
+    func beginAccessibilityCallbackBudget() -> () -> Void {
+        guard let provider = accessibilityProvider as? SystemAccessibilityFocusProvider else { return {} }
+        return provider.beginCallbackBudget()
     }
 
     init(

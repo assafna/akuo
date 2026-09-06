@@ -220,9 +220,11 @@ protocol FocusContextProviding {
         utf16Length: Int,
         context: FocusContext
     ) -> String?
+    func beginAccessibilityCallbackBudget() -> () -> Void
 }
 
 extension FocusContextProviding {
+    func beginAccessibilityCallbackBudget() -> () -> Void { {} }
     func current(processIdentifier: Int32) -> FocusContext? {
         guard let context = current(),
               context.processIdentifier == processIdentifier else {
@@ -566,6 +568,8 @@ public final class KeyboardEventMonitor {
         if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticMarker {
             return event
         }
+        let endAccessibilityBudget = focusContextProvider.beginAccessibilityCallbackBudget()
+        defer { endAccessibilityBudget() }
 
         switch eventType {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:

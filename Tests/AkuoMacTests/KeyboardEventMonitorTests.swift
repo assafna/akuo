@@ -420,6 +420,15 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.coordinator.noteOrdinaryInputCalls, 0)
         XCTAssertTrue(fixture.focus.interactionOwnerRequests.isEmpty)
         XCTAssertEqual(fixture.focus.frontmostInteractionCalls, 0)
+        XCTAssertEqual(fixture.focus.accessibilityBudgetStarts, 0)
+    }
+
+    func testNonSyntheticEventStartsOneAccessibilityBudget() {
+        let fixture = makeFixture()
+        fixture.decoder.event = .text("a", marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(fakeNativeEvent))
+        XCTAssertEqual(fixture.focus.accessibilityBudgetStarts, 1)
     }
 
     func testTaggedNativeReplacementSkipsPayloadDecoder() {
@@ -2378,9 +2387,15 @@ private final class FakeFocusContextProvider: FocusContextProviding {
     private(set) var frontmostInteractionCalls = 0
     private(set) var recoveryLengths: [Int] = []
     private(set) var recoveryContexts: [FocusContext] = []
+    private(set) var accessibilityBudgetStarts = 0
 
     init(context: FocusContext?) {
         self.context = context
+    }
+
+    func beginAccessibilityCallbackBudget() -> () -> Void {
+        accessibilityBudgetStarts += 1
+        return {}
     }
 
     func current() -> FocusContext? {
