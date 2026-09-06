@@ -1470,6 +1470,39 @@ final class KeyboardEventMonitorTests: XCTestCase {
         XCTAssertEqual(fixture.monitor.currentTokenForTesting, "")
     }
 
+    func testNavigationResetDoesNotCorrectTrackedSuffixJoinedToVisiblePrefix() {
+        let fixture = makeRealValidationFixture(visibleText: "xakuo")
+        fixture.decoder.event = .navigation(marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text("akuo", marker: 0)
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+        XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+        XCTAssertEqual(fixture.replacer.callCount, 0)
+        XCTAssertTrue(fixture.selector.selectedLanguages.isEmpty)
+        XCTAssertTrue(fixture.selector.exactIdentifiers.isEmpty)
+    }
+
+    func testNavigationResetStillCorrectsStandaloneTrackedToken() {
+        for visibleText in ["akuo", " akuo"] {
+            let fixture = makeRealValidationFixture(visibleText: visibleText)
+            fixture.decoder.event = .navigation(marker: 0)
+            XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+            fixture.decoder.event = .text("akuo", marker: 0)
+            XCTAssertNotNil(fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)))
+            fixture.decoder.event = .text(" ", keyCode: 49, marker: 0)
+
+            XCTAssertNil(
+                fixture.monitor.process(targetedNativeEvent(processIdentifier: 42)),
+                "visibleText=\(visibleText.debugDescription)"
+            )
+            XCTAssertEqual(fixture.replacer.callCount, 1)
+            XCTAssertEqual(fixture.selector.selectedLanguages, [.hebrew])
+            XCTAssertTrue(fixture.selector.exactIdentifiers.isEmpty)
+        }
+    }
+
     func testTabNavigationPreservesModifiersAndDisarmsImmediateUndo() {
         for flags in [CGEventFlags(), .maskShift] {
             let fixture = makeFixture()
@@ -2346,9 +2379,16 @@ private final class BudgetAccessibilityReader: AccessibilityAttributeReading {
         of element: AXUIElement
     ) -> AccessibilityAttributeRead {
         onRequest()
+        guard attribute == kAXStringForRangeParameterizedAttribute,
+              let range = AccessibilityAttributeDecoder.range(from: parameter),
+              range.location >= 0,
+              range.length >= 0,
+              range.location + range.length <= (text as NSString).length else {
+            return .init(result: .parameterizedAttributeUnsupported, value: nil)
+        }
         return .init(
-            result: attribute == kAXStringForRangeParameterizedAttribute ? .success : .parameterizedAttributeUnsupported,
-            value: attribute == kAXStringForRangeParameterizedAttribute ? text as CFString : nil
+            result: .success,
+            value: (text as NSString).substring(with: range) as CFString
         )
     }
 
@@ -2356,6 +2396,65 @@ private final class BudgetAccessibilityReader: AccessibilityAttributeReading {
         onRequest()
         return attribute == kAXValueAttribute ? true : nil
     }
+}
+
+private struct RealValidationMonitorFixture {
+    let monitor: KeyboardEventMonitor
+    let decoder: FakeNativeEventDecoder
+    let replacer: MonitorRecordingTextReplacer
+    let selector: BudgetInputSourceSelector
+}
+
+private func makeRealValidationFixture(
+    visibleText: String
+) -> RealValidationMonitorFixture {
+    let element = AXUIElementCreateApplication(43)
+    let accessibility = SystemAccessibilityFocusProvider(
+        reader: BudgetAccessibilityReader(element: element, text: visibleText)
+    )
+    let focus = FocusContextProvider(
+        frontmostProcessProvider: BudgetFrontmostProcessProvider(processIdentifier: 42),
+        accessibilityProvider: accessibility,
+        windowProcessOrderingProvider: BudgetWindowOrderingProvider()
+    )
+    let decoder = FakeNativeEventDecoder()
+    let inputSources = FakeInputSourceState(readiness: .init(
+        englishAvailable: true,
+        hebrewAvailable: true
+    ), currentLanguage: .english)
+    let replacer = MonitorRecordingTextReplacer()
+    let selector = BudgetInputSourceSelector()
+    let scorer = WordScorer(recognizer: MonitorRecognizer())
+    let coordinator = CorrectionCoordinator(
+        policy: CorrectionPolicy(
+            layoutMap: KeyboardLayoutMap(),
+            originalScorer: scorer,
+            candidateScorer: scorer,
+            excluder: TokenExcluder()
+        ),
+        textReplacer: replacer,
+        inputSourceSelector: selector,
+        counter: MonitorCorrectionCounter(),
+        clock: MonitorRuntimeClock(),
+        undoController: UndoController(),
+        previousTextValidator: focus
+    )
+    let monitor = KeyboardEventMonitor(
+        decoder: decoder,
+        coordinator: coordinator,
+        permission: FakePermissionChecker(isGranted: true),
+        secureInput: FakeSecureInputChecker(isSecureInputEnabled: false),
+        focusContextProvider: focus,
+        inputSources: inputSources,
+        tapManager: FakeNativeEventTapManager(),
+        isAkuoEnabled: { true }
+    )
+    return .init(
+        monitor: monitor,
+        decoder: decoder,
+        replacer: replacer,
+        selector: selector
+    )
 }
 
 private final class BudgetInputSourceSelector: InputSourceSelecting {

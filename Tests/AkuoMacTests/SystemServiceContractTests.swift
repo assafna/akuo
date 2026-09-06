@@ -1084,7 +1084,7 @@ final class SystemServiceContractTests: XCTestCase {
         }
         let reader = ScriptedAccessibilityAttributeReader(
             focusedElementValues: [element, element, element, element],
-            parameterizedTextValue: "go " as CFString,
+            parameterizedTextValue: " go " as CFString,
             selectedTextRangeValues: [caretValue, caretValue]
         )
         let provider = SystemAccessibilityFocusProvider(reader: reader)
@@ -1098,8 +1098,94 @@ final class SystemServiceContractTests: XCTestCase {
             elementIdentifier: snapshot.identifier
         ))
         XCTAssertEqual(reader.parameterizedRanges, [
-            NSRange(location: 7, length: 3),
+            NSRange(location: 6, length: 4),
         ])
+    }
+
+    func testExactTextValidationAcceptsTokenAtDocumentStartWithoutPrefixRead() {
+        let fixture = exactTextFixture(visibleText: "akuo", returnedText: "akuo")
+
+        XCTAssertTrue(fixture.provider.hasExactTextImmediatelyBeforeCaret(
+            "akuo", processIdentifier: 42, elementIdentifier: fixture.identifier
+        ))
+        XCTAssertEqual(fixture.reader.parameterizedRanges, [
+            NSRange(location: 0, length: 4),
+        ])
+    }
+
+    func testExactTextValidationAcceptsOnlyPositiveSeparatorEvidence() {
+        for (separator, literalText) in [
+            (" ", " akuo"),
+            ("\n", "\nakuo"),
+            ("\t", "\takuo"),
+            ("\u{0001}", "\u{0001}akuo"),
+        ] {
+            let fixture = exactTextFixture(
+                visibleText: literalText,
+                returnedText: literalText
+            )
+
+            XCTAssertTrue(
+                fixture.provider.hasExactTextImmediatelyBeforeCaret(
+                    "akuo", processIdentifier: 42,
+                    elementIdentifier: fixture.identifier
+                ),
+                "separator=\(separator.debugDescription)"
+            )
+            XCTAssertEqual(fixture.reader.parameterizedRanges, [
+                NSRange(location: 0, length: 5),
+            ], "separator=\(separator.debugDescription)")
+        }
+    }
+
+    func testExactTextValidationRejectsAdjacentPrintablePrefix() {
+        let fixture = exactTextFixture(visibleText: "xakuo", returnedText: "xakuo")
+
+        XCTAssertFalse(fixture.provider.hasExactTextImmediatelyBeforeCaret(
+            "akuo", processIdentifier: 42, elementIdentifier: fixture.identifier
+        ))
+        XCTAssertEqual(fixture.reader.parameterizedRanges, [
+            NSRange(location: 0, length: 5),
+        ])
+    }
+
+    func testExactTextValidationRejectsPunctuationAndUncertainUnicodePrefixes() {
+        for literalText in [".akuo", "\u{0301}akuo", "\u{1F642}akuo", "\u{200D}akuo"] {
+            let nsText = literalText as NSString
+            let requestedLocation = nsText.length - 5
+            let returnedText = nsText.substring(
+                with: NSRange(location: requestedLocation, length: 5)
+            )
+            let fixture = exactTextFixture(
+                visibleText: literalText,
+                returnedText: returnedText
+            )
+
+            XCTAssertFalse(
+                fixture.provider.hasExactTextImmediatelyBeforeCaret(
+                    "akuo", processIdentifier: 42,
+                    elementIdentifier: fixture.identifier
+                ),
+                "prefix fixture=\(literalText.debugDescription)"
+            )
+            XCTAssertEqual(fixture.reader.parameterizedRanges, [
+                NSRange(location: requestedLocation, length: 5),
+            ], "prefix fixture=\(literalText.debugDescription)")
+        }
+    }
+
+    func testExactTextValidationRejectsMalformedExpandedSpan() {
+        for returnedText in ["akuo", "  akuo", " xaku"] {
+            let fixture = exactTextFixture(
+                visibleText: " akuo",
+                returnedText: returnedText
+            )
+
+            XCTAssertFalse(fixture.provider.hasExactTextImmediatelyBeforeCaret(
+                "akuo", processIdentifier: 42,
+                elementIdentifier: fixture.identifier
+            ), "returnedText=\(returnedText.debugDescription)")
+        }
     }
 
     func testExactSuffixTextReadPreparesApplicationAndFocusedElementBeforeIPC() {
@@ -1239,7 +1325,7 @@ final class SystemServiceContractTests: XCTestCase {
         }
         let reader = ScriptedAccessibilityAttributeReader(
             focusedElementValues: [element, element, element, element],
-            parameterizedTextValue: "go " as CFString,
+            parameterizedTextValue: " go " as CFString,
             selectedTextRangeValues: [initialCaretValue, movedCaretValue]
         )
         let provider = SystemAccessibilityFocusProvider(reader: reader)
@@ -1251,6 +1337,24 @@ final class SystemServiceContractTests: XCTestCase {
             "go ",
             processIdentifier: 42,
             elementIdentifier: snapshot.identifier
+        ))
+    }
+
+    func testSystemFocusProviderRejectsFocusChangeDuringExpandedTextValidation() {
+        let element = AXUIElementCreateApplication(42)
+        let changedElement = AXUIElementCreateApplication(43)
+        var caret = CFRange(location: 5, length: 0)
+        let caretValue = AXValueCreate(.cfRange, &caret)!
+        let reader = ScriptedAccessibilityAttributeReader(
+            focusedElementValues: [element, element, element, changedElement],
+            parameterizedTextValue: " akuo" as CFString,
+            selectedTextRangeValues: [caretValue, caretValue]
+        )
+        let provider = SystemAccessibilityFocusProvider(reader: reader)
+        let identifier = provider.focusedElement(for: 42)!.identifier
+
+        XCTAssertFalse(provider.hasExactTextImmediatelyBeforeCaret(
+            "akuo", processIdentifier: 42, elementIdentifier: identifier
         ))
     }
 
@@ -1924,6 +2028,29 @@ private final class ScriptedAccessibilityAttributeReader: AccessibilityAttribute
         onRead?(attribute, element)
         return attribute == kAXValueAttribute ? true : nil
     }
+}
+
+private struct ExactTextFixture {
+    let provider: SystemAccessibilityFocusProvider
+    let reader: ScriptedAccessibilityAttributeReader
+    let identifier: String
+}
+
+private func exactTextFixture(
+    visibleText: String,
+    returnedText: String
+) -> ExactTextFixture {
+    let element = AXUIElementCreateApplication(42)
+    var caret = CFRange(location: (visibleText as NSString).length, length: 0)
+    let caretValue = AXValueCreate(.cfRange, &caret)!
+    let reader = ScriptedAccessibilityAttributeReader(
+        focusedElementValues: [element, element, element, element],
+        parameterizedTextValue: returnedText as CFString,
+        selectedTextRangeValues: [caretValue, caretValue]
+    )
+    let provider = SystemAccessibilityFocusProvider(reader: reader)
+    let identifier = provider.focusedElement(for: 42)!.identifier
+    return ExactTextFixture(provider: provider, reader: reader, identifier: identifier)
 }
 
 private final class AccessibilityTimeline {

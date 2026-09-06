@@ -132,6 +132,41 @@ enum AccessibilityAttributeDecoder {
 }
 
 enum AccessibilityTextMatcher {
+    static func standaloneValidationRange(
+        selectedRange: NSRange,
+        expectedText: String
+    ) -> NSRange? {
+        guard let suffixRange = precedingRange(
+            selectedRange: selectedRange,
+            expectedText: expectedText
+        ) else {
+            return nil
+        }
+        guard suffixRange.location > 0 else { return suffixRange }
+        return NSRange(
+            location: suffixRange.location - 1,
+            length: suffixRange.length + 1
+        )
+    }
+
+    static func isStandaloneTokenEvidence(
+        _ evidence: String,
+        expectedText: String,
+        expectedStart: Int
+    ) -> Bool {
+        guard expectedStart > 0 else { return evidence == expectedText }
+
+        let nsEvidence = evidence as NSString
+        let expectedUTF16Length = (expectedText as NSString).length
+        guard nsEvidence.length == expectedUTF16Length + 1,
+              nsEvidence.substring(from: 1) == expectedText,
+              let prefix = UnicodeScalar(UInt32(nsEvidence.character(at: 0))) else {
+            return false
+        }
+        return CharacterSet.whitespacesAndNewlines.contains(prefix)
+            || prefix.properties.generalCategory == .control
+    }
+
     static func precedingRange(
         selectedRange: NSRange,
         expectedText: String
@@ -374,12 +409,19 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         elementIdentifier: String
     ) -> Bool {
         guard !expectedText.isEmpty else { return false }
-        return readTextImmediatelyBeforeCaret(
-            utf16Length: (expectedText as NSString).length,
+        guard let evidence = readTextImmediatelyBeforeCaret(
+            expectedText: expectedText,
             processIdentifier: processIdentifier,
             elementIdentifier: elementIdentifier,
             requiresDocumentStart: false
-        ) == expectedText
+        ) else {
+            return false
+        }
+        return AccessibilityTextMatcher.isStandaloneTokenEvidence(
+            evidence.text,
+            expectedText: expectedText,
+            expectedStart: evidence.expectedStart
+        )
     }
 
     func textImmediatelyBeforeCaret(
@@ -388,19 +430,27 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         elementIdentifier: String
     ) -> String? {
         readTextImmediatelyBeforeCaret(
+            expectedText: nil,
             utf16Length: utf16Length,
             processIdentifier: processIdentifier,
             elementIdentifier: elementIdentifier,
             requiresDocumentStart: true
-        )
+        )?.text
+    }
+
+    private struct TextEvidence {
+        let text: String
+        let expectedStart: Int
     }
 
     private func readTextImmediatelyBeforeCaret(
-        utf16Length: Int,
+        expectedText: String?,
+        utf16Length: Int? = nil,
         processIdentifier: Int32,
         elementIdentifier: String,
         requiresDocumentStart: Bool
-    ) -> String? {
+    ) -> TextEvidence? {
+        let utf16Length = expectedText.map { ($0 as NSString).length } ?? utf16Length ?? 0
         guard utf16Length > 0 else { return nil }
         let application = AXUIElementCreateApplication(processIdentifier)
         guard let initialFocus = attribute(
@@ -420,16 +470,24 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
               let caretRange = AccessibilityAttributeDecoder.range(
                   from: selectedRange.value
               ),
-              let precedingRange = AccessibilityTextMatcher.precedingRange(
-                  selectedRange: caretRange,
-                  utf16Length: utf16Length
-              ),
-              !requiresDocumentStart || precedingRange.location == 0 else {
+              let suffixRange = AccessibilityTextMatcher.precedingRange(
+                  selectedRange: caretRange, utf16Length: utf16Length
+              ), !requiresDocumentStart || suffixRange.location == 0 else {
             return nil
         }
+        let requestedTextRange: NSRange
+        if let expectedText {
+            guard let validationRange = AccessibilityTextMatcher.standaloneValidationRange(
+                selectedRange: caretRange,
+                expectedText: expectedText
+            ) else { return nil }
+            requestedTextRange = validationRange
+        } else {
+            requestedTextRange = suffixRange
+        }
         var requestedRange = CFRange(
-            location: precedingRange.location,
-            length: precedingRange.length
+            location: requestedTextRange.location,
+            length: requestedTextRange.length
         )
         guard let requestedRangeValue = AXValueCreate(.cfRange, &requestedRange) else {
             return nil
@@ -449,7 +507,7 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
         }
         guard previousText.result == .success,
               let text = AccessibilityAttributeDecoder.string(from: previousText.value),
-              (text as NSString).length == utf16Length,
+              (text as NSString).length == requestedTextRange.length,
               finalSelectedRange.result == .success,
               AccessibilityAttributeDecoder.range(from: finalSelectedRange.value)
                   == caretRange,
@@ -459,7 +517,7 @@ final class SystemAccessibilityFocusProvider: AccessibilityFocusProviding {
             return nil
         }
 
-        return text
+        return TextEvidence(text: text, expectedStart: suffixRange.location)
     }
 
     private func attribute(
